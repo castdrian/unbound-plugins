@@ -1,0 +1,28 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": [
+			"ESNext"
+		],
+		"jsx": "react-jsx",
+		"strict": true,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"ignoreDeprecations": "6.0",
+		"allowImportingTsExtensions": true,
+		"baseUrl": ".",
+		"paths": {
+			"@translate/*": [
+				"plugins/translate/src/*"
+			]
+		},
+		"noEmit": true
+	},
+	"include": [
+		"plugins",
+		"themes"
+	]
+}

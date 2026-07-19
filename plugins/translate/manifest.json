@@ -1,0 +1,13 @@
+{
+	"id": "unbound.translate",
+	"name": "Translate",
+	"description": "Translate messages.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}
