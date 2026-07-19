@@ -1,7 +1,49 @@
-import { nodeResolve } from '@rollup/plugin-node-resolve';
-import { swc } from 'rollup-plugin-swc3';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
+import { fileURLToPath } from 'url';
+
 import json from '@rollup/plugin-json';
+import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
+import { swc } from 'rollup-plugin-swc3';
+
+const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
+
+function resolveTranslateModule(source) {
+	const candidate = resolve(pluginRoot, source.replace(/^@translate\//, ''));
+	const search = [candidate, `${candidate}.ts`, `${candidate}.tsx`, `${candidate}.js`, `${candidate}.mjs`, `${candidate}.json`, resolve(candidate, 'index.ts'), resolve(candidate, 'index.tsx'), resolve(candidate, 'index.js')];
+
+	for (const file of search) {
+		if (existsSync(file)) return file;
+	}
+
+	return null;
+}
+
+function translateAlias() {
+	return {
+		name: 'translate-alias',
+		resolveId(source) {
+			if (!source.startsWith('@translate/')) return null;
+			return resolveTranslateModule(source);
+		},
+	};
+}
+
+function hermesExpressionEntrypoint() {
+	return {
+		name: 'hermes-expression-entrypoint',
+		generateBundle(_outputOptions, bundle) {
+			for (const chunk of Object.values(bundle)) {
+				if (chunk.type !== 'chunk') continue;
+				let code = chunk.code.trim();
+				code = code.replace(/^var\s+[A-Za-z_$][\w$]*\s*=\s*/, '');
+				code = code.replace(/;\s*$/, '');
+				chunk.code = code;
+			}
+		},
+	};
+}
 
 const globals = {
 	'@unbound-app/api': 'window.unbound',
@@ -16,9 +58,10 @@ const globals = {
 export default {
 	input: 'index.tsx',
 	external: Object.keys(globals),
-	plugins: [nodeResolve(), json(), swc({ tsconfig: false }), iife()],
+	plugins: [translateAlias(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint()],
 	output: {
-		dir: 'dist',
+		dir: '.',
+		entryFileNames: 'index.js',
 		format: 'es',
 		compact: true,
 		exports: 'named',

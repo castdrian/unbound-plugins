@@ -1,21 +1,14 @@
-import { metro, patcher } from '@unbound-app/api';
-
-const unpatches: (() => void)[] = [];
+import { startTranslateMenuPatch, stopTranslateMenuPatch } from '@translate/menu';
+import { registerTranslateSettings, unregisterTranslateSettings } from '@translate/settings';
 
 export default {
 	start() {
-		const UserStore = metro.findByProps('getCurrentUser', 'getUser');
-
-		unpatches.push(
-			patcher.after(UserStore, 'getCurrentUser', ({ result }) => {
-				console.log('[Translate] getCurrentUser returned', result?.username);
-			}),
-		);
+		startTranslateMenuPatch();
+		registerTranslateSettings();
 	},
 
 	stop() {
-		for (const unpatch of unpatches) unpatch();
-
-		unpatches.length = 0;
+		stopTranslateMenuPatch();
+		unregisterTranslateSettings();
 	},
 };

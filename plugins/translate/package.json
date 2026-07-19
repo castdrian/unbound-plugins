@@ -8,10 +8,11 @@
 		"build": "rollup -c"
 	},
 	"devDependencies": {
-		"@unbound-app/api": "latest",
+		"@rollup/plugin-alias": "^6.0.0",
 		"@rollup/plugin-json": "^6.1.0",
 		"@rollup/plugin-node-resolve": "^16.0.3",
 		"@types/react": "^19.2.7",
+		"@unbound-app/api": "latest",
 		"react-native": "^0.83.0",
 		"rollup": "^4.62.2",
 		"rollup-plugin-iife": "^0.8.0",
