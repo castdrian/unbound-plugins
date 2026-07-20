@@ -65,16 +65,6 @@ function openLanguageSheet(options: {
 	});
 }
 
-function cycleTargetLanguage(current: string): string {
-	const options = ['en', 'es', 'fr'];
-	const index = options.indexOf(current);
-	return options[(index + 1) % options.length] ?? 'en';
-}
-
-function cycleSourceLanguage(current: string): string {
-	return current === 'auto' ? 'en' : 'auto';
-}
-
 function TranslateSettingsScreen() {
 	const ReactNative = metro.common.ReactNative;
 	const Discord = getDesignModule();
@@ -141,16 +131,6 @@ function TranslateSettingsScreen() {
 							onSelect: setTargetLanguage,
 						})
 					}
-				/>
-				<Discord.TableRow
-					label="Cycle Target"
-					disabled={!refreshConfigured}
-					onPress={() => setTargetLanguage(cycleTargetLanguage(targetLanguage))}
-				/>
-				<Discord.TableRow
-					label="Cycle Source"
-					disabled={!refreshConfigured}
-					onPress={() => setSourceLanguage(cycleSourceLanguage(sourceLanguage))}
 				/>
 			</Discord.TableRowGroup>
 		</ReactNative.ScrollView>

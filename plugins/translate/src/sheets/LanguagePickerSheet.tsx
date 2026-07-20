@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { metro } from '@unbound-app/api';
+import { assets, metro } from '@unbound-app/api';
 
 import { listLanguages, type TranslationLanguage } from '../api';
 
@@ -14,17 +14,19 @@ type LanguagePickerSheetProps = {
 
 function getDesignModule(): {
 	ActionSheet?: any;
+	ActionSheetRowGroup?: any;
 	TextField?: any;
 	ActionSheetRow?: any;
+	Text?: any;
 } | null {
 	const discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as
-		| { ActionSheet?: any; TextField?: any; ActionSheetRow?: any }
+		| { ActionSheet?: any; ActionSheetRowGroup?: any; TextField?: any; ActionSheetRow?: any; Text?: any }
 		| undefined;
 	if (discord?.ActionSheet && discord?.TextField && discord?.ActionSheetRow) return discord;
 
 	if (typeof metro?.findByProps === 'function') {
 		const found = metro.findByProps('ActionSheet', 'TextField', 'ActionSheetRow') as
-			| { ActionSheet?: any; TextField?: any; ActionSheetRow?: any }
+			| { ActionSheet?: any; ActionSheetRowGroup?: any; TextField?: any; ActionSheetRow?: any; Text?: any }
 			| null;
 		if (found?.ActionSheet && found?.TextField && found?.ActionSheetRow) return found;
 	}
@@ -91,26 +93,49 @@ function LanguagePickerSheet({ title, includeAuto, current, onSelect, onClose }:
 		);
 	}
 
+	const checkIconId =
+		assets.getIDByName('CheckmarkLargeIcon') ?? assets.getIDByName('CheckIcon') ?? assets.Icons?.CheckmarkIcon;
+
+	const RowGroup = Discord.ActionSheetRowGroup ?? ReactNative.View;
+
+	const rowList = (
+		<RowGroup>
+			{rows.map((language) => {
+				const isSelected = language.code === current;
+				return (
+					<Discord.ActionSheetRow
+						key={language.code}
+						label={language.code === 'auto' ? 'Auto detect' : languageLabel(language)}
+						subLabel={language.code}
+						icon={
+							isSelected && checkIconId ? <Discord.ActionSheetRow.Icon source={checkIconId} /> : undefined
+						}
+						onPress={() => choose(language.code)}
+					/>
+				);
+			})}
+			{!error && rows.length === 0 ? <Discord.ActionSheetRow label="No matches" onPress={onClose} /> : null}
+		</RowGroup>
+	);
+
 	return (
 		<Discord.ActionSheet>
-			<Discord.TextField
-				size="md"
-				value={query}
-				onChange={setQuery}
-				isClearable
-				isRound
-				placeholder={title}
-			/>
-			{error ? <Discord.ActionSheetRow label={error} onPress={onClose} /> : null}
-			{rows.map((language) => (
-				<Discord.ActionSheetRow
-					key={language.code}
-					label={language.code === 'auto' ? 'Auto detect' : languageLabel(language)}
-					subLabel={language.code === current ? `${language.code} • current` : language.code}
-					onPress={() => choose(language.code)}
+			{Discord.Text ? (
+				<Discord.Text variant="heading-lg/semibold" style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 }}>
+					{title}
+				</Discord.Text>
+			) : null}
+			<ReactNative.View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+				<Discord.TextField
+					size="md"
+					value={query}
+					onChange={setQuery}
+					isClearable
+					isRound
+					placeholder="Search languages"
 				/>
-			))}
-			{!error && rows.length === 0 ? <Discord.ActionSheetRow label="No matches" onPress={onClose} /> : null}
+			</ReactNative.View>
+			{error ? <Discord.ActionSheetRow label={error} onPress={onClose} /> : rowList}
 		</Discord.ActionSheet>
 	);
 }
