@@ -1,7 +1,6 @@
 import { assets, metro, settings, storage, toasts } from '@unbound-app/api';
 
 import {
-	clearTokens,
 	getSourceLanguage,
 	getTargetLanguage,
 	hasRefreshToken,
@@ -11,6 +10,7 @@ import {
 import { openDiscordLoginFlow } from '@translate/oauth';
 import LanguagePickerSheet from '@translate/sheets/LanguagePickerSheet';
 
+const ADDON_ID = 'unbound.translate';
 const SETTINGS_ROUTE = 'unbound.translate.settings';
 const STORE = storage.getStore('unbound.translate');
 
@@ -85,19 +85,10 @@ function TranslateSettingsScreen() {
 		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
 			<Discord.TableRowGroup title="Translate API">
 				<Discord.TableRow
-					label={refreshConfigured ? 'Reconnect Discord' : 'Connect Discord'}
-					subLabel={refreshConfigured ? 'Refresh your translation session.' : 'Sign in to enable translation.'}
+					label={refreshConfigured ? 'Reconnect Discord account' : 'Connect Discord account'}
+					subLabel={refreshConfigured ? 'Re-authenticate with Discord' : 'Sign in to enable translation'}
 					onPress={() => {
 						openDiscordLoginFlow();
-					}}
-				/>
-				<Discord.TableRow label="Status" subLabel={refreshConfigured ? 'Connected' : 'Not connected'} disabled />
-				<Discord.TableRow
-					label="Clear Session"
-					disabled={!refreshConfigured}
-					onPress={() => {
-						clearTokens();
-						toasts.showToast({ title: 'Translate', content: 'Session cleared.' });
 					}}
 				/>
 			</Discord.TableRowGroup>
@@ -143,7 +134,7 @@ export function registerTranslateSettings(): void {
 		key: SETTINGS_ROUTE,
 		useTitle: () => 'Translate',
 		parent: null,
-		section: 'Plugins',
+		addonId: ADDON_ID,
 		IconComponent: TranslateIcon,
 		screen: {
 			route: SETTINGS_ROUTE,

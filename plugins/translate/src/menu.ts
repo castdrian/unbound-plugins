@@ -1,6 +1,6 @@
 import { assets, metro, patcher, toasts } from '@unbound-app/api';
 
-import { translateText } from './api';
+import { translateText } from '@translate/api';
 
 const Patcher = patcher.createPatcher('unbound.translate');
 

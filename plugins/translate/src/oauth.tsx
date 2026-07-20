@@ -1,6 +1,6 @@
 import { metro, toasts } from '@unbound-app/api';
 
-import { getApiBaseUrlSetting, storeSessionTokens } from './api';
+import { getApiBaseUrlSetting, storeSessionTokens } from '@translate/api';
 
 function findOAuth2AuthorizeModal(): any | null {
 	if (typeof metro?.findByProps === 'function') {

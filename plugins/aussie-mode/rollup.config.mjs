@@ -9,8 +9,8 @@ import { swc } from 'rollup-plugin-swc3';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
-function resolveTranslateModule(source) {
-	const candidate = resolve(pluginRoot, 'src', source.replace(/^@translate\//, ''));
+function resolveAussieModeModule(source) {
+	const candidate = resolve(pluginRoot, 'src', source.replace(/^@aussie-mode\//, ''));
 	const search = [candidate, `${candidate}.ts`, `${candidate}.tsx`, `${candidate}.js`, `${candidate}.mjs`, `${candidate}.json`, resolve(candidate, 'index.ts'), resolve(candidate, 'index.tsx'), resolve(candidate, 'index.js')];
 
 	for (const file of search) {
@@ -20,12 +20,12 @@ function resolveTranslateModule(source) {
 	return null;
 }
 
-function translateAlias() {
+function aussieModeAlias() {
 	return {
-		name: 'translate-alias',
+		name: 'aussie-mode-alias',
 		resolveId(source) {
-			if (!source.startsWith('@translate/')) return null;
-			return resolveTranslateModule(source);
+			if (!source.startsWith('@aussie-mode/')) return null;
+			return resolveAussieModeModule(source);
 		},
 	};
 }
@@ -75,7 +75,7 @@ export default {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
 	plugins: [
-		translateAlias(),
+		aussieModeAlias(),
 		nodeResolve(),
 		json(),
 		swc({ tsconfig: false }),

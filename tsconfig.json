@@ -17,6 +17,9 @@
 		"paths": {
 			"@translate/*": [
 				"plugins/translate/src/*"
+			],
+			"@aussie-mode/*": [
+				"plugins/aussie-mode/src/*"
 			]
 		},
 		"noEmit": true

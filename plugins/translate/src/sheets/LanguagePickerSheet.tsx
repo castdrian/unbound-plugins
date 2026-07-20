@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { assets, metro } from '@unbound-app/api';
 
-import { listLanguages, type TranslationLanguage } from '../api';
+import { listLanguages, type TranslationLanguage } from '@translate/api';
 
 type LanguagePickerSheetProps = {
 	title: string;
