@@ -4,7 +4,7 @@ import { View } from 'react-native';
 
 const Patcher = patcher.createPatcher('adrian.aussie-mode');
 
-const ROTATED_ROOT_COMPONENT_NAMES = ['ErrorBoundary', 'FullScreenOverlay'];
+const ROTATED_ROOT_COMPONENT_NAMES = ['ErrorBoundary'];
 const ROTATED_COMPONENT_FILE_PATHS = [
 	'modules/main_tabs_v2/native/tabs/you/YouScreen.tsx',
 	'modules/main_tabs_v2/native/tabs/settings/Settings.tsx',
@@ -29,8 +29,10 @@ function rotateClassComponentRender(componentName: string): void {
 	});
 }
 
-function rotateFileComponent(filePath: string): void {
-	const module = metro.findByFilePath(filePath, { interop: false });
+const FILE_COMPONENT_POLL_INTERVAL_MS = 500;
+const FILE_COMPONENT_POLL_MAX_ATTEMPTS = 60;
+
+function attachFileRotation(module: any): void {
 	const Component = module?.default;
 
 	if (typeof Component === 'function') {
@@ -41,6 +43,54 @@ function rotateFileComponent(filePath: string): void {
 	if (typeof Component?.type === 'function') {
 		Patcher.after(Component, 'type', ({ result }) => rotateResult(result));
 	}
+}
+
+function rotateFileComponent(filePath: string): void {
+	const existing = metro.findByFilePath(filePath, { interop: false });
+	if (existing) {
+		attachFileRotation(existing);
+		return;
+	}
+
+	let attempts = 0;
+	const interval = setInterval(() => {
+		attempts++;
+
+		const module = metro.findByFilePath(filePath, { interop: false });
+		if (module) {
+			clearInterval(interval);
+			attachFileRotation(module);
+			return;
+		}
+
+		if (attempts >= FILE_COMPONENT_POLL_MAX_ATTEMPTS) clearInterval(interval);
+	}, FILE_COMPONENT_POLL_INTERVAL_MS);
+}
+
+function rotateNavigatorScreen(siblingRouteNames: string[], targetRouteName: string): void {
+	const nav = metro.findByProps('useNavigationBuilder');
+	if (typeof nav?.useNavigationBuilder !== 'function') return;
+
+	const patchedComponents = new WeakSet<object>();
+
+	Patcher.before(nav, 'useNavigationBuilder', ({ args }) => {
+		const children = (args[1] as { children?: unknown } | undefined)?.children;
+		const screens = Array.isArray(children) ? children : children ? [children] : [];
+		const names = screens.map((screen: any) => screen?.props?.name).filter(Boolean);
+
+		if (!siblingRouteNames.every((name) => names.includes(name))) return;
+
+		const target = screens.find((screen: any) => screen?.props?.name === targetRouteName);
+		const getComponent = target?.props?.getComponent;
+		if (typeof getComponent !== 'function') return;
+
+		const Component = getComponent();
+		if (!Component || typeof Component !== 'object' || typeof Component.type !== 'function') return;
+		if (patchedComponents.has(Component)) return;
+
+		patchedComponents.add(Component);
+		Patcher.after(Component, 'type', ({ result }) => rotateResult(result));
+	});
 }
 
 function rotateActionSheets(): void {
@@ -72,6 +122,8 @@ export function startRotation(): void {
 	for (const filePath of ROTATED_COMPONENT_FILE_PATHS) {
 		rotateFileComponent(filePath);
 	}
+
+	rotateNavigatorScreen(['root', 'search_chat_preview', 'pinned-messages', 'mute', 'threads'], 'root');
 
 	rotateActionSheets();
 }
