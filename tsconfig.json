@@ -20,6 +20,9 @@
 			],
 			"@aussie-mode/*": [
 				"plugins/aussie-mode/src/*"
+			],
+			"@reviewdb/*": [
+				"plugins/reviewdb/src/*"
 			]
 		},
 		"noEmit": true

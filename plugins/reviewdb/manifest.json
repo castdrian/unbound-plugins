@@ -1,0 +1,13 @@
+{
+	"id": "unbound.reviewdb",
+	"name": "ReviewDB",
+	"description": "Leave reviews on other users' profiles and see what others think of you.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}
