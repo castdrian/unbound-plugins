@@ -9,7 +9,8 @@
 	],
 	"scripts": {
 		"dev": "ubd dev",
-		"build": "ubd build"
+		"build": "ubd build",
+		"postbuild": "bun scripts/generate-plugins-readme.ts"
 	},
 	"devDependencies": {
 		"@unbound-app/cli": "latest"
