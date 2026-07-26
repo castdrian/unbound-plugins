@@ -1,0 +1,13 @@
+{
+	"id": "unbound.more-user-tags",
+	"name": "More User Tags",
+	"description": "Adds tags for webhooks and moderative roles.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}

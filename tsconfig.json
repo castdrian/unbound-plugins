@@ -42,6 +42,9 @@
 			"@no-reply-mention/*": [
 				"plugins/no-reply-mention/src/*"
 			],
+			"@more-user-tags/*": [
+				"plugins/more-user-tags/src/*"
+			],
 			"@preview-message/*": [
 				"plugins/preview-message/src/*"
 			]
