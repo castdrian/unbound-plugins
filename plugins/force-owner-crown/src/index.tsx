@@ -22,6 +22,18 @@ function isGuildOwner(guildId: string | undefined, userId: string | undefined): 
 	return guilds?.getGuild?.(guildId)?.ownerId === userId;
 }
 
+function applyCrown(rowMessage: any): void {
+	if (!rowMessage || rowMessage.roleIcon) return;
+	if (!isGuildOwner(rowMessage.guildId, rowMessage.authorId)) return;
+
+	rowMessage.roleIcon = {
+		source: crownSource,
+		name: CROWN_LABEL,
+		size: 18,
+		alt: CROWN_LABEL,
+	};
+}
+
 export default {
 	start() {
 		crownSource = resolveCrownSource();
@@ -33,15 +45,10 @@ export default {
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
 				const row = ctx.result?.message;
-				if (!row || row.roleIcon) return;
-				if (!isGuildOwner(row.guildId, row.authorId)) return;
+				if (!row) return;
 
-				row.roleIcon = {
-					source: crownSource,
-					name: CROWN_LABEL,
-					size: 18,
-					alt: CROWN_LABEL,
-				};
+				applyCrown(row);
+				applyCrown(row.referencedMessage?.message);
 			} catch { }
 		});
 	},

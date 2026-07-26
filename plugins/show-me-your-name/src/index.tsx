@@ -5,6 +5,7 @@ const SETTINGS_ROUTE = 'unbound.show-me-your-name.settings';
 const STORE = storage.getStore(ADDON_ID);
 
 let unpatch: (() => void) | null = null;
+let users: { getUser?: (id: string) => Author | undefined } | null = null;
 
 type Mode = 'user-nick' | 'nick-user' | 'user';
 
@@ -31,13 +32,22 @@ function buildLabel(author: Author | undefined, displayed: string | undefined): 
 	if (useDisplayNames && author.globalName) username = author.globalName;
 	if (!username) return null;
 
-	const nick = displayed;
+	const prefix = displayed.startsWith('@') ? '@' : '';
+	const nick = prefix ? displayed.slice(1) : displayed;
 	const tag = `@${username}`;
 
-	if (username === nick) return nick;
+	if (username === nick) return displayed;
 	if (mode === 'user') return tag;
 	if (mode === 'user-nick') return `${tag} (${nick})`;
-	return `${nick} (${tag})`;
+	return `${prefix}${nick} (${tag})`;
+}
+
+function rewriteUsername(rowMessage: any, author?: Author): void {
+	if (!rowMessage) return;
+
+	const resolved = author ?? (rowMessage.authorId ? users?.getUser?.(rowMessage.authorId) : undefined);
+	const label = buildLabel(resolved, rowMessage.username);
+	if (label != null) rowMessage.username = label;
 }
 
 function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRow?: any } | null {
@@ -121,20 +131,17 @@ export default {
 		const target = metro.findByFilePath(ROW_GENERATOR_PATH);
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
+		users = metro.findByProps('getCurrentUser', 'getUser');
+
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
-				const source = (ctx.args[0] as any)?.message;
 				const row = ctx.result?.message;
-				if (!source || !row) return;
+				if (!row) return;
 
-				const label = buildLabel(source.author, row.username);
-				if (label != null) row.username = label;
+				rewriteUsername(row, (ctx.args[0] as any)?.message?.author);
 
 				if (STORE.get('inReplies', false)) {
-					const reply = row.referencedMessage;
-					const replySource = source.referencedMessage ?? source.messageReference;
-					const replyLabel = buildLabel(replySource?.author, reply?.username);
-					if (reply && replyLabel != null) reply.username = replyLabel;
+					rewriteUsername(row.referencedMessage?.message);
 				}
 			} catch { }
 		});
@@ -143,6 +150,7 @@ export default {
 	stop() {
 		unpatch?.();
 		unpatch = null;
+		users = null;
 		try {
 			settings.removeSettings(SETTINGS_ROUTE);
 		} catch { }
