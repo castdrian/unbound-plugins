@@ -21,6 +21,7 @@ interface TagDefinition {
 	name: string;
 	displayName: string;
 	description: string;
+	color: string;
 	permissions?: PermissionName[];
 	condition?: (message: any, user: any, guild: any) => boolean;
 }
@@ -28,36 +29,42 @@ interface TagDefinition {
 const TAGS: TagDefinition[] = [
 	{
 		name: 'WEBHOOK',
+		color: '#5865F2',
 		displayName: 'Webhook',
 		description: 'Messages sent by webhooks',
 		condition: (message, user) => Boolean(message?.webhookId) && Boolean(user?.bot),
 	},
 	{
 		name: 'OWNER',
+		color: '#F0B232',
 		displayName: 'Owner',
 		description: 'Owns the server',
 		condition: (_message, user, guild) => Boolean(guild) && guild.ownerId === user?.id,
 	},
 	{
 		name: 'ADMINISTRATOR',
+		color: '#DA373C',
 		displayName: 'Admin',
 		description: 'Has the administrator permission',
 		permissions: ['ADMINISTRATOR'],
 	},
 	{
 		name: 'MODERATOR_STAFF',
+		color: '#248046',
 		displayName: 'Staff',
 		description: 'Can manage the server, channels or roles',
 		permissions: ['MANAGE_GUILD', 'MANAGE_CHANNELS', 'MANAGE_ROLES', 'MANAGE_WEBHOOKS'],
 	},
 	{
 		name: 'MODERATOR',
+		color: '#4E7FFF',
 		displayName: 'Mod',
 		description: 'Can manage messages or kick/ban people',
 		permissions: ['MANAGE_MESSAGES', 'KICK_MEMBERS', 'BAN_MEMBERS'],
 	},
 	{
 		name: 'VOICE_MODERATOR',
+		color: '#059669',
 		displayName: 'VC Mod',
 		description: 'Can manage voice chats',
 		permissions: ['MOVE_MEMBERS', 'MUTE_MEMBERS', 'DEAFEN_MEMBERS'],
@@ -69,9 +76,34 @@ let permissionBits: Record<string, bigint> | null = null;
 let computePermissions: ((options: any) => bigint) | null = null;
 let guilds: any = null;
 let channels: any = null;
+let members: any = null;
 
 function isTagEnabled(name: string): boolean {
 	return STORE.get(`tag.${name}`, true);
+}
+
+function contrastingTextColor(background: string): string {
+	const hex = background.replace('#', '');
+	if (hex.length !== 6) return '#ffffff';
+
+	const value = Number.parseInt(hex, 16);
+	if (Number.isNaN(value)) return '#ffffff';
+
+	const red = (value >> 16) & 0xff;
+	const green = (value >> 8) & 0xff;
+	const blue = value & 0xff;
+	const luminance = (red * 299 + green * 587 + blue * 114) / 1000;
+
+	return luminance > 150 ? '#000000' : '#ffffff';
+}
+
+function resolveBackground(tag: TagDefinition, guild: any, user: any): string | null {
+	if (STORE.get('useRoleColor', false) && guild && members) {
+		const colorString = members.getMember?.(guild.id, user?.id)?.colorString;
+		if (colorString) return colorString;
+	}
+
+	return STORE.get('coloredTags', true) ? tag.color : null;
 }
 
 function hasPermission(user: any, guild: any, channel: any, names: PermissionName[]): boolean {
@@ -145,6 +177,21 @@ function MoreUserTagsSettings() {
 					/>
 				))}
 			</Discord.TableRowGroup>
+
+			<Discord.TableRowGroup title="Appearance">
+				<SwitchRow
+					label="Coloured Tags"
+					subLabel="Give each tag its own colour instead of the default styling"
+					value={state.get('coloredTags', true)}
+					onValueChange={(value: boolean) => state.set('coloredTags', value)}
+				/>
+				<SwitchRow
+					label="Use Role Colour"
+					subLabel="Colour tags with the member's role colour where they have one"
+					value={state.get('useRoleColor', false)}
+					onValueChange={(value: boolean) => state.set('useRoleColor', value)}
+				/>
+			</Discord.TableRowGroup>
 		</ReactNative.ScrollView>
 	);
 }
@@ -175,6 +222,7 @@ export default {
 			null;
 		guilds = metro.findStore('Guild');
 		channels = metro.findStore('Channel');
+		members = metro.findStore('GuildMember');
 
 		if (!permissionBits || !computePermissions || !guilds || !channels) return;
 
@@ -196,7 +244,17 @@ export default {
 				const tag = resolveTag(message, user, guild, channel);
 				if (!tag) return;
 
-				return { ...result, tagText: tag.displayName, tagVerified: false };
+				const tagged = { ...result, tagText: tag.displayName, tagVerified: false };
+
+				const background = resolveBackground(tag, guild, user);
+				if (!background) return tagged;
+
+				const { processColor } = metro.common.ReactNative;
+				return {
+					...tagged,
+					tagBackgroundColor: processColor(background),
+					tagTextColor: processColor(contrastingTextColor(background)),
+				};
 			} catch { }
 		});
 	},
@@ -208,6 +266,7 @@ export default {
 		computePermissions = null;
 		guilds = null;
 		channels = null;
+		members = null;
 		try {
 			settings.removeSettings(SETTINGS_ROUTE);
 		} catch { }
