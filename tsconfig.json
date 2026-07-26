@@ -39,6 +39,9 @@
 			"@typing-avatars/*": [
 				"plugins/typing-avatars/src/*"
 			],
+			"@no-reply-mention/*": [
+				"plugins/no-reply-mention/src/*"
+			],
 			"@preview-message/*": [
 				"plugins/preview-message/src/*"
 			]

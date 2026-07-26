@@ -1,0 +1,15 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"baseUrl": ".",
+		"ignoreDeprecations": "5.0",
+		"paths": {
+			"@no-reply-mention/*": [
+				"src/*"
+			]
+		}
+	},
+	"include": [
+		"src"
+	]
+}

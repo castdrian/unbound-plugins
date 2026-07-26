@@ -1,0 +1,13 @@
+{
+	"id": "unbound.no-reply-mention",
+	"name": "No Reply Mention",
+	"description": "Disable reply pings by default.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}
