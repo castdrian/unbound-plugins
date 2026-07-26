@@ -32,6 +32,9 @@
 			],
 			"@force-owner-crown/*": [
 				"plugins/force-owner-crown/src/*"
+			],
+			"@clear-urls/*": [
+				"plugins/clear-urls/src/*"
 			]
 		},
 		"noEmit": true
