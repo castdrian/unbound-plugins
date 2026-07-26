@@ -10,7 +10,11 @@ const BUTTON_GAP = 8;
 const ICON_SIZE = 22;
 const ICON_TINT = '#b5bac1';
 const ICON_MIN_SCALE = 0.6;
-const TOGGLE_MS = 180;
+const PRESS_OPACITY = 0.5;
+const PRESS_SCALE = 0.86;
+const SHOW_DELAY_MS = 60;
+const SHOW_MS = 70;
+const HIDE_MS = 25;
 const FADE_IN_MS = 160;
 const FADE_OUT_MS = 120;
 
@@ -175,7 +179,8 @@ function PreviewButton({ channelId }: { channelId: string }) {
 	React.useEffect(() => {
 		ReactNative.Animated.timing(progress, {
 			toValue: visible ? 1 : 0,
-			duration: TOGGLE_MS,
+			duration: visible ? SHOW_MS : HIDE_MS,
+			delay: visible ? SHOW_DELAY_MS : 0,
 			useNativeDriver: false,
 		}).start();
 	}, [visible, progress]);
@@ -184,13 +189,10 @@ function PreviewButton({ channelId }: { channelId: string }) {
 		<>
 			<ReactNative.Animated.View
 				style={{
-					width: progress.interpolate({ inputRange: [0, 1], outputRange: [0, BUTTON_SIZE] }),
-					marginRight: progress.interpolate({
-						inputRange: [0, 1],
-						outputRange: [-BUTTON_GAP, 0],
-					}),
-					opacity: progress,
+					width: visible ? BUTTON_SIZE : 0,
+					marginRight: visible ? 0 : -BUTTON_GAP,
 					height: BUTTON_SIZE,
+					opacity: progress,
 					overflow: 'hidden',
 					alignItems: 'center',
 					justifyContent: 'center',
@@ -198,12 +200,18 @@ function PreviewButton({ channelId }: { channelId: string }) {
 			>
 				<ReactNative.Pressable
 					onPress={() => setOpen(true)}
-					style={{
+					onPressIn={() =>
+						haptics?.triggerHapticFeedback?.(haptics.HapticFeedbackTypes.IMPACT_LIGHT)
+					}
+					hitSlop={8}
+					style={({ pressed }: { pressed: boolean }) => ({
 						width: BUTTON_SIZE,
 						height: BUTTON_SIZE,
 						alignItems: 'center',
 						justifyContent: 'center',
-					}}
+						opacity: pressed ? PRESS_OPACITY : 1,
+						transform: [{ scale: pressed ? PRESS_SCALE : 1 }],
+					})}
 				>
 					<ReactNative.Animated.Image
 						source={eyeIcon}
