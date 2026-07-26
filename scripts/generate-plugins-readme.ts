@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,9 +25,30 @@ interface PluginInfo {
 	hasReadme: boolean;
 }
 
+function getPublishedFolders(): Set<string> | null {
+	try {
+		const output = execFileSync('git', ['ls-files', '--', 'plugins/*/manifest.json'], {
+			cwd: repoRoot,
+			encoding: 'utf8',
+		});
+
+		return new Set(
+			output
+				.split('\n')
+				.filter(Boolean)
+				.map((path) => path.split('/')[1]),
+		);
+	} catch {
+		return null;
+	}
+}
+
 function readPluginManifests(): PluginInfo[] {
+	const published = getPublishedFolders();
+
 	return readdirSync(pluginsDir, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
+		.filter((entry) => published === null || published.has(entry.name))
 		.map((entry): PluginInfo | null => {
 			const manifestPath = resolve(pluginsDir, entry.name, 'manifest.json');
 			if (!existsSync(manifestPath)) return null;
