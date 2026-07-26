@@ -1,0 +1,13 @@
+{
+	"id": "unbound.who-reacted",
+	"name": "Who Reacted",
+	"description": "Fetches and shows who reacted to a message.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}
