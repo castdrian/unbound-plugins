@@ -23,6 +23,12 @@
 			],
 			"@reviewdb/*": [
 				"plugins/reviewdb/src/*"
+			],
+			"@no-blocked-messages/*": [
+				"plugins/no-blocked-messages/src/*"
+			],
+			"@show-me-your-name/*": [
+				"plugins/show-me-your-name/src/*"
 			]
 		},
 		"noEmit": true
