@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+
+bun scripts/generate-plugins-readme.ts
+git add plugins/README.md

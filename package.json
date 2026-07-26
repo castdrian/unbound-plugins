@@ -8,6 +8,7 @@
 		"themes/*"
 	],
 	"scripts": {
+		"prepare": "git config core.hooksPath .githooks || true",
 		"dev": "ubd dev",
 		"build": "ubd build",
 		"postbuild": "bun scripts/generate-plugins-readme.ts"
