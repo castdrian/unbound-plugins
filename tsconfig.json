@@ -35,6 +35,9 @@
 			],
 			"@clear-urls/*": [
 				"plugins/clear-urls/src/*"
+			],
+			"@typing-avatars/*": [
+				"plugins/typing-avatars/src/*"
 			]
 		},
 		"noEmit": true
