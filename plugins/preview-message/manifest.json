@@ -1,0 +1,13 @@
+{
+	"id": "unbound.preview-message",
+	"name": "Preview Message",
+	"description": "Lets you preview a message rendering before sending it.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}

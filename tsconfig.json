@@ -38,6 +38,9 @@
 			],
 			"@typing-avatars/*": [
 				"plugins/typing-avatars/src/*"
+			],
+			"@preview-message/*": [
+				"plugins/preview-message/src/*"
 			]
 		},
 		"noEmit": true
