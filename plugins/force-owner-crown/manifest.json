@@ -1,0 +1,13 @@
+{
+	"id": "unbound.force-owner-crown",
+	"name": "Force Owner Crown",
+	"description": "Force the owner crown next to usernames even in large servers.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}

@@ -29,6 +29,9 @@
 			],
 			"@show-me-your-name/*": [
 				"plugins/show-me-your-name/src/*"
+			],
+			"@force-owner-crown/*": [
+				"plugins/force-owner-crown/src/*"
 			]
 		},
 		"noEmit": true
