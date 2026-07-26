@@ -1,8 +1,4 @@
-import { metro, patcher, settings, storage } from '@unbound-app/api';
-
-const ADDON_ID = 'unbound.no-blocked-messages';
-const SETTINGS_ROUTE = 'unbound.no-blocked-messages.settings';
-const STORE = storage.getStore(ADDON_ID);
+import { metro, patcher } from '@unbound-app/api';
 
 type ChatManager = {
 	setup(messages: Iterable<unknown>): void;
@@ -42,10 +38,6 @@ function getRuntime(): ChatRuntime {
 	};
 }
 
-function isEnabled(): boolean {
-	return STORE.get('enabled', true);
-}
-
 function refreshRows(): void {
 	const runtime = getRuntime();
 
@@ -73,7 +65,7 @@ function installPatches(): void {
 		});
 
 		unpatchCreateRow = patcher.instead(ChatManager.prototype, 'createRow', (context) => {
-			if (isEnabled() && context.args[0]?.type === 2) return;
+			if (context.args[0]?.type === 2) return;
 
 			return context.original.apply(context.this, context.args);
 		});
@@ -104,66 +96,13 @@ function removePatches(): void {
 	unpatchUpdatesQueueAdd = null;
 }
 
-function ReactNativeSettingsScreen() {
-	const ReactNative = metro.common.ReactNative;
-	const Discord = (metro.components as any)?.Discord;
-	const state = STORE.useSettingsStore();
-
-	if (!Discord?.TableRowGroup || !Discord?.TableRow) {
-		return (
-			<ReactNative.ScrollView contentContainerStyle={{ padding: 16 }}>
-				<ReactNative.Text>Settings are unavailable on this client build.</ReactNative.Text>
-			</ReactNative.ScrollView>
-		);
-	}
-
-	const SwitchRow = Discord.TableSwitchRow ?? Discord.TableRow;
-
-	return (
-		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-			<Discord.TableRowGroup title="Blocked Messages">
-				<SwitchRow
-					label="Hide Blocked Messages"
-					subLabel="Hide the collapsed blocked-message group in chat"
-					value={state.get('enabled', true)}
-					onValueChange={(value: boolean) => {
-						state.set('enabled', value);
-						refreshRows();
-					}}
-				/>
-			</Discord.TableRowGroup>
-		</ReactNative.ScrollView>
-	);
-}
-
-function registerSettingsPanel(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'No Blocked Messages',
-		parent: null,
-		addonId: ADDON_ID,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => ReactNativeSettingsScreen,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
 export default {
 	start() {
-		try {
-			registerSettingsPanel();
-		} catch { }
-
 		installPatches();
 		refreshRows();
 	},
 
 	stop() {
 		removePatches();
-		try {
-			settings.removeSettings(SETTINGS_ROUTE);
-		} catch { }
 	},
 };
