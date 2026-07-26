@@ -82,6 +82,8 @@ function installPatches(): void {
 			runtime.updatesQueue = context.this as ChatUpdatesQueue;
 		});
 	}
+
+	refreshRows();
 }
 
 function removePatches(): void {
@@ -99,7 +101,6 @@ function removePatches(): void {
 export default {
 	start() {
 		installPatches();
-		refreshRows();
 	},
 
 	stop() {
