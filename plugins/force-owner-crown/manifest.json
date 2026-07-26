@@ -1,7 +1,7 @@
 {
 	"id": "unbound.force-owner-crown",
 	"name": "Force Owner Crown",
-	"description": "Force the owner crown next to usernames even in large servers.",
+	"description": "Force the owner crown on messages from the server owner, even in large servers.",
 	"authors": [
 		{
 			"name": "Unbound Team",

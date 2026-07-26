@@ -4,6 +4,7 @@ const TYPING_INDICATOR_PATH = 'modules/chat/native/TypingIndicator.tsx';
 const AVATAR_GUTTER = 32;
 const AVATAR_GAP = 4;
 const AVATAR_HEIGHT = 16;
+const AVATAR_LIFT = 3;
 const AVATAR_OVERLAP = -6;
 const MAX_AVATARS = 3;
 
@@ -40,7 +41,7 @@ function TypingAvatars({ item, typingUsers }: { item: TypingItem; typingUsers: U
 			items={typingUsers}
 			max={MAX_AVATARS}
 			offsetAmount={AVATAR_OVERLAP}
-			style={{ height: AVATAR_HEIGHT, marginRight: AVATAR_GAP }}
+			style={{ height: AVATAR_HEIGHT, marginRight: AVATAR_GAP, paddingBottom: AVATAR_LIFT }}
 			renderItem={(user: User) => (
 				<components.Avatar
 					user={user}
