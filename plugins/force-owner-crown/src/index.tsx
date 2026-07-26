@@ -44,11 +44,7 @@ export default {
 
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
-				const row = ctx.result?.message;
-				if (!row) return;
-
-				applyCrown(row);
-				applyCrown(row.referencedMessage?.message);
+				applyCrown(ctx.result?.message);
 			} catch { }
 		});
 	},
