@@ -98,7 +98,7 @@ function contrastingTextColor(background: string): string {
 }
 
 function resolveBackground(tag: TagDefinition, guild: any, user: any): string | null {
-	if (STORE.get('useRoleColor', false) && guild && members) {
+	if (STORE.get('useRoleColor', true) && guild && members) {
 		const colorString = members.getMember?.(guild.id, user?.id)?.colorString;
 		if (colorString) return colorString;
 	}
@@ -188,7 +188,7 @@ function MoreUserTagsSettings() {
 				<SwitchRow
 					label="Use Role Colour"
 					subLabel="Colour tags with the member's role colour where they have one"
-					value={state.get('useRoleColor', false)}
+					value={state.get('useRoleColor', true)}
 					onValueChange={(value: boolean) => state.set('useRoleColor', value)}
 				/>
 			</Discord.TableRowGroup>

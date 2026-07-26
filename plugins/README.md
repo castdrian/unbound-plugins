@@ -11,7 +11,7 @@
 | Force Owner Crown | Always show the owner crown on the server owner's messages. | 1.0.0 | Unbound Team |
 | More User Tags | Adds tags for webhooks and moderative roles. | 1.0.0 | Unbound Team |
 | No Blocked Messages | Hides messages from blocked users completely. | 1.0.0 | Unbound Team |
-| No Reply Mention | Disable reply pings by default. | 1.0.0 | Unbound Team |
+| No Reply Mention | Disable reply mentions by default. | 1.0.0 | Unbound Team |
 | Preview Message | Preview a message before sending it. | 1.0.0 | Unbound Team |
 | ReviewDB | Leave reviews on other users' profiles and see what others think of you. | 1.0.0 | Unbound Team |
 | Show Me Your Name | Display usernames next to display names, or show usernames only. | 1.0.0 | Unbound Team |

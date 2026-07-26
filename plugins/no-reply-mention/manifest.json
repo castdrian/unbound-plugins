@@ -1,7 +1,7 @@
 {
 	"id": "unbound.no-reply-mention",
 	"name": "No Reply Mention",
-	"description": "Disable reply pings by default.",
+	"description": "Disable reply mentions by default.",
 	"authors": [
 		{
 			"name": "Unbound Team",
