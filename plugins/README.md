@@ -1,6 +1,6 @@
 # Plugins
 
-11 plugins in this workspace.
+12 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -8,6 +8,7 @@
 | --- | --- | --- | --- |
 | Aussie Mode | Discord designed for Aussies. | 1.0.0 | adrian |
 | Clear URLs | Removes tracking garbage from URLs before you send them. | 1.0.0 | Unbound Team |
+| Expression Tools | Useful tools for custom emojis and stickers. | 1.0.0 | Unbound Team |
 | Force Owner Crown | Always show the owner crown on the server owner's messages. | 1.0.0 | Unbound Team |
 | More User Tags | Adds tags for webhooks and moderative roles. | 1.0.0 | Unbound Team |
 | No Blocked Messages | Hides messages from blocked users completely. | 1.0.0 | Unbound Team |
