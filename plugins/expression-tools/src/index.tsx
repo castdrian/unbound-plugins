@@ -354,18 +354,18 @@ function ExpressionActionBar({ expression, sheetKey }: { expression: Expression;
 		}
 		getSheets()?.hideActionSheet?.(sheetKey);
 	};
-	const compactButton = (label: string, onPress: () => void, emphasized = false, disabled = false) => (
+	const compactButton = (label: string, onPress: () => void, disabled = false) => (
 		<ReactNative.Pressable
 			disabled={disabled}
 			onPress={onPress}
-			style={({ pressed }: { pressed: boolean }) => ({ alignItems: 'center', backgroundColor: emphasized ? (pressed ? '#4752c4' : '#5865f2') : (pressed ? '#3a3c42' : '#323338'), borderRadius: 9, flex: 1, justifyContent: 'center', minHeight: 38, opacity: disabled ? 0.55 : 1, paddingHorizontal: 6 })}
+			style={({ pressed }: { pressed: boolean }) => ({ alignItems: 'center', backgroundColor: pressed ? '#4752c4' : '#5865f2', borderRadius: 9, flex: 1, justifyContent: 'center', minHeight: 38, opacity: disabled ? 0.55 : 1, paddingHorizontal: 6 })}
 		>
 			<ReactNative.Text numberOfLines={1} style={{ color: '#f2f3f5', fontSize: 12, fontWeight: '700' }}>{label}</ReactNative.Text>
 		</ReactNative.Pressable>
 	);
 
 	return (
-		<ReactNative.View style={{ backgroundColor: '#1e1f22', borderRadius: 14, flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 10, padding: 6 }}>
+		<ReactNative.View style={{ flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 10 }}>
 			{compactButton('Copy URL', () => { close(); copyText(getExpressionLink(expression), 'URL copied to the clipboard.'); })}
 			{expression.kind === 'emoji'
 				? compactButton('Copy markup', () => { close(); copyText(getMarkup(expression), 'Emoji markup copied to the clipboard.'); })
@@ -377,8 +377,8 @@ function ExpressionActionBar({ expression, sheetKey }: { expression: Expression;
 						.then(() => setFavorite((value: boolean) => !value))
 						.catch(showError)
 						.finally(() => setUpdatingFavorite(false));
-				}, false, updatingFavorite)}
-			{compactButton('Clone', () => { close(); openCloneSheet(expression); }, true)}
+				}, updatingFavorite)}
+			{compactButton('Clone', () => { close(); openCloneSheet(expression); })}
 		</ReactNative.View>
 	);
 }
