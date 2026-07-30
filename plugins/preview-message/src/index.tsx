@@ -17,6 +17,7 @@ const SHOW_MS = 70;
 const HIDE_MS = 25;
 const FADE_IN_MS = 160;
 const FADE_OUT_MS = 120;
+const EMPTY_STICKERS: any[] = [];
 
 let unpatch: (() => void) | null = null;
 let drafts: any = null;
@@ -27,6 +28,7 @@ let messageRecord: any = null;
 let rowManager: any = null;
 let haptics: any = null;
 let eyeIcon: number | null = null;
+let stickerPreviews: any = null;
 
 function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	let holder = mod;
@@ -47,7 +49,7 @@ function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	return typeof current === 'function' ? { holder, prop } : null;
 }
 
-function buildRecord(channelId: string, content: string) {
+function buildRecord(channelId: string, content: string, stickers: any[]) {
 	return new messageRecord({
 		id: '0',
 		type: 0,
@@ -66,8 +68,8 @@ function buildRecord(channelId: string, content: string) {
 		flags: 0,
 		components: [],
 		reactions: [],
-		sticker_items: [],
-		stickers: [],
+		sticker_items: stickers,
+		stickers,
 		state: 'SENT',
 		nonce: null,
 	});
@@ -76,10 +78,12 @@ function buildRecord(channelId: string, content: string) {
 function PreviewOverlay({
 	channelId,
 	content,
+	stickers,
 	onClose,
 }: {
 	channelId: string;
 	content: string;
+	stickers: any[];
 	onClose: () => void;
 }) {
 	const { React, ReactNative } = metro.common;
@@ -106,7 +110,7 @@ function PreviewOverlay({
 
 	let body: any;
 	try {
-		const record = buildRecord(channelId, content);
+		const record = buildRecord(channelId, content, stickers);
 		const generator = new rowManager();
 		generator.generate({ rowType: MESSAGE_ROW_TYPE, message: record });
 		body = <ChatItem rowGenerator={generator} message={record} />;
@@ -172,8 +176,15 @@ function PreviewButton({ channelId }: { channelId: string }) {
 		},
 		() => drafts.getDraft(channelId, CHANNEL_MESSAGE_DRAFT_TYPE) ?? '',
 	);
+	const stickers = React.useSyncExternalStore(
+		(onChange: () => void) => {
+			stickerPreviews?.addChangeListener?.(onChange);
+			return () => stickerPreviews?.removeChangeListener?.(onChange);
+		},
+		() => stickerPreviews?.getStickerPreview?.(channelId, false) ?? EMPTY_STICKERS,
+	);
 
-	const visible = Boolean(draft.trim());
+	const visible = Boolean(draft.trim() || stickers.length);
 	const progress = React.useRef(new ReactNative.Animated.Value(visible ? 1 : 0)).current;
 
 	React.useEffect(() => {
@@ -236,6 +247,7 @@ function PreviewButton({ channelId }: { channelId: string }) {
 					<PreviewOverlay
 						channelId={channelId}
 						content={draft}
+						stickers={stickers}
 						onClose={() => setOpen(false)}
 					/>
 				</Portal>
@@ -247,6 +259,7 @@ function PreviewButton({ channelId }: { channelId: string }) {
 export default {
 	start() {
 		drafts = metro.findByProps('getDraft');
+		stickerPreviews = metro.findByProps('getStickerPreview');
 		selectedChannel = metro.findByProps('getLastSelectedChannelId', 'getChannelId');
 		users = metro.findByProps('getCurrentUser', 'getUser');
 		chatItem = metro.findByFilePath(CHAT_ITEM_PATH)?.default;
@@ -255,7 +268,7 @@ export default {
 		haptics = metro.findByFilePath(HAPTICS_PATH);
 		eyeIcon = assets.getIDByName('EyeIcon');
 
-		if (!drafts?.getDraft || !users?.getCurrentUser || !chatItem || !messageRecord) return;
+		if (!drafts?.getDraft || !stickerPreviews?.getStickerPreview || !users?.getCurrentUser || !chatItem || !messageRecord) return;
 		if (!rowManager || !selectedChannel || eyeIcon == null) return;
 
 		const target = unwrapComponent(metro.findByFilePath(RIGHT_ACTIONS_PATH, { interop: false }));
@@ -289,5 +302,6 @@ export default {
 		rowManager = null;
 		haptics = null;
 		eyeIcon = null;
+		stickerPreviews = null;
 	},
 };
