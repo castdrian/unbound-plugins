@@ -6,10 +6,14 @@ const STORE = storage.getStore(ADDON_ID);
 
 let unpatch: (() => void) | null = null;
 let users: { getUser?: (id: string) => Author | undefined } | null = null;
+let relationships: {
+	getNickname?: (userId: string) => string | null;
+} | null = null;
 
 type Mode = 'user-nick' | 'nick-user' | 'user';
 
 interface Author {
+	id?: string;
 	username?: string;
 	globalName?: string;
 }
@@ -33,7 +37,8 @@ function buildLabel(author: Author | undefined, displayed: string | undefined): 
 	if (!username) return null;
 
 	const prefix = displayed.startsWith('@') ? '@' : '';
-	const nick = prefix ? displayed.slice(1) : displayed;
+	const friendNickname = STORE.get('friendNicknames', true) && author.id ? relationships?.getNickname?.(author.id) : null;
+	const nick = friendNickname ?? (prefix ? displayed.slice(1) : displayed);
 	const tag = `@${username}`;
 
 	if (username === nick) return displayed;
@@ -92,6 +97,12 @@ function ReactNativeSettingsScreen() {
 
 			<Discord.TableRowGroup title="Preferences">
 				<SwitchRow
+					label="Show Friend Nicknames"
+					subLabel="Prefer a friend's nickname wherever it applies"
+					value={state.get('friendNicknames', true)}
+					onValueChange={(value: boolean) => state.set('friendNicknames', value)}
+				/>
+				<SwitchRow
 					label="Use Global Names"
 					subLabel="Show the account's global name instead of its username"
 					value={state.get('displayNames', false)}
@@ -132,6 +143,7 @@ export default {
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
 		users = metro.findByProps('getCurrentUser', 'getUser');
+		relationships = metro.findStore('RelationshipStore', { short: false });
 
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
@@ -151,6 +163,7 @@ export default {
 		unpatch?.();
 		unpatch = null;
 		users = null;
+		relationships = null;
 		try {
 			settings.removeSettings(SETTINGS_ROUTE);
 		} catch { }
