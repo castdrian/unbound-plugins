@@ -6,7 +6,7 @@ const STORE = storage.getStore(ADDON_ID);
 
 type Mention = {
 	avatarURL?: string;
-	label: string;
+	labels: string[];
 	type: 'role' | 'user';
 };
 
@@ -21,8 +21,12 @@ type User = {
 let unpatch: (() => void) | null = null;
 let users: { getUser?: (id: string) => User | undefined } | null = null;
 let members: { getMember?: (guildId: string, userId: string) => { nick?: string } | undefined } | null = null;
-let roles: { getRole?: (guildId: string, roleId: string) => { icon?: string | null; id: string; name?: string } | undefined } | null = null;
-const mentionIndex = new Map<string, Mention>();
+let channels: { getChannel?: (channelId: string) => { guild_id?: string; guildId?: string } | undefined } | null = null;
+let roles: {
+	getRole?: (guildId: string, roleId: string) => { icon?: string | null; id: string; name?: string } | undefined;
+	getSortedRoles?: (guildId: string) => unknown[];
+} | null = null;
+const messageMentionIndex = new Map<string, Mention[]>();
 
 function getBridge(): { clearMentionAvatars?: () => void; setMentionAvatars?: (mentions: string) => void } | null {
 	return (globalThis as any).UnboundNative?.chat ?? null;
@@ -39,18 +43,18 @@ function userAvatarURL(user: User, guildId?: string): string | undefined {
 	return undefined;
 }
 
-function addUserMentions(mentions: Map<string, Mention>, userId: string, guildId?: string): void {
+function userMention(userId: string, guildId?: string): Mention | undefined {
 	const user = users?.getUser?.(userId);
 	if (!user) return;
 
-	const labels = [members?.getMember?.(guildId ?? '', userId)?.nick, user.globalName, user.username];
-	for (const label of labels) {
-		if (!label) continue;
-		mentions.set(`user:${label}`, { avatarURL: userAvatarURL(user, guildId), label, type: 'user' });
-	}
+	const labels = [members?.getMember?.(guildId ?? '', userId)?.nick, user.globalName, user.username].filter(
+		(label): label is string => Boolean(label),
+	);
+	if (labels.length === 0) return;
+	return { avatarURL: userAvatarURL(user, guildId), labels: [...new Set(labels)], type: 'user' };
 }
 
-function addRoleMention(mentions: Map<string, Mention>, roleId: string, guildId?: string): void {
+function roleMention(roleId: string, guildId?: string): Mention | undefined {
 	if (!guildId) return;
 	const role = roles?.getRole?.(guildId, roleId);
 	if (!role?.name) return;
@@ -58,40 +62,48 @@ function addRoleMention(mentions: Map<string, Mention>, roleId: string, guildId?
 	const avatarURL = role.icon
 		? `https://cdn.discordapp.com/role-icons/${role.id}/${role.icon}.png?size=32&quality=lossless`
 		: undefined;
-	mentions.set(`role:${role.name}`, { avatarURL, label: role.name, type: 'role' });
+	return { avatarURL, labels: [role.name], type: 'role' };
+}
+
+function guildIdForMessage(message: any): string | undefined {
+	const directGuildId = message?.guild_id ?? message?.guildId;
+	if (directGuildId) return directGuildId;
+	const channelId = message?.channel_id ?? message?.channelId;
+	const channel = channelId ? channels?.getChannel?.(channelId) : undefined;
+	return channel?.guild_id ?? channel?.guildId;
 }
 
 function collectMentions(message: any): Mention[] {
-	const mentions = new Map<string, Mention>();
-	const guildId = message?.guild_id ?? message?.guildId;
+	const mentions: Mention[] = [];
+	const guildId = guildIdForMessage(message);
 	const content = message?.content;
 	if (typeof content !== 'string') return [];
 
 	for (const match of content.matchAll(/<@!?(\d+)>|<@&(\d+)>/g)) {
-		if (match[1]) addUserMentions(mentions, match[1], guildId);
-		if (match[2]) addRoleMention(mentions, match[2], guildId);
+		const mention = match[1] ? userMention(match[1], guildId) : roleMention(match[2], guildId);
+		if (mention) mentions.push(mention);
 	}
 
-	return [...mentions.values()];
+	return mentions;
 }
 
 function addMentions(message: any): boolean {
-	let changed = false;
-	for (const mention of collectMentions(message)) {
-		const key = `${mention.type}:${mention.label}`;
-		const existing = mentionIndex.get(key);
-		if (existing?.avatarURL === mention.avatarURL) continue;
-		mentionIndex.set(key, mention);
-		changed = true;
-	}
-	return changed;
+	const id = message?.id;
+	if (typeof id !== 'string') return false;
+	const mentions = collectMentions(message);
+	if (JSON.stringify(messageMentionIndex.get(id)) === JSON.stringify(mentions)) return false;
+	messageMentionIndex.set(id, mentions);
+	return true;
 }
 
 function sendMentions(): void {
 	const bridge = getBridge();
 	if (!bridge?.setMentionAvatars) return;
 	bridge.setMentionAvatars(
-		JSON.stringify({ mentions: [...mentionIndex.values()], showAtSymbol: STORE.get('showAtSymbol', true) }),
+		JSON.stringify({
+			messages: [...messageMentionIndex].map(([id, mentions]) => ({ id, mentions })),
+			showAtSymbol: STORE.get('showAtSymbol', true),
+		}),
 	);
 }
 
@@ -107,7 +119,10 @@ function hydrateMentions(): void {
 function start(): void {
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
-	roles = metro.findStore('GuildRole');
+	channels = metro.findByProps('getChannel');
+	roles = metro.find(
+		(module) => typeof module?.getRole === 'function' && typeof module?.getSortedRoles === 'function',
+	);
 
 	const target = metro.findByFilePath(ROW_GENERATOR_PATH);
 	if (typeof target?.generateMessageRowData !== 'function') return;
@@ -126,8 +141,9 @@ export default {
 		unpatch = null;
 		users = null;
 		members = null;
+		channels = null;
 		roles = null;
-		mentionIndex.clear();
+		messageMentionIndex.clear();
 		getBridge()?.clearMentionAvatars?.();
 	},
 };
