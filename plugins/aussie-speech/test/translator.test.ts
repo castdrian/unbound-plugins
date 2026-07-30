@@ -3,9 +3,10 @@ import { expect, test } from 'bun:test';
 import { australianSpellings, mappings } from '../src/lexicon';
 import { translate } from '../src/translator';
 
-test('keeps the lexicon lowercase and free of duplicate sources', () => {
+test('keeps the lexicon lowercase with distinct mappings and sources', () => {
 	const sources = mappings.map(([source]) => source);
 	expect(sources.every((source) => source === source.toLowerCase())).toBe(true);
+	expect(mappings.every(([source, replacement]) => source.toLowerCase() !== replacement.toLowerCase())).toBe(true);
 	expect(new Set(sources).size).toBe(sources.length);
 	expect(Object.keys(australianSpellings).every((source) => source === source.toLowerCase())).toBe(true);
 });
