@@ -7,7 +7,7 @@
 | Plugin | Description | Version | Authors |
 | --- | --- | --- | --- |
 | Aussie Mode | Discord designed for Aussies. | 1.0.0 | adrian |
-| Aussie Speech | Turns every message into unapologetically Australian English before you send it. | 1.0.0 | adrian |
+| Aussie Speech | Turns every message into Australian English before you send it. | 1.0.0 | adrian |
 | Clear URLs | Removes tracking garbage from URLs before you send them. | 1.0.0 | Unbound Team |
 | Expression Tools | Useful tools for custom emojis and stickers. | 1.0.0 | Unbound Team |
 | Force Owner Crown | Always show the owner crown on the server owner's messages. | 1.0.0 | Unbound Team |
