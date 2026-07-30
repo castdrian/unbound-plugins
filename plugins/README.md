@@ -1,6 +1,6 @@
 # Plugins
 
-15 plugins in this workspace.
+16 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -21,5 +21,6 @@
 | Show Me Your Name | Display usernames next to display names, or show usernames only. | 1.0.0 | Unbound Team |
 | Translate | Translate messages. | 1.0.0 | Unbound Team |
 | Typing Avatars | Shows the avatars of people typing in the channel. | 1.0.0 | Unbound Team |
+| View Raw | Copy and view the raw content and data of messages. | 1.0.0 | Unbound Team |
 
 <!-- END AUTO-GENERATED -->

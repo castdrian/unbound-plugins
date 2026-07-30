@@ -1,0 +1,14 @@
+{
+	"id": "unbound.view-raw",
+	"name": "View Raw",
+	"description": "Copy and view the raw content and data of messages.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "ChevronLargeRightIcon",
+	"main": "index.tsx"
+}
