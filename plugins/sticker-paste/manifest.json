@@ -1,0 +1,1 @@
+{"id":"unbound.sticker-paste","name":"Sticker Paste","description":"Keeps selected stickers in the chat box instead of sending them immediately.","authors":[{"name":"Unbound Team","id":"0"}],"version":"1.0.0","icon":"StickerIcon","main":"index.tsx"}
