@@ -1,0 +1,14 @@
+{
+	"id": "unbound.pronoundb",
+	"name": "PronounDB",
+	"description": "Adds pronouns to user messages using PronounDB.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "UserSquareIcon",
+	"main": "index.tsx"
+}
