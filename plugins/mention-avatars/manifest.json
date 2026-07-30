@@ -1,0 +1,14 @@
+{
+	"id": "unbound.mention-avatars",
+	"name": "Mention Avatars",
+	"description": "Shows user avatars and role icons inside mentions.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "UserCircleIcon",
+	"main": "index.ts"
+}
