@@ -39,6 +39,18 @@ function getOAuthError(url: string): string | null {
 	return null;
 }
 
+function getOAuthLocation(result: unknown): string | null {
+	if (typeof result === 'string') return result;
+	if (!result || typeof result !== 'object') return null;
+
+	const value = result as { location?: unknown; url?: unknown; redirectUrl?: unknown; redirectURL?: unknown };
+	for (const location of [value.location, value.url, value.redirectUrl, value.redirectURL]) {
+		if (typeof location === 'string') return location;
+	}
+
+	return null;
+}
+
 async function handleAuthResult(location: string, redirectUri: string): Promise<void> {
 	const errorCode = getQueryParam(location, 'error');
 	if (errorCode) {
@@ -106,9 +118,10 @@ async function handleAuthResult(location: string, redirectUri: string): Promise<
 	}
 }
 
-export function openDiscordLoginFlow(): void {
+export function openDiscordLoginFlow(onSettled?: () => void): void {
 	if (typeof metro?.findByProps !== 'function') {
 		toasts.showToast({ title: 'Translate', content: 'OAuth is unavailable.' });
+		onSettled?.();
 		return;
 	}
 
@@ -124,6 +137,7 @@ export function openDiscordLoginFlow(): void {
 
 			if (!modals?.pushModal || !modals?.popModal || !OAuth2AuthorizeModal) {
 				toasts.showToast({ title: 'Translate', content: 'OAuth modal is unavailable.' });
+				onSettled?.();
 				return;
 			}
 
@@ -134,14 +148,28 @@ export function openDiscordLoginFlow(): void {
 			const authorizeUrl =
 				typeof response.headers?.get === 'function' ? (response.headers.get('location') ?? response.url) : response.url;
 			const clientId = getQueryParam(authorizeUrl, 'client_id');
+			const state = getQueryParam(authorizeUrl, 'state');
 			const redirectUri = `${getApiBaseUrlSetting()}/auth/callback`;
 
-			if (!clientId) {
+			if (!clientId || !state) {
 				toasts.showToast({ title: 'Translate', content: 'OAuth configuration is incomplete.' });
+				onSettled?.();
 				return;
 			}
 
 			const key = 'unbound-translate-oauth2-authorize';
+			let completed = false;
+			const complete = (result: unknown) => {
+				if (completed) return;
+				completed = true;
+				const location = getOAuthLocation(result);
+				modals.popModal?.(key);
+				if (!location) {
+					onSettled?.();
+					return;
+				}
+				void handleAuthResult(location, redirectUri).finally(onSettled);
+			};
 
 			modals.pushModal({
 				key,
@@ -154,14 +182,13 @@ export function openDiscordLoginFlow(): void {
 					props: {
 						clientId,
 						redirectUri,
+						state,
 						scopes: ['identify', 'email', 'guilds'],
 						responseType: 'code',
 						permissions: 0n,
 						cancelCompletesFlow: false,
-						callback: ({ location }: { location?: string | null }) => {
-							if (!location) return;
-							void handleAuthResult(location, redirectUri);
-						},
+						callback: complete,
+						onClose: complete,
 						dismissOAuthModal: () => modals.popModal?.(key),
 					},
 				},
@@ -171,6 +198,7 @@ export function openDiscordLoginFlow(): void {
 				title: 'Translate',
 				content: error instanceof Error ? error.message : 'Connect flow failed unexpectedly.',
 			});
+			onSettled?.();
 		}
 	})();
 }

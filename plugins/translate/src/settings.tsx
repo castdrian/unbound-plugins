@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { metro, storage, toasts } from '@unbound-app/api';
 
 import {
@@ -60,6 +62,7 @@ export function TranslateSettingsScreen() {
 	const refreshConfigured = hasRefreshToken() || !!state.get('refreshToken', '');
 	const targetLanguage = getTargetLanguage();
 	const sourceLanguage = getSourceLanguage();
+	const [connecting, setConnecting] = useState(false);
 
 	if (!Discord?.TableRowGroup || !Discord?.TableRow) {
 		return (
@@ -73,10 +76,12 @@ export function TranslateSettingsScreen() {
 		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
 			<Discord.TableRowGroup title="Translate API">
 				<Discord.TableRow
-					label={refreshConfigured ? 'Reconnect Discord account' : 'Connect Discord account'}
-					subLabel={refreshConfigured ? 'Re-authenticate with Discord' : 'Sign in to enable translation'}
+					label={connecting ? 'Connecting Discord account…' : refreshConfigured ? 'Reconnect Discord account' : 'Connect Discord account'}
+					subLabel={connecting ? 'Finishing Discord authorization' : refreshConfigured ? 'Re-authenticate with Discord' : 'Sign in to enable translation'}
+					disabled={connecting}
 					onPress={() => {
-						openDiscordLoginFlow();
+						setConnecting(true);
+						openDiscordLoginFlow(() => setConnecting(false));
 					}}
 				/>
 			</Discord.TableRowGroup>
