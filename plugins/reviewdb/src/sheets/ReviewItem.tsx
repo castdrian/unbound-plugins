@@ -7,15 +7,27 @@ import { getCurrentUser } from '@reviewdb/auth';
 import { ReviewType, type Review } from '@reviewdb/entities';
 import { canBlockReviewAuthor, canDeleteReview, canReportReview, getCurrentUserId, showToast } from '@reviewdb/utils';
 
-function getDesignModule(): { Text?: any; Card?: any } | null {
+function getDesignModule(): { Text?: any; Card?: any; ContextMenu?: any } | null {
 	const discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as
-		| { Text?: any; Card?: any }
+		| { Text?: any; Card?: any; ContextMenu?: any }
 		| undefined;
 	if (discord?.Text) return discord;
 
 	if (typeof metro?.findByProps === 'function') {
-		const found = metro.findByProps('Text', 'Heading') as { Text?: any; Card?: any } | null;
+		const found = metro.findByProps('Text', 'Heading') as { Text?: any; Card?: any; ContextMenu?: any } | null;
 		if (found?.Text) return found;
+	}
+
+	return null;
+}
+
+function getFormsModule(): { FormRow?: any; FormSubLabel?: any } | null {
+	const forms = (metro as { components?: { Forms?: unknown } } | undefined)?.components?.Forms as { FormRow?: any } | undefined;
+	if (forms?.FormRow) return forms;
+
+	if (typeof metro?.findByProps === 'function') {
+		const found = metro.findByProps('FormSliderRow') as { FormRow?: any; FormSubLabel?: any } | null;
+		if (found?.FormRow) return found;
 	}
 
 	return null;
@@ -61,6 +73,7 @@ export default function ReviewItem({
 }) {
 	const ReactNative = metro.common.ReactNative;
 	const Discord = getDesignModule();
+	const Forms = getFormsModule();
 	const [expanded, setExpanded] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [localVote, setLocalVote] = useState<boolean | null>(review.userVote ?? null);
@@ -136,7 +149,116 @@ export default function ReviewItem({
 	const canDelete = canDeleteReview(profileId, review, myId);
 	const canReport = canReportReview(review, myId);
 	const canBlock = canBlockReviewAuthor(profileId, review, myId);
+	const voteControls = canVote ? (
+		<ReactNative.View style={{ alignItems: 'center', width: 24 }}>
+			<ReactNative.Pressable disabled={busy} onPress={() => handleVote(true)}>
+				<Discord.Text variant="text-md/bold" color={localVote === true ? 'header-primary' : 'text-muted'}>
+					+
+				</Discord.Text>
+			</ReactNative.Pressable>
+			<Discord.Text variant="text-sm/medium">{score}</Discord.Text>
+			<ReactNative.Pressable disabled={busy} onPress={() => handleVote(false)}>
+				<Discord.Text variant="text-md/bold" color={localVote === false ? 'header-primary' : 'text-muted'}>
+					-
+				</Discord.Text>
+			</ReactNative.Pressable>
+		</ReactNative.View>
+	) : null;
 
+	const actions = [
+		canReport ? { label: 'Report', variant: 'destructive', action: () => void handleReport() } : null,
+		canBlock ? { label: isAuthorBlocked ? 'Unblock' : 'Block', variant: isAuthorBlocked ? 'default' : 'destructive', action: () => void handleBlockToggle() } : null,
+		canDelete ? { label: 'Delete', variant: 'destructive', action: () => void handleDelete() } : null,
+	].filter(Boolean);
+
+	if (Forms?.FormRow) {
+		const label = (
+			<ReactNative.View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+				<Discord.Text variant="text-sm/semibold">{review.sender.username}</Discord.Text>
+				{review.type === ReviewType.System && <Tag label="SYSTEM" />}
+				{isAuthorBlocked && (
+					<Discord.Text variant="text-xs/medium" color="text-danger">
+						Blocked
+					</Discord.Text>
+				)}
+				{!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 && (
+					<Discord.Text variant="text-xs/medium" color="text-muted">
+						{dateFormatter.format(review.timestamp * 1000)}
+					</Discord.Text>
+				)}
+			</ReactNative.View>
+		);
+		const subLabel = Forms.FormSubLabel ? <Forms.FormSubLabel text={comment} /> : comment;
+
+		function renderRow(props: Record<string, unknown> = {}) {
+			return (
+			<Forms.FormRow
+				{...props}
+				label={label}
+				subLabel={subLabel}
+				leading={<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ width: 36, height: 36, borderRadius: 18 }} />}
+				trailing={voteControls}
+				style={{ paddingVertical: 4 }}
+			/>
+			);
+		}
+
+		if (!Discord.ContextMenu || !actions.length) return renderRow();
+
+		return <Discord.ContextMenu title="Review actions" items={actions}>{renderRow}</Discord.ContextMenu>;
+	}
+
+	const details = (
+		<ReactNative.View style={{ gap: 4 }}>
+			<ReactNative.View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+				<Discord.Text variant="text-sm/semibold">{review.sender.username}</Discord.Text>
+				{review.type === ReviewType.System && <Tag label="SYSTEM" />}
+				{isAuthorBlocked && (
+					<Discord.Text variant="text-xs/medium" color="text-danger">
+						Blocked
+					</Discord.Text>
+				)}
+				{!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 && (
+					<Discord.Text variant="text-xs/medium" color="text-muted">
+						{dateFormatter.format(review.timestamp * 1000)}
+					</Discord.Text>
+				)}
+			</ReactNative.View>
+			<Discord.Text variant="text-sm/normal">{truncated ? `${comment.slice(0, 200)}...` : comment}</Discord.Text>
+			{comment.length > 200 && (
+				<ReactNative.Pressable onPress={() => setExpanded((value) => !value)}>
+					<Discord.Text variant="text-xs/medium" color="text-link">
+						{expanded ? 'Show less' : 'Read more'}
+					</Discord.Text>
+				</ReactNative.Pressable>
+			)}
+			{(canDelete || canReport || canBlock) && review.id !== 0 && (
+				<ReactNative.View style={{ flexDirection: 'row', gap: 14 }}>
+					{canReport && (
+						<ReactNative.Pressable disabled={busy} onPress={handleReport}>
+							<Discord.Text variant="text-xs/medium" color="text-muted">
+								Report
+							</Discord.Text>
+						</ReactNative.Pressable>
+					)}
+					{canBlock && (
+						<ReactNative.Pressable disabled={busy} onPress={handleBlockToggle}>
+							<Discord.Text variant="text-xs/medium" color="text-muted">
+								{isAuthorBlocked ? 'Unblock' : 'Block'}
+							</Discord.Text>
+						</ReactNative.Pressable>
+					)}
+					{canDelete && (
+						<ReactNative.Pressable disabled={busy} onPress={handleDelete}>
+							<Discord.Text variant="text-xs/medium" color="text-danger">
+								Delete
+							</Discord.Text>
+						</ReactNative.Pressable>
+					)}
+				</ReactNative.View>
+			)}
+		</ReactNative.View>
+	);
 	const Container = Discord.Card ?? ReactNative.View;
 	const containerProps = Discord.Card
 		? { variant: 'secondary', border: 'subtle', radius: 8 }
@@ -154,75 +276,8 @@ export default function ReviewItem({
 				marginHorizontal: 12,
 			}}
 		>
-			{canVote && (
-				<ReactNative.View style={{ alignItems: 'center', width: 24 }}>
-					<ReactNative.Pressable disabled={busy} onPress={() => handleVote(true)}>
-						<Discord.Text variant="text-md/bold" color={localVote === true ? 'header-primary' : 'text-muted'}>
-							+
-						</Discord.Text>
-					</ReactNative.Pressable>
-					<Discord.Text variant="text-sm/medium">{score}</Discord.Text>
-					<ReactNative.Pressable disabled={busy} onPress={() => handleVote(false)}>
-						<Discord.Text variant="text-md/bold" color={localVote === false ? 'header-primary' : 'text-muted'}>
-							-
-						</Discord.Text>
-					</ReactNative.Pressable>
-				</ReactNative.View>
-			)}
-
-			<ReactNative.View style={{ flex: 1, gap: 4 }}>
-				<ReactNative.View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-					<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ width: 24, height: 24, borderRadius: 12 }} />
-					<Discord.Text variant="text-sm/semibold">{review.sender.username}</Discord.Text>
-					{review.type === ReviewType.System && <Tag label="SYSTEM" />}
-					{isAuthorBlocked && (
-						<Discord.Text variant="text-xs/medium" color="text-danger">
-							Blocked
-						</Discord.Text>
-					)}
-					{!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 && (
-						<Discord.Text variant="text-xs/medium" color="text-muted">
-							{dateFormatter.format(review.timestamp * 1000)}
-						</Discord.Text>
-					)}
-				</ReactNative.View>
-
-				<Discord.Text variant="text-sm/normal">{truncated ? `${comment.slice(0, 200)}...` : comment}</Discord.Text>
-
-				{comment.length > 200 && (
-					<ReactNative.Pressable onPress={() => setExpanded((value) => !value)}>
-						<Discord.Text variant="text-xs/medium" color="text-link">
-							{expanded ? 'Show less' : 'Read more'}
-						</Discord.Text>
-					</ReactNative.Pressable>
-				)}
-
-				{(canDelete || canReport || canBlock) && review.id !== 0 && (
-					<ReactNative.View style={{ flexDirection: 'row', gap: 14 }}>
-						{canReport && (
-							<ReactNative.Pressable disabled={busy} onPress={handleReport}>
-								<Discord.Text variant="text-xs/medium" color="text-muted">
-									Report
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-						{canBlock && (
-							<ReactNative.Pressable disabled={busy} onPress={handleBlockToggle}>
-								<Discord.Text variant="text-xs/medium" color="text-muted">
-									{isAuthorBlocked ? 'Unblock' : 'Block'}
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-						{canDelete && (
-							<ReactNative.Pressable disabled={busy} onPress={handleDelete}>
-								<Discord.Text variant="text-xs/medium" color="text-danger">
-									Delete
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-					</ReactNative.View>
-				)}
-			</ReactNative.View>
+			{voteControls}
+			<ReactNative.View style={{ flex: 1 }}>{details}</ReactNative.View>
 		</Container>
 	);
 }
