@@ -7,14 +7,14 @@ import { getCurrentUser } from '@reviewdb/auth';
 import { ReviewType, type Review } from '@reviewdb/entities';
 import { canBlockReviewAuthor, canDeleteReview, canReportReview, getCurrentUserId, showToast } from '@reviewdb/utils';
 
-function getDesignModule(): { Text?: any; Card?: any; ContextMenu?: any } | null {
+function getDesignModule(): { Text?: any; Card?: any } | null {
 	const discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as
-		| { Text?: any; Card?: any; ContextMenu?: any }
+		| { Text?: any; Card?: any }
 		| undefined;
 	if (discord?.Text) return discord;
 
 	if (typeof metro?.findByProps === 'function') {
-		const found = metro.findByProps('Text', 'Heading') as { Text?: any; Card?: any; ContextMenu?: any } | null;
+		const found = metro.findByProps('Text', 'Heading') as { Text?: any; Card?: any } | null;
 		if (found?.Text) return found;
 	}
 
@@ -78,6 +78,8 @@ export default function ReviewItem({
 	const [busy, setBusy] = useState(false);
 	const [localVote, setLocalVote] = useState<boolean | null>(review.userVote ?? null);
 	const [score, setScore] = useState(review.score ?? 0);
+	const [actionsVisible, setActionsVisible] = useState(false);
+	const [deleteArmed, setDeleteArmed] = useState(false);
 
 	const myId = getCurrentUserId();
 	const isOwnReview = review.sender.discordID === myId;
@@ -151,13 +153,23 @@ export default function ReviewItem({
 	const canBlock = canBlockReviewAuthor(profileId, review, myId);
 	const voteControls = canVote ? (
 		<ReactNative.View style={{ alignItems: 'center', width: 24 }}>
-			<ReactNative.Pressable disabled={busy} onPress={() => handleVote(true)}>
+			<ReactNative.Pressable
+				disabled={busy}
+				hitSlop={8}
+				onPress={() => handleVote(true)}
+				style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
+			>
 				<Discord.Text variant="text-md/bold" color={localVote === true ? 'header-primary' : 'text-muted'}>
 					+
 				</Discord.Text>
 			</ReactNative.Pressable>
 			<Discord.Text variant="text-sm/medium">{score}</Discord.Text>
-			<ReactNative.Pressable disabled={busy} onPress={() => handleVote(false)}>
+			<ReactNative.Pressable
+				disabled={busy}
+				hitSlop={8}
+				onPress={() => handleVote(false)}
+				style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
+			>
 				<Discord.Text variant="text-md/bold" color={localVote === false ? 'header-primary' : 'text-muted'}>
 					-
 				</Discord.Text>
@@ -165,11 +177,11 @@ export default function ReviewItem({
 		</ReactNative.View>
 	) : null;
 
-	const actions = [
-		canReport ? { label: 'Report', variant: 'destructive', action: () => void handleReport() } : null,
-		canBlock ? { label: isAuthorBlocked ? 'Unblock' : 'Block', variant: isAuthorBlocked ? 'default' : 'destructive', action: () => void handleBlockToggle() } : null,
-		canDelete ? { label: 'Delete', variant: 'destructive', action: () => void handleDelete() } : null,
-	].filter(Boolean);
+	function openReviewActions() {
+		if (!canDelete && !canReport && !canBlock) return;
+		setDeleteArmed(false);
+		setActionsVisible(true);
+	}
 
 	if (Forms?.FormRow) {
 		const label = (
@@ -199,16 +211,54 @@ export default function ReviewItem({
 				leading={<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ width: 36, height: 36, borderRadius: 18 }} />}
 				trailing={voteControls}
 				style={{ paddingVertical: 4 }}
+				onLongPress={openReviewActions}
 			/>
 			);
 		}
 
-		if (!Discord.ContextMenu || !actions.length) return renderRow();
-
 		return (
-			<Discord.ContextMenu title="Review actions" items={actions} triggerOnTap={false}>
-				{renderRow}
-			</Discord.ContextMenu>
+			<ReactNative.View>
+				{renderRow()}
+				{actionsVisible && (
+					<ReactNative.View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8 }}>
+						{canReport && (
+							<ReactNative.Pressable disabled={busy} onPress={() => void handleReport()}>
+								<Discord.Text variant="text-xs/medium" color="text-muted">
+									Report
+								</Discord.Text>
+							</ReactNative.Pressable>
+						)}
+						{canBlock && (
+							<ReactNative.Pressable disabled={busy} onPress={() => void handleBlockToggle()}>
+								<Discord.Text variant="text-xs/medium" color="text-muted">
+									{isAuthorBlocked ? 'Unblock' : 'Block'}
+								</Discord.Text>
+							</ReactNative.Pressable>
+						)}
+						{canDelete && (
+							<ReactNative.Pressable
+								disabled={busy}
+								onPress={() => {
+									if (deleteArmed) {
+										void handleDelete();
+										return;
+									}
+									setDeleteArmed(true);
+								}}
+							>
+								<Discord.Text variant="text-xs/medium" color="text-danger">
+									{deleteArmed ? 'Confirm delete' : 'Delete'}
+								</Discord.Text>
+							</ReactNative.Pressable>
+						)}
+						<ReactNative.Pressable onPress={() => setActionsVisible(false)}>
+							<Discord.Text variant="text-xs/medium" color="text-muted">
+								Close
+							</Discord.Text>
+						</ReactNative.Pressable>
+					</ReactNative.View>
+				)}
+			</ReactNative.View>
 		);
 	}
 
