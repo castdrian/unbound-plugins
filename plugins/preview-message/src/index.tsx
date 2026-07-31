@@ -90,42 +90,6 @@ function waitForRightActions(): void {
 	});
 }
 
-function patchNativeInput(): boolean {
-	if (unpatch) return true;
-
-	const target = unwrapComponent(
-		metro.find((module) => module?.default?.displayName === 'ChatInputNativeComponent', {
-			interop: false,
-		}),
-	);
-	if (!target) return false;
-
-	unpatch = patcher.after(target.holder, target.prop, (ctx) => {
-		const result = ctx.result as any;
-		const channelId = (ctx.args[0] as any)?.channel?.id ?? selectedChannel.getChannelId();
-		if (!result || !channelId) return result;
-
-		const { React, ReactNative } = metro.common;
-		return (
-			<ReactNative.View style={{ position: 'relative', flexShrink: 1 }}>
-				{result}
-				<ReactNative.View
-					style={{
-						position: 'absolute',
-						left: ReactNative.Dimensions.get('window').width - 200,
-						top: 1,
-						zIndex: 10,
-					}}
-				>
-					<PreviewButton channelId={channelId} />
-				</ReactNative.View>
-			</ReactNative.View>
-		);
-	});
-
-	return true;
-}
-
 function buildRecord(channelId: string, content: string, stickers: any[]) {
 	return new messageRecord({
 		id: '0',
@@ -223,7 +187,7 @@ function PreviewOverlay({
 					borderRadius: 14,
 					paddingVertical: 12,
 					maxHeight: '70%',
-					transform: [{ translateY: -32 }],
+					transform: [{ translateY: -64 }],
 				}}
 			>
 				<ReactNative.Text
@@ -349,7 +313,7 @@ export default {
 		if (!drafts?.getDraft || !stickerPreviews?.getStickerPreview || !users?.getCurrentUser || !chatItem || !messageRecord) return;
 		if (!rowManager || !selectedChannel || eyeIcon == null) return;
 
-		if (!patchNativeInput()) waitForRightActions();
+		waitForRightActions();
 	},
 
 	stop() {
