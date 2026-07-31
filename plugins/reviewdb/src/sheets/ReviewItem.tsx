@@ -205,7 +205,11 @@ export default function ReviewItem({
 
 		if (!Discord.ContextMenu || !actions.length) return renderRow();
 
-		return <Discord.ContextMenu title="Review actions" items={actions}>{renderRow}</Discord.ContextMenu>;
+		return (
+			<Discord.ContextMenu title="Review actions" items={actions} triggerOnTap={false}>
+				{renderRow}
+			</Discord.ContextMenu>
+		);
 	}
 
 	const details = (
