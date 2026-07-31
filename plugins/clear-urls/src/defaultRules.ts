@@ -117,6 +117,7 @@ export const defaultRules = [
 	'utm_campaign',
 	'utm_term',
 	'si@open.spotify.com',
+	'igsh',
 	'igshid',
 	'share_id@reddit.com',
 ];
