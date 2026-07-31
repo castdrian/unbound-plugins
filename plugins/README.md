@@ -1,6 +1,6 @@
 # Plugins
 
-16 plugins in this workspace.
+17 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -20,6 +20,7 @@
 | PronounDB | Adds pronouns to user messages using PronounDB. | 1.0.0 | Unbound Team |
 | ReviewDB | Leave reviews on other users' profiles and see what others think of you. | 1.0.0 | Unbound Team |
 | Show Me Your Name | Display usernames next to display names, or show usernames only. | 1.0.0 | Unbound Team |
+| TextReplace | Replace text in messages before you send them. | 1.0.0 | Unbound Team |
 | Translate | Translate messages. | 1.0.0 | Unbound Team |
 | View Raw | Copy and view the raw content and data of messages. | 1.0.0 | Unbound Team |
 
