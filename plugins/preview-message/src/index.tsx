@@ -29,6 +29,7 @@ let rowManager: any = null;
 let haptics: any = null;
 let eyeIcon: number | null = null;
 let stickerPreviews: any = null;
+let removeModuleListener: (() => boolean) | null = null;
 
 function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	let holder = mod;
@@ -47,6 +48,82 @@ function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	}
 
 	return typeof current === 'function' ? { holder, prop } : null;
+}
+
+function modulePath(id: string): string | undefined {
+	return (globalThis as any).window?.modules?.get(id)?.__filePath;
+}
+
+function patchRightActions(mod: any): boolean {
+	if (unpatch) return true;
+
+	const target = unwrapComponent(mod);
+	if (!target) return false;
+
+	unpatch = patcher.after(target.holder, target.prop, (ctx) => {
+		try {
+			const result = ctx.result as any;
+			if (!result?.props) return;
+
+			const channelId = (ctx.args[0] as any)?.channel?.id ?? selectedChannel.getChannelId();
+			if (!channelId) return;
+
+			const { React } = metro.common;
+			const children = React.Children.toArray(result.props.children);
+			children.unshift(<PreviewButton key="unbound-preview-message" channelId={channelId} />);
+
+			return React.cloneElement(result, null, ...children);
+		} catch { }
+	});
+
+	return true;
+}
+
+function waitForRightActions(): void {
+	const existing = metro.findByFilePath(RIGHT_ACTIONS_PATH, { interop: false });
+	if (patchRightActions(existing)) return;
+
+	removeModuleListener = metro.addListener((module, id) => {
+		if (modulePath(id) !== RIGHT_ACTIONS_PATH || !patchRightActions(module)) return;
+		removeModuleListener?.();
+		removeModuleListener = null;
+	});
+}
+
+function patchNativeInput(): boolean {
+	if (unpatch) return true;
+
+	const target = unwrapComponent(
+		metro.find((module) => module?.default?.displayName === 'ChatInputNativeComponent', {
+			interop: false,
+		}),
+	);
+	if (!target) return false;
+
+	unpatch = patcher.after(target.holder, target.prop, (ctx) => {
+		const result = ctx.result as any;
+		const channelId = (ctx.args[0] as any)?.channel?.id ?? selectedChannel.getChannelId();
+		if (!result || !channelId) return result;
+
+		const { React, ReactNative } = metro.common;
+		return (
+			<ReactNative.View style={{ position: 'relative', flexShrink: 1 }}>
+				{result}
+				<ReactNative.View
+					style={{
+						position: 'absolute',
+						left: ReactNative.Dimensions.get('window').width - 200,
+						top: 1,
+						zIndex: 10,
+					}}
+				>
+					<PreviewButton channelId={channelId} />
+				</ReactNative.View>
+			</ReactNative.View>
+		);
+	});
+
+	return true;
 }
 
 function buildRecord(channelId: string, content: string, stickers: any[]) {
@@ -146,6 +223,7 @@ function PreviewOverlay({
 					borderRadius: 14,
 					paddingVertical: 12,
 					maxHeight: '70%',
+					transform: [{ translateY: -32 }],
 				}}
 			>
 				<ReactNative.Text
@@ -271,29 +349,14 @@ export default {
 		if (!drafts?.getDraft || !stickerPreviews?.getStickerPreview || !users?.getCurrentUser || !chatItem || !messageRecord) return;
 		if (!rowManager || !selectedChannel || eyeIcon == null) return;
 
-		const target = unwrapComponent(metro.findByFilePath(RIGHT_ACTIONS_PATH, { interop: false }));
-		if (!target) return;
-
-		unpatch = patcher.after(target.holder, target.prop, (ctx) => {
-			try {
-				const result = ctx.result as any;
-				if (!result?.props) return;
-
-				const channelId = (ctx.args[0] as any)?.channel?.id ?? selectedChannel.getChannelId();
-				if (!channelId) return;
-
-				const { React } = metro.common;
-				const children = React.Children.toArray(result.props.children);
-				children.unshift(<PreviewButton key="unbound-preview-message" channelId={channelId} />);
-
-				return React.cloneElement(result, null, ...children);
-			} catch { }
-		});
+		if (!patchNativeInput()) waitForRightActions();
 	},
 
 	stop() {
 		unpatch?.();
 		unpatch = null;
+		removeModuleListener?.();
+		removeModuleListener = null;
 		drafts = null;
 		selectedChannel = null;
 		users = null;

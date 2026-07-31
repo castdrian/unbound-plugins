@@ -2,13 +2,6 @@ import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);
-const NATIVE_RECIPE = {
-	kind: 'inline-attributed-attachments',
-	cellClass: 'DCDMessageTableViewCell',
-	message: { ivar: 'viewModel', selectors: ['message', 'id'] },
-	marker: '@',
-	requiredAttribute: 'YYTextHighlight',
-};
 
 type Mention = {
 	avatarURL?: string;
@@ -34,12 +27,11 @@ let roles: {
 } | null = null;
 const messageMentionIndex = new Map<string, Mention[]>();
 
-function getNativeRecipes(): {
-	install?: (pluginId: string, recipe: string) => boolean;
-	remove?: (pluginId: string) => void;
-	setState?: (pluginId: string, state: string) => boolean;
+function getNativeChat(): {
+	setMentionAvatars?: (payload: string) => void;
+	clearMentionAvatars?: () => void;
 } | null {
-	return (globalThis as any).UnboundNative?.recipes ?? null;
+	return (globalThis as any).UnboundNative?.chat ?? null;
 }
 
 function pngURL(url: string): string {
@@ -107,24 +99,15 @@ function addMentions(message: any): boolean {
 }
 
 function sendMentions(): void {
-	const nativeRecipes = getNativeRecipes();
-	if (!nativeRecipes?.setState) return;
-	nativeRecipes.setState(
-		ADDON_ID,
+	const nativeChat = getNativeChat();
+	if (!nativeChat?.setMentionAvatars) return;
+	nativeChat.setMentionAvatars(
 		JSON.stringify({
-			records: [...messageMentionIndex].map(([id, mentions]) => ({
+			messages: [...messageMentionIndex].map(([id, mentions]) => ({
 				id,
-				decorations: mentions.map((mention) => ({
-					labels: mention.labels,
-					imageURL: mention.avatarURL,
-					fallbackSymbol: mention.type === 'role' ? 'person.2.fill' : undefined,
-					leading: mention.type === 'role' ? 4 : 2,
-					placement: mention.type === 'role' ? 'trailing' : 'leading',
-					shape: mention.type === 'role' ? 'square' : 'circle',
-					trailing: mention.type === 'role' ? 2 : 4,
-				})),
+				mentions,
 			})),
-			includeMarker: STORE.get('showAtSymbol', true),
+			showAtSymbol: STORE.get('showAtSymbol', true),
 		}),
 	);
 }
@@ -139,8 +122,7 @@ function hydrateMentions(): void {
 }
 
 function start(): void {
-	const nativeRecipes = getNativeRecipes();
-	if (!nativeRecipes?.install?.(ADDON_ID, JSON.stringify(NATIVE_RECIPE))) return;
+	if (!getNativeChat()?.setMentionAvatars) return;
 
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
@@ -169,6 +151,6 @@ export default {
 		channels = null;
 		roles = null;
 		messageMentionIndex.clear();
-		getNativeRecipes()?.remove?.(ADDON_ID);
+		getNativeChat()?.clearMentionAvatars?.();
 	},
 };

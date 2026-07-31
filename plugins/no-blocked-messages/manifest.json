@@ -9,6 +9,6 @@
 		}
 	],
 	"version": "1.0.0",
-	"icon": "ic_block",
+	"icon": "EyeSlashIcon",
 	"main": "index.tsx"
 }

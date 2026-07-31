@@ -21,7 +21,7 @@ function shouldMention(authorId: string | undefined): boolean {
 	if (!authorId) return false;
 
 	const listed = parseUserList().includes(authorId);
-	return STORE.get('shouldPingListed', false) ? listed : !listed;
+	return STORE.get('shouldPingListed', false) && listed;
 }
 
 function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRow?: any } | null {
@@ -62,7 +62,7 @@ function NoReplyMentionSettings() {
 					subLabel={
 						pingListed
 							? 'Replies mention only the users listed above'
-							: 'Replies mention everyone except the users listed above'
+							: 'Replies do not mention anyone by default'
 					}
 					value={pingListed}
 					onValueChange={(value: boolean) => state.set('shouldPingListed', value)}
