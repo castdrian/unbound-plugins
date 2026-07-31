@@ -1,6 +1,5 @@
 import { assets, metro, patcher } from '@unbound-app/api';
 
-const ROW_GENERATOR_PATH = 'modules/messages/native/renderer/MessageWithContent.tsx';
 const CROWN_ASSET = 'ic_crown_16px';
 const CROWN_LABEL = 'Server Owner';
 
@@ -39,7 +38,7 @@ export default {
 		crownSource = resolveCrownSource();
 		if (!crownSource) return;
 
-		const target = metro.findByFilePath(ROW_GENERATOR_PATH);
+		const target = metro.findByProps('generateMessageRowData');
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {

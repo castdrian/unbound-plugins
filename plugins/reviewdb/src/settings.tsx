@@ -1,13 +1,11 @@
-import { assets, metro, settings, storage } from '@unbound-app/api';
+import { metro, storage } from '@unbound-app/api';
 
 import { authorize } from '@reviewdb/auth';
 import { openBlockedUsersSheet } from '@reviewdb/sheets/BlockedUsersSheet';
 import { openReviewsSheet } from '@reviewdb/sheets/ReviewsSheet';
 import { getCurrentUserId } from '@reviewdb/utils';
 
-const ADDON_ID = 'unbound.reviewdb';
-const SETTINGS_ROUTE = 'unbound.reviewdb.settings';
-const STORE = storage.getStore(ADDON_ID);
+const STORE = storage.getStore('unbound.reviewdb');
 
 function getDesignModule(): {
 	TableRowGroup?: any;
@@ -29,22 +27,12 @@ function getDesignModule(): {
 	return null;
 }
 
-function ReviewDBIcon() {
-	const ReactNative = metro.common.ReactNative;
-	const id = assets.getIDByName('StarIcon') ?? assets.Icons?.StarIcon;
-	if (typeof id === 'number') {
-		return <ReactNative.Image source={id} style={{ width: 20, height: 20 }} />;
-	}
-
-	return <ReactNative.Text>R</ReactNative.Text>;
-}
-
 function openExternalLink(url: string): void {
 	const ReactNative = metro.common.ReactNative;
 	ReactNative.Linking?.openURL(url)?.catch?.(() => undefined);
 }
 
-function ReviewDBSettingsScreen() {
+export function ReviewDBSettingsScreen() {
 	const ReactNative = metro.common.ReactNative;
 	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
@@ -92,12 +80,6 @@ function ReviewDBSettingsScreen() {
 					onValueChange={(value: boolean) => state.set('notifyReviews', value)}
 				/>
 				<SwitchRow
-					label="Show Community Guidelines Warning"
-					subLabel="Display a warning to be respectful at the top of the reviews list"
-					value={state.get('showWarning', true)}
-					onValueChange={(value: boolean) => state.set('showWarning', value)}
-				/>
-				<SwitchRow
 					label="Hide Timestamps"
 					value={state.get('hideTimestamps', false)}
 					onValueChange={(value: boolean) => state.set('hideTimestamps', value)}
@@ -116,23 +98,4 @@ function ReviewDBSettingsScreen() {
 			</Discord.TableRowGroup>
 		</ReactNative.ScrollView>
 	);
-}
-
-export function registerReviewDBSettings(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'ReviewDB',
-		parent: null,
-		addonId: ADDON_ID,
-		IconComponent: ReviewDBIcon,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => ReviewDBSettingsScreen,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
-export function unregisterReviewDBSettings(): void {
-	settings.removeSettings(SETTINGS_ROUTE);
 }

@@ -1,6 +1,5 @@
 import { metro, patcher } from '@unbound-app/api';
 
-const TYPING_INDICATOR_PATH = 'modules/chat/native/TypingIndicator.tsx';
 const AVATAR_GUTTER = 32;
 const AVATAR_GAP = 4;
 const AVATAR_HEIGHT = 16;
@@ -59,10 +58,10 @@ function start(): void {
 
 	if (!components?.SummarizedIconRow || !components?.Avatar || !users?.getUser) return;
 
-	const target = metro.findByFilePath(TYPING_INDICATOR_PATH, { interop: false });
-	if (!target?.default) return;
+	const target = metro.findByProps('TypingIndicator') as { TypingIndicator?: unknown } | null;
+	if (typeof target?.TypingIndicator !== 'function') return;
 
-	unpatch = patcher.after(target, 'default', ({ result }) => {
+	unpatch = patcher.after(target, 'TypingIndicator', ({ result }) => {
 		const renderItem = result?.props?.renderItem;
 		const item = result?.props?.item as TypingItem | undefined;
 		const ids = item?.typingUserIds;

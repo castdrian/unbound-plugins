@@ -2,7 +2,6 @@ import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.pronoundb';
 const STORE = storage.getStore(ADDON_ID);
-const ROW_GENERATOR_PATH = 'modules/messages/native/renderer/MessageWithContent.tsx';
 const API_URL = 'https://pronoundb.org/api/v2/lookup';
 const REQUEST_BATCH_SIZE = 50;
 const REQUEST_INTERVAL_MS = 2000;
@@ -189,7 +188,7 @@ export default {
 		users = metro.findByProps('getCurrentUser');
 		channels = metro.findByProps('getChannel');
 		dispatcher = metro.findByProps('dispatch', 'subscribe');
-		const target = metro.findByFilePath(ROW_GENERATOR_PATH);
+		const target = metro.findByProps('generateMessageRowData');
 		if (!profiles || !users?.getCurrentUser || !target?.generateMessageRowData) return;
 
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {

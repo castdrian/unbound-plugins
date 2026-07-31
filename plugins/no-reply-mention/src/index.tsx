@@ -1,7 +1,6 @@
-import { metro, patcher, settings, storage } from '@unbound-app/api';
+import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.no-reply-mention';
-const SETTINGS_ROUTE = 'unbound.no-reply-mention.settings';
 const STORE = storage.getStore(ADDON_ID);
 
 let unpatch: (() => void) | null = null;
@@ -73,26 +72,8 @@ function NoReplyMentionSettings() {
 	);
 }
 
-function registerSettingsPanel(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'No Reply Mention',
-		parent: null,
-		addonId: ADDON_ID,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => NoReplyMentionSettings,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
 export default {
 	start() {
-		try {
-			registerSettingsPanel();
-		} catch { }
-
 		const actions = metro.findByProps('createPendingReply') as any;
 		if (typeof actions?.createPendingReply !== 'function') return;
 
@@ -107,8 +88,6 @@ export default {
 	stop() {
 		unpatch?.();
 		unpatch = null;
-		try {
-			settings.removeSettings(SETTINGS_ROUTE);
-		} catch { }
 	},
+	getSettingsPanel: () => <NoReplyMentionSettings />,
 };

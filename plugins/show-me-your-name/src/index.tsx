@@ -1,7 +1,6 @@
-import { metro, patcher, settings, storage } from '@unbound-app/api';
+import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.show-me-your-name';
-const SETTINGS_ROUTE = 'unbound.show-me-your-name.settings';
 const STORE = storage.getStore(ADDON_ID);
 
 let unpatch: (() => void) | null = null;
@@ -18,7 +17,6 @@ interface Author {
 	globalName?: string;
 }
 
-const ROW_GENERATOR_PATH = 'modules/messages/native/renderer/MessageWithContent.tsx';
 
 const MODES: { key: Mode; label: string; subLabel: string }[] = [
 	{ key: 'nick-user', label: 'Display name then username', subLabel: 'Display Name (@username)' },
@@ -119,27 +117,9 @@ function ReactNativeSettingsScreen() {
 	);
 }
 
-function registerSettingsPanel(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'Show Me Your Name',
-		parent: null,
-		addonId: ADDON_ID,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => ReactNativeSettingsScreen,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
 export default {
 	start() {
-		try {
-			registerSettingsPanel();
-		} catch { }
-
-		const target = metro.findByFilePath(ROW_GENERATOR_PATH);
+		const target = metro.findByProps('generateMessageRowData');
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
 		users = metro.findByProps('getCurrentUser', 'getUser');
@@ -164,8 +144,6 @@ export default {
 		unpatch = null;
 		users = null;
 		relationships = null;
-		try {
-			settings.removeSettings(SETTINGS_ROUTE);
-		} catch { }
 	},
+	getSettingsPanel: () => <ReactNativeSettingsScreen />,
 };

@@ -1,8 +1,14 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.mention-avatars';
-const ROW_GENERATOR_PATH = 'modules/messages/native/renderer/MessageWithContent.tsx';
 const STORE = storage.getStore(ADDON_ID);
+const NATIVE_RECIPE = {
+	kind: 'inline-attributed-attachments',
+	cellClass: 'DCDMessageTableViewCell',
+	message: { ivar: 'viewModel', selectors: ['message', 'id'] },
+	marker: '@',
+	requiredAttribute: 'YYTextHighlight',
+};
 
 type Mention = {
 	avatarURL?: string;
@@ -28,8 +34,12 @@ let roles: {
 } | null = null;
 const messageMentionIndex = new Map<string, Mention[]>();
 
-function getBridge(): { clearMentionAvatars?: () => void; setMentionAvatars?: (mentions: string) => void } | null {
-	return (globalThis as any).UnboundNative?.chat ?? null;
+function getNativeRecipes(): {
+	install?: (pluginId: string, recipe: string) => boolean;
+	remove?: (pluginId: string) => void;
+	setState?: (pluginId: string, state: string) => boolean;
+} | null {
+	return (globalThis as any).UnboundNative?.recipes ?? null;
 }
 
 function pngURL(url: string): string {
@@ -97,12 +107,24 @@ function addMentions(message: any): boolean {
 }
 
 function sendMentions(): void {
-	const bridge = getBridge();
-	if (!bridge?.setMentionAvatars) return;
-	bridge.setMentionAvatars(
+	const nativeRecipes = getNativeRecipes();
+	if (!nativeRecipes?.setState) return;
+	nativeRecipes.setState(
+		ADDON_ID,
 		JSON.stringify({
-			messages: [...messageMentionIndex].map(([id, mentions]) => ({ id, mentions })),
-			showAtSymbol: STORE.get('showAtSymbol', true),
+			records: [...messageMentionIndex].map(([id, mentions]) => ({
+				id,
+				decorations: mentions.map((mention) => ({
+					labels: mention.labels,
+					imageURL: mention.avatarURL,
+					fallbackSymbol: mention.type === 'role' ? 'person.2.fill' : undefined,
+					leading: mention.type === 'role' ? 4 : 2,
+					placement: mention.type === 'role' ? 'trailing' : 'leading',
+					shape: mention.type === 'role' ? 'square' : 'circle',
+					trailing: mention.type === 'role' ? 2 : 4,
+				})),
+			})),
+			includeMarker: STORE.get('showAtSymbol', true),
 		}),
 	);
 }
@@ -117,6 +139,9 @@ function hydrateMentions(): void {
 }
 
 function start(): void {
+	const nativeRecipes = getNativeRecipes();
+	if (!nativeRecipes?.install?.(ADDON_ID, JSON.stringify(NATIVE_RECIPE))) return;
+
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
 	channels = metro.findByProps('getChannel');
@@ -124,7 +149,7 @@ function start(): void {
 		(module) => typeof module?.getRole === 'function' && typeof module?.getSortedRoles === 'function',
 	);
 
-	const target = metro.findByFilePath(ROW_GENERATOR_PATH);
+	const target = metro.findByProps('generateMessageRowData');
 	if (typeof target?.generateMessageRowData !== 'function') return;
 
 	unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
@@ -144,6 +169,6 @@ export default {
 		channels = null;
 		roles = null;
 		messageMentionIndex.clear();
-		getBridge()?.clearMentionAvatars?.();
+		getNativeRecipes()?.remove?.(ADDON_ID);
 	},
 };

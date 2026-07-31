@@ -1,7 +1,6 @@
-import { metro, patcher, settings, storage } from '@unbound-app/api';
+import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.more-user-tags';
-const SETTINGS_ROUTE = 'unbound.more-user-tags.settings';
 const STORE = storage.getStore(ADDON_ID);
 
 type PermissionName =
@@ -196,26 +195,8 @@ function MoreUserTagsSettings() {
 	);
 }
 
-function registerSettingsPanel(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'More User Tags',
-		parent: null,
-		addonId: ADDON_ID,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => MoreUserTagsSettings,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
 export default {
 	start() {
-		try {
-			registerSettingsPanel();
-		} catch { }
-
 		permissionBits = (metro.findByProps('Permissions', 'ThemeTypes') as any)?.Permissions ?? null;
 		computePermissions =
 			(metro.findByProps('computePermissions', 'canEveryoneRole') as any)?.computePermissions ??
@@ -267,8 +248,6 @@ export default {
 		guilds = null;
 		channels = null;
 		members = null;
-		try {
-			settings.removeSettings(SETTINGS_ROUTE);
-		} catch { }
 	},
+	getSettingsPanel: () => <MoreUserTagsSettings />,
 };
