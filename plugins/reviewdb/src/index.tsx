@@ -3,7 +3,7 @@ import { storage, toasts } from '@unbound-app/api';
 import { getCurrentUserInfo } from '@reviewdb/api';
 import { hasToken, setCurrentUser } from '@reviewdb/auth';
 import { startReviewMenuPatch, stopReviewMenuPatch } from '@reviewdb/menu';
-import { registerReviewDBSettings, unregisterReviewDBSettings } from '@reviewdb/settings';
+import { ReviewDBSettingsScreen } from '@reviewdb/settings';
 
 const STORE = storage.getStore('unbound.reviewdb');
 
@@ -16,12 +16,6 @@ function showError(error: unknown): void {
 
 export default {
 	start() {
-		try {
-			registerReviewDBSettings();
-		} catch (error) {
-			showError(error);
-		}
-
 		try {
 			startReviewMenuPatch();
 		} catch (error) {
@@ -51,8 +45,6 @@ export default {
 			stopReviewMenuPatch();
 		} catch { }
 
-		try {
-			unregisterReviewDBSettings();
-		} catch { }
 	},
+	getSettingsPanel: () => <ReviewDBSettingsScreen />,
 };

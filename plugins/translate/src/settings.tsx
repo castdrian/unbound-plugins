@@ -1,4 +1,4 @@
-import { assets, metro, settings, storage, toasts } from '@unbound-app/api';
+import { metro, storage, toasts } from '@unbound-app/api';
 
 import {
 	getSourceLanguage,
@@ -10,8 +10,6 @@ import {
 import { openDiscordLoginFlow } from '@translate/oauth';
 import LanguagePickerSheet from '@translate/sheets/LanguagePickerSheet';
 
-const ADDON_ID = 'unbound.translate';
-const SETTINGS_ROUTE = 'unbound.translate.settings';
 const STORE = storage.getStore('unbound.translate');
 
 function getDesignModule(): {
@@ -31,16 +29,6 @@ function getDesignModule(): {
 	}
 
 	return null;
-}
-
-function TranslateIcon() {
-	const ReactNative = metro.common.ReactNative;
-	const id = assets.getIDByName('LanguageIcon') ?? assets.Icons.LanguageIcon;
-	if (typeof id === 'number') {
-		return <ReactNative.Image source={id} style={{ width: 20, height: 20 }} />;
-	}
-
-	return <ReactNative.Text>T</ReactNative.Text>;
 }
 
 function openLanguageSheet(options: {
@@ -65,7 +53,7 @@ function openLanguageSheet(options: {
 	});
 }
 
-function TranslateSettingsScreen() {
+export function TranslateSettingsScreen() {
 	const ReactNative = metro.common.ReactNative;
 	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
@@ -126,23 +114,4 @@ function TranslateSettingsScreen() {
 			</Discord.TableRowGroup>
 		</ReactNative.ScrollView>
 	);
-}
-
-export function registerTranslateSettings(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'Translate',
-		parent: null,
-		addonId: ADDON_ID,
-		IconComponent: TranslateIcon,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => TranslateSettingsScreen,
-		},
-	});
-}
-
-export function unregisterTranslateSettings(): void {
-	settings.removeSettings(SETTINGS_ROUTE);
 }

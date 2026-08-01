@@ -1,7 +1,6 @@
-import { metro, patcher, settings, storage } from '@unbound-app/api';
+import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.show-me-your-name';
-const SETTINGS_ROUTE = 'unbound.show-me-your-name.settings';
 const STORE = storage.getStore(ADDON_ID);
 
 let unpatch: (() => void) | null = null;
@@ -119,26 +118,8 @@ function ReactNativeSettingsScreen() {
 	);
 }
 
-function registerSettingsPanel(): void {
-	settings.registerSettings({
-		type: 'route',
-		key: SETTINGS_ROUTE,
-		useTitle: () => 'Show Me Your Name',
-		parent: null,
-		addonId: ADDON_ID,
-		screen: {
-			route: SETTINGS_ROUTE,
-			getComponent: () => ReactNativeSettingsScreen,
-		},
-	} as Parameters<typeof settings.registerSettings>[0]);
-}
-
 export default {
 	start() {
-		try {
-			registerSettingsPanel();
-		} catch { }
-
 		const target = metro.findByFilePath(ROW_GENERATOR_PATH);
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
@@ -164,8 +145,6 @@ export default {
 		unpatch = null;
 		users = null;
 		relationships = null;
-		try {
-			settings.removeSettings(SETTINGS_ROUTE);
-		} catch { }
 	},
+	getSettingsPanel: () => <ReactNativeSettingsScreen />,
 };
