@@ -66,11 +66,11 @@ export function parseRuleset(value: unknown): TextReplaceRuleset {
 		throw new Error('This is not valid JSON.');
 	}
 
-	if (!parsed || typeof parsed !== 'object') throw new Error('This is not a TextReplace ruleset.');
+	if (!parsed || typeof parsed !== 'object') throw new Error('This is not a Text Replace ruleset.');
 
 	const ruleset = parsed as { version?: unknown; stringRules?: unknown; regexRules?: unknown };
 	if (ruleset.version !== RULESET_VERSION || !Array.isArray(ruleset.stringRules) || !Array.isArray(ruleset.regexRules)) {
-		throw new Error('This TextReplace ruleset is unsupported.');
+		throw new Error('This Text Replace ruleset is unsupported.');
 	}
 
 	return {

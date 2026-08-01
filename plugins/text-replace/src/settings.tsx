@@ -141,13 +141,13 @@ async function exportRuleset(stringRules: TextReplaceRule[], regexRules: TextRep
 	if (typeof share?.share === 'function') {
 		try {
 			await share.share({ message: value });
-			toasts.showToast({ title: 'TextReplace', content: copied ? 'Ruleset copied and ready to share.' : 'Ruleset shared.' });
+			toasts.showToast({ title: 'Text Replace', content: copied ? 'Ruleset copied and ready to share.' : 'Ruleset shared.' });
 			return;
 		} catch { }
 	}
 
 	toasts.showToast({
-		title: 'TextReplace',
+		title: 'Text Replace',
 		content: copied ? 'Ruleset copied to your clipboard.' : 'Sharing is unavailable on this client build.',
 	});
 }
@@ -392,14 +392,14 @@ function RulesetTransfer({
 			onImported(parseRuleset(value));
 			setImportText('');
 		} catch (error) {
-			toasts.showToast({ title: 'TextReplace', content: error instanceof Error ? error.message : 'Could not import ruleset.' });
+			toasts.showToast({ title: 'Text Replace', content: error instanceof Error ? error.message : 'Could not import ruleset.' });
 		}
 	}
 
 	async function importClipboard(): Promise<void> {
 		const value = await readClipboard();
 		if (!value?.trim()) {
-			toasts.showToast({ title: 'TextReplace', content: 'Your clipboard does not contain a ruleset.' });
+		toasts.showToast({ title: 'Text Replace', content: 'Your clipboard does not contain a ruleset.' });
 			return;
 		}
 
@@ -422,7 +422,7 @@ function RulesetTransfer({
 				compact
 				label='Paste JSON'
 				multiline
-				placeholder='Paste exported TextReplace JSON here'
+				placeholder='Paste exported Text Replace JSON here'
 				value={importText}
 				onChange={setImportText}
 			/>
@@ -472,7 +472,7 @@ export function TextReplaceSettingsScreen() {
 		saveRules('stringRules', ruleset.stringRules);
 		saveRules('regexRules', ruleset.regexRules);
 		refresh();
-		toasts.showToast({ title: 'TextReplace', content: 'Ruleset imported.' });
+		toasts.showToast({ title: 'Text Replace', content: 'Ruleset imported.' });
 	}
 
 	if (editing) {
@@ -482,7 +482,7 @@ export function TextReplaceSettingsScreen() {
 	return (
 		<ReactNative.ScrollView contentContainerStyle={{ backgroundColor: colors.page, gap: 20, padding: 16, paddingBottom: 32 }}>
 			<ReactNative.View style={{ gap: 8 }}>
-				<ReactNative.Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>TextReplace</ReactNative.Text>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>Text Replace</ReactNative.Text>
 				<ReactNative.Text style={{ color: colors.muted, fontSize: 15, lineHeight: 21 }}>
 					Automatically rewrite messages before you send them.
 				</ReactNative.Text>
