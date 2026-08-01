@@ -7,6 +7,13 @@ export type TextReplaceRule = {
 	id: string;
 };
 
+export type TextReplaceRuleset = {
+	stringRules: TextReplaceRule[];
+	regexRules: TextReplaceRule[];
+};
+
+const RULESET_VERSION = 1;
+
 let ruleIndex = 0;
 
 export function createRule(): TextReplaceRule {
@@ -28,6 +35,48 @@ export function normalizeRules(value: unknown): TextReplaceRule[] {
 		onlyIfIncludes: typeof rule?.onlyIfIncludes === 'string' ? rule.onlyIfIncludes : '',
 		id: typeof rule?.id === 'string' && rule.id ? rule.id : createRule().id,
 	}));
+}
+
+function hasRuleContent(rule: TextReplaceRule): boolean {
+	return Boolean(rule.find || rule.replace || rule.onlyIfIncludes);
+}
+
+function exportRules(rules: TextReplaceRule[]): Array<Omit<TextReplaceRule, 'id'>> {
+	return rules.filter(hasRuleContent).map(({ find, replace, onlyIfIncludes }) => ({ find, replace, onlyIfIncludes }));
+}
+
+export function serializeRuleset(stringRules: TextReplaceRule[], regexRules: TextReplaceRule[]): string {
+	return JSON.stringify(
+		{
+			version: RULESET_VERSION,
+			stringRules: exportRules(stringRules),
+			regexRules: exportRules(regexRules),
+		},
+		null,
+		2,
+	);
+}
+
+export function parseRuleset(value: unknown): TextReplaceRuleset {
+	let parsed: unknown;
+
+	try {
+		parsed = typeof value === 'string' ? JSON.parse(value) : value;
+	} catch {
+		throw new Error('This is not valid JSON.');
+	}
+
+	if (!parsed || typeof parsed !== 'object') throw new Error('This is not a TextReplace ruleset.');
+
+	const ruleset = parsed as { version?: unknown; stringRules?: unknown; regexRules?: unknown };
+	if (ruleset.version !== RULESET_VERSION || !Array.isArray(ruleset.stringRules) || !Array.isArray(ruleset.regexRules)) {
+		throw new Error('This TextReplace ruleset is unsupported.');
+	}
+
+	return {
+		stringRules: normalizeRules(ruleset.stringRules).filter(hasRuleContent),
+		regexRules: normalizeRules(ruleset.regexRules).filter(hasRuleContent),
+	};
 }
 
 export function stringToRegex(value: string): RegExp {

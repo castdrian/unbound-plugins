@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { applyRules, stringToRegex, type TextReplaceRule } from './rules';
+import { applyRules, parseRuleset, serializeRuleset, stringToRegex, type TextReplaceRule } from './rules';
 
 function rule(find: string, replace: string, onlyIfIncludes: string = ''): TextReplaceRule {
 	return { find, replace, onlyIfIncludes, id: find };
@@ -26,4 +26,19 @@ test('accepts slash-delimited regexes and deduplicates flags', () => {
 
 test('keeps content unchanged when a regex is invalid', () => {
 	expect(applyRules('hello', [], [rule('/[/', 'goodbye')])).toBe('hello');
+});
+
+test('round-trips a ruleset without sharing internal ids', () => {
+	const source = rule('cat', 'dog', 'pets');
+	const encoded = serializeRuleset([source], [rule('/woof/gi', 'bark')]);
+	const decoded = parseRuleset(encoded);
+
+	expect(decoded.stringRules).toEqual([{ find: 'cat', replace: 'dog', onlyIfIncludes: 'pets', id: expect.any(String) }]);
+	expect(decoded.regexRules).toEqual([{ find: '/woof/gi', replace: 'bark', onlyIfIncludes: '', id: expect.any(String) }]);
+	expect(decoded.stringRules[0]?.id).not.toBe(source.id);
+});
+
+test('rejects unsupported rulesets', () => {
+	expect(() => parseRuleset('{"version":2,"stringRules":[],"regexRules":[]}')).toThrow('unsupported');
+	expect(() => parseRuleset('not json')).toThrow('valid JSON');
 });
