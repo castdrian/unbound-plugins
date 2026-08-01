@@ -1,6 +1,6 @@
 {
 	"id": "unbound.text-replace",
-	"name": "TextReplace",
+	"name": "Text Replace",
 	"description": "Replace text in messages before you send them.",
 	"authors": [
 		{

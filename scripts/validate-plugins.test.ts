@@ -47,6 +47,12 @@ test('enforces display name and description limits', () => {
 	expect(errors).toContain(`description must be at most ${PLUGIN_DESCRIPTION_MAX_LENGTH} characters`);
 });
 
+test('requires display names to separate words', () => {
+	const errors = validatePluginFolder('example-plugin', { ...validManifest, name: 'TextReplace' });
+
+	expect(errors).toContain('name must use title-case words separated by spaces');
+});
+
 test('enforces the plugin folder length limit', () => {
 	const folder = `a${'b'.repeat(PLUGIN_FOLDER_MAX_LENGTH)}`;
 	expect(validatePluginFolder(folder, validManifest)).toContain(

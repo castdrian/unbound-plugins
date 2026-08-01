@@ -1,6 +1,6 @@
 {
 	"id": "unbound.pronoundb",
-	"name": "PronounDB",
+	"name": "Pronoun DB",
 	"description": "Adds pronouns to user messages using PronounDB.",
 	"authors": [
 		{

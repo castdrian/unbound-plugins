@@ -7,6 +7,7 @@ export const PLUGIN_DESCRIPTION_MAX_LENGTH = 160;
 
 const FOLDER_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const ID_PATTERN = /^[a-z][a-z0-9-]*\.[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const DISPLAY_NAME_PATTERN = /^(?:[A-Z][a-z0-9]*|[A-Z]{2,}[a-z]?)(?: (?:[A-Z][a-z0-9]*|[A-Z]{2,}[a-z]?))*$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 type PluginManifest = {
@@ -43,6 +44,9 @@ export function validatePluginFolder(folder: string, manifest: unknown): string[
 
 	const data = manifest as PluginManifest;
 	validateText(data.name, 'name', PLUGIN_NAME_MAX_LENGTH, errors);
+	if (typeof data.name === 'string' && data.name.trim() && !DISPLAY_NAME_PATTERN.test(data.name)) {
+		errors.push('name must use title-case words separated by spaces');
+	}
 	validateText(data.description, 'description', PLUGIN_DESCRIPTION_MAX_LENGTH, errors);
 
 	if (typeof data.id !== 'string' || !ID_PATTERN.test(data.id)) {
