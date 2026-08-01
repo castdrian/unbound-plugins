@@ -53,6 +53,11 @@ test('requires display names to separate words', () => {
 	expect(errors).toContain('name must use title-case words separated by spaces');
 });
 
+test('allows established brand names with uppercase acronyms', () => {
+	expect(validatePluginFolder('example-plugin', { ...validManifest, name: 'PronounDB' })).toEqual([]);
+	expect(validatePluginFolder('example-plugin', { ...validManifest, name: 'ReviewDB' })).toEqual([]);
+});
+
 test('enforces the plugin folder length limit', () => {
 	const folder = `a${'b'.repeat(PLUGIN_FOLDER_MAX_LENGTH)}`;
 	expect(validatePluginFolder(folder, validManifest)).toContain(
