@@ -50,30 +50,6 @@ function showError(error: unknown): void {
 	});
 }
 
-function showTranslation(translated: string): void {
-	const Discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as
-		| { AlertModal?: any; AlertActionButton?: any; openAlert?: any; dismissAlert?: any }
-		| undefined;
-	if (!Discord?.AlertModal || !Discord?.AlertActionButton || !Discord?.openAlert) {
-		toasts.showToast({ title: 'Translated', content: translated });
-		return;
-	}
-
-	const key = 'unbound-translate-result';
-	Discord.openAlert(
-		key,
-		metro.common.React.createElement(Discord.AlertModal, {
-			title: 'Translation',
-			content: translated,
-			actions: metro.common.React.createElement(Discord.AlertActionButton, {
-				text: 'Close',
-				variant: 'primary',
-				onPress: () => Discord.dismissAlert?.(key),
-			}),
-		}),
-	);
-}
-
 async function translateMessage(message: MessageLike): Promise<void> {
 	const content = typeof message.content === 'string' ? message.content : '';
 	if (!content.trim()) {
@@ -82,7 +58,14 @@ async function translateMessage(message: MessageLike): Promise<void> {
 	}
 
 	const translated = await translateText(content);
-	showTranslation(translated);
+	const clipboard = metro?.common?.Clipboard;
+	if (!clipboard || typeof clipboard.setString !== 'function') {
+		toasts.showToast({ title: 'Translate Error', content: 'Clipboard API is unavailable.' });
+		return;
+	}
+
+	await clipboard.setString(translated);
+	toasts.showToast({ title: 'Translated', content: translated });
 }
 
 const patchedInstances = new WeakSet<object>();
