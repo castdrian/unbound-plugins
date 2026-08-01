@@ -1,17 +1,23 @@
 import { assets, metro, patcher } from '@unbound-app/api';
 
+import { resolveCrownSource } from './crown';
+
 const CROWN_ASSET = 'ic_crown_16px';
 const CROWN_LABEL = 'Server Owner';
 
 let unpatch: (() => void) | null = null;
-let crownSource: string | null = null;
+let assetUriResolver: { getAssetUriForEmbed?: (id: number) => unknown } | null = null;
 
-function resolveCrownSource(): string | null {
+function getCrownSource(): string | number | null {
 	const id = assets.getIDByName(CROWN_ASSET);
 	if (id == null) return null;
 
-	const resolved = metro.common.ReactNative.Image.resolveAssetSource(id);
-	return resolved?.uri ?? null;
+	if (!assetUriResolver) assetUriResolver = metro.findByProps('getAssetUriForEmbed');
+	return resolveCrownSource(
+		id,
+		(assetId) => metro.common.ReactNative.Image.resolveAssetSource(assetId),
+		(assetId) => assetUriResolver?.getAssetUriForEmbed?.(assetId),
+	);
 }
 
 function isGuildOwner(guildId: string | undefined, userId: string | undefined): boolean {
@@ -25,6 +31,9 @@ function applyCrown(rowMessage: any): void {
 	if (!rowMessage || rowMessage.roleIcon) return;
 	if (!isGuildOwner(rowMessage.guildId, rowMessage.authorId)) return;
 
+	const crownSource = getCrownSource();
+	if (crownSource == null) return;
+
 	rowMessage.roleIcon = {
 		source: crownSource,
 		name: CROWN_LABEL,
@@ -35,9 +44,6 @@ function applyCrown(rowMessage: any): void {
 
 export default {
 	start() {
-		crownSource = resolveCrownSource();
-		if (!crownSource) return;
-
 		const target = metro.findByProps('generateMessageRowData');
 		if (typeof target?.generateMessageRowData !== 'function') return;
 
@@ -49,8 +55,8 @@ export default {
 	},
 
 	stop() {
-		unpatch?.();
-		unpatch = null;
-		crownSource = null;
+	unpatch?.();
+	unpatch = null;
+	assetUriResolver = null;
 	},
 };
