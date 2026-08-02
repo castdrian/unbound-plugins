@@ -215,7 +215,6 @@ function PreviewOverlay({
 						borderRadius: 14,
 						paddingVertical: 12,
 						maxHeight: '70%',
-						transform: [{ translateY: -64 }],
 					}}
 				>
 					<ReactNative.Text
@@ -239,10 +238,18 @@ function PreviewButton({ channelId }: { channelId: string }) {
 	const { React, ReactNative } = metro.common;
 	const Portal = (metro.components as any).Portal.Portal;
 	const [open, setOpen] = React.useState(false);
+	const [slotVisible, setSlotVisible] = React.useState(false);
 	const keyboardTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+	const visibilityTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+	const slotVisibleRef = React.useRef(false);
+	const updateSlotVisible = (next: boolean) => {
+		slotVisibleRef.current = next;
+		setSlotVisible(next);
+	};
 
 	React.useEffect(() => () => {
 		if (keyboardTimer.current) clearTimeout(keyboardTimer.current);
+		if (visibilityTimer.current) clearTimeout(visibilityTimer.current);
 	}, []);
 
 	const draft = React.useSyncExternalStore(
@@ -291,22 +298,41 @@ function PreviewButton({ channelId }: { channelId: string }) {
 	};
 
 	React.useEffect(() => {
-		ReactNative.Animated.timing(progress, {
-			toValue: visible ? 1 : 0,
-			duration: visible ? SHOW_MS : HIDE_MS,
-			delay: visible ? SHOW_DELAY_MS : 0,
-			useNativeDriver: false,
-		}).start();
+		if (visibilityTimer.current) clearTimeout(visibilityTimer.current);
+		progress.stopAnimation();
+		progress.setValue(0);
+
+		if (visible) {
+			const show = () => {
+				visibilityTimer.current = null;
+				updateSlotVisible(true);
+				ReactNative.Animated.timing(progress, {
+					toValue: 1,
+					duration: SHOW_MS,
+					useNativeDriver: false,
+				}).start();
+			};
+
+			if (slotVisibleRef.current) show();
+			else visibilityTimer.current = setTimeout(show, SHOW_DELAY_MS);
+			return;
+		}
+
+		if (!slotVisibleRef.current) return;
+		visibilityTimer.current = setTimeout(() => {
+			visibilityTimer.current = null;
+			updateSlotVisible(false);
+		}, HIDE_MS);
 	}, [visible, progress]);
 
 	return (
 		<>
 			<ReactNative.Animated.View
 				style={{
-					width: visible ? BUTTON_SIZE : 0,
-					marginRight: visible ? 0 : -BUTTON_GAP,
+					width: slotVisible ? BUTTON_SIZE : 0,
+					marginRight: slotVisible ? 0 : -BUTTON_GAP,
 					height: BUTTON_SIZE,
-					opacity: progress,
+					opacity: visible ? progress : 0,
 					overflow: 'hidden',
 					alignItems: 'center',
 					justifyContent: 'center',
