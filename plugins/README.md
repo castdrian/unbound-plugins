@@ -1,6 +1,6 @@
 # Plugins
 
-19 plugins in this workspace.
+20 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -22,6 +22,7 @@
 | PronounDB | Adds pronouns to user messages using PronounDB. | 1.0.0 | Unbound Team |
 | ReviewDB | Leave reviews on other users' profiles and see what others think of you. | 1.0.0 | Unbound Team |
 | Show Me Your Name | Display usernames next to display names, or show usernames only. | 1.0.0 | Unbound Team |
+| Show Timeout Duration | Shows how much longer a user's timeout will last. | 1.0.0 | Unbound Team |
 | Text Replace | Replace text in messages before you send them. | 1.0.0 | Unbound Team |
 | Translate | Translate messages. | 1.0.0 | Unbound Team |
 | View Raw | View and copy raw data for messages, channels, guilds, and user profiles. | 1.0.0 | Unbound Team |
