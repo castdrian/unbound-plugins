@@ -1,5 +1,7 @@
 import { assets, metro, patcher } from '@unbound-app/api';
 
+import { extractUrls, fetchLinkEmbed, type LinkEmbed } from './embeds';
+
 const RIGHT_ACTIONS_PATH = 'modules/chat_input/native/action_buttons/ChatInputRightActions.tsx';
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const HAPTICS_PATH = 'modules/haptics/HapticUtils.native.tsx';
@@ -13,10 +15,12 @@ const ICON_MIN_SCALE = 0.6;
 const PRESS_OPACITY = 0.5;
 const PRESS_SCALE = 0.86;
 const SHOW_DELAY_MS = 60;
+const MAX_PREVIEW_URLS = 4;
 const SHOW_MS = 70;
 const HIDE_MS = 25;
 const FADE_IN_MS = 160;
 const FADE_OUT_MS = 120;
+const KEYBOARD_DISMISS_DELAY_MS = 350;
 const EMPTY_STICKERS: any[] = [];
 
 let unpatch: (() => void) | null = null;
@@ -27,6 +31,11 @@ let chatItem: any = null;
 let messageRecord: any = null;
 let rowManager: any = null;
 let haptics: any = null;
+let restApi: { post?: (options: { url: string; body: { urls: string[] } }) => Promise<{ body?: { embeds?: unknown[] } }> } | null = null;
+let chatInputs: {
+	getBestActiveInputForChannelId?: (channelId: string) => { closeCustomKeyboard?: () => void } | null;
+	dismissKeyboard?: () => void;
+} | null = null;
 let eyeIcon: number | null = null;
 let stickerPreviews: any = null;
 let removeModuleListener: (() => boolean) | null = null;
@@ -90,7 +99,7 @@ function waitForRightActions(): void {
 	});
 }
 
-function buildRecord(channelId: string, content: string, stickers: any[]) {
+function buildRecord(channelId: string, content: string, stickers: any[], embeds: LinkEmbed[]) {
 	return new messageRecord({
 		id: '0',
 		type: 0,
@@ -98,7 +107,7 @@ function buildRecord(channelId: string, content: string, stickers: any[]) {
 		content,
 		author: users.getCurrentUser(),
 		attachments: [],
-		embeds: [],
+		embeds,
 		mentions: [],
 		mention_roles: [],
 		timestamp: new Date(),
@@ -130,6 +139,20 @@ function PreviewOverlay({
 	const { React, ReactNative } = metro.common;
 	const ChatItem = chatItem;
 	const opacity = React.useRef(new ReactNative.Animated.Value(0)).current;
+	const [embeds, setEmbeds] = React.useState<LinkEmbed[]>([]);
+
+	React.useEffect(() => {
+		let active = true;
+		setEmbeds([]);
+		const urls = extractUrls(content).slice(0, MAX_PREVIEW_URLS);
+		if (!urls.length) return () => { active = false; };
+
+		void Promise.all(urls.map((url) => fetchLinkEmbed(url, restApi))).then((resolved) => {
+			if (active) setEmbeds(resolved.filter((embed): embed is LinkEmbed => embed !== null));
+		});
+
+		return () => { active = false; };
+	}, [content]);
 
 	React.useEffect(() => {
 		haptics?.triggerHapticFeedback?.(haptics.HapticFeedbackTypes.IMPACT_MEDIUM);
@@ -151,7 +174,7 @@ function PreviewOverlay({
 
 	let body: any;
 	try {
-		const record = buildRecord(channelId, content, stickers);
+		const record = buildRecord(channelId, content, stickers, embeds);
 		const generator = new rowManager();
 		generator.generate({ rowType: MESSAGE_ROW_TYPE, message: record });
 		body = <ChatItem rowGenerator={generator} message={record} />;
@@ -181,27 +204,33 @@ function PreviewOverlay({
 				onPress={dismiss}
 				style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
 			/>
-			<ReactNative.View
-				style={{
-					backgroundColor: '#2b2d31',
-					borderRadius: 14,
-					paddingVertical: 12,
-					maxHeight: '70%',
-					transform: [{ translateY: -64 }],
-				}}
+			<ReactNative.KeyboardAvoidingView
+				behavior="padding"
+				keyboardVerticalOffset={0}
+				style={{ flex: 1, justifyContent: 'center' }}
 			>
-				<ReactNative.Text
+				<ReactNative.View
 					style={{
-						color: '#f2f3f5',
-						fontWeight: '600',
-						paddingHorizontal: 14,
-						paddingBottom: 10,
+						backgroundColor: '#2b2d31',
+						borderRadius: 14,
+						paddingVertical: 12,
+						maxHeight: '70%',
+						transform: [{ translateY: -64 }],
 					}}
 				>
-					Message Preview
-				</ReactNative.Text>
-				{body}
-			</ReactNative.View>
+					<ReactNative.Text
+						style={{
+							color: '#f2f3f5',
+							fontWeight: '600',
+							paddingHorizontal: 14,
+							paddingBottom: 10,
+						}}
+					>
+						Message Preview
+					</ReactNative.Text>
+					{body}
+				</ReactNative.View>
+			</ReactNative.KeyboardAvoidingView>
 		</ReactNative.Animated.View>
 	);
 }
@@ -210,6 +239,11 @@ function PreviewButton({ channelId }: { channelId: string }) {
 	const { React, ReactNative } = metro.common;
 	const Portal = (metro.components as any).Portal.Portal;
 	const [open, setOpen] = React.useState(false);
+	const keyboardTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	React.useEffect(() => () => {
+		if (keyboardTimer.current) clearTimeout(keyboardTimer.current);
+	}, []);
 
 	const draft = React.useSyncExternalStore(
 		(onChange: () => void) => {
@@ -228,6 +262,33 @@ function PreviewButton({ channelId }: { channelId: string }) {
 
 	const visible = Boolean(draft.trim() || stickers.length);
 	const progress = React.useRef(new ReactNative.Animated.Value(visible ? 1 : 0)).current;
+	const openPreview = () => {
+		const keyboard = ReactNative.Keyboard;
+		chatInputs?.dismissKeyboard?.();
+		chatInputs?.getBestActiveInputForChannelId?.(channelId)?.closeCustomKeyboard?.();
+		if (!keyboard || typeof keyboard.dismiss !== 'function') {
+			setOpen(true);
+			return;
+		}
+		const textInputState = ReactNative.TextInput?.State;
+		const focusedInput = textInputState?.currentlyFocusedInput?.();
+		if (focusedInput) textInputState?.blurTextInput?.(focusedInput);
+
+		let opened = false;
+		let subscription: { remove: () => void } | null = null;
+		const open = () => {
+			if (opened) return;
+			opened = true;
+			subscription?.remove();
+			if (keyboardTimer.current) clearTimeout(keyboardTimer.current);
+			keyboardTimer.current = null;
+			setOpen(true);
+		};
+
+		if (typeof keyboard.addListener === 'function') subscription = keyboard.addListener('keyboardDidHide', open);
+		keyboard.dismiss();
+		keyboardTimer.current = setTimeout(open, KEYBOARD_DISMISS_DELAY_MS);
+	};
 
 	React.useEffect(() => {
 		ReactNative.Animated.timing(progress, {
@@ -252,7 +313,7 @@ function PreviewButton({ channelId }: { channelId: string }) {
 				}}
 			>
 				<ReactNative.Pressable
-					onPress={() => setOpen(true)}
+					onPress={openPreview}
 					onPressIn={() =>
 						haptics?.triggerHapticFeedback?.(haptics.HapticFeedbackTypes.IMPACT_LIGHT)
 					}
@@ -302,12 +363,14 @@ export default {
 	start() {
 		drafts = metro.findByProps('getDraft');
 		stickerPreviews = metro.findByProps('getStickerPreview');
+		chatInputs = metro.findByProps('getBestActiveInputForChannelId');
 		selectedChannel = metro.findByProps('getLastSelectedChannelId', 'getChannelId');
 		users = metro.findByProps('getCurrentUser', 'getUser');
 		chatItem = metro.findByFilePath(CHAT_ITEM_PATH)?.default;
 		messageRecord = metro.findByName('MessageRecord');
 		rowManager = metro.findByName('RowManager');
 		haptics = metro.findByFilePath(HAPTICS_PATH);
+		restApi = metro.findByProps('get', 'post', 'put', 'patch', 'del') ?? metro.findByProps('get', 'post');
 		eyeIcon = assets.getIDByName('EyeIcon');
 
 		if (!drafts?.getDraft || !stickerPreviews?.getStickerPreview || !users?.getCurrentUser || !chatItem || !messageRecord) return;
@@ -328,6 +391,8 @@ export default {
 		messageRecord = null;
 		rowManager = null;
 		haptics = null;
+		restApi = null;
+		chatInputs = null;
 		eyeIcon = null;
 		stickerPreviews = null;
 	},
