@@ -1,6 +1,6 @@
 # Plugins
 
-17 plugins in this workspace.
+18 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -12,6 +12,7 @@
 | Expression Tools | Useful tools for custom emojis and stickers. | 1.0.0 | Unbound Team |
 | Force Owner Crown | Always show the owner crown on the server owner's messages. | 1.0.0 | Unbound Team |
 | GIF Paste | Makes GIF picker selections paste a link into the chat box instead of sending immediately. | 1.0.0 | Unbound Team |
+| Hide Gift Button | Hide the gift button from the chat composer. | 1.0.0 | Unbound Team |
 | Mention Avatars | Shows user avatars and role icons inside mentions. | 1.0.0 | Unbound Team |
 | More User Tags | Adds tags for webhooks and moderative roles. | 1.0.0 | Unbound Team |
 | No Blocked Messages | Hides messages from blocked users completely. | 1.0.0 | Unbound Team |
