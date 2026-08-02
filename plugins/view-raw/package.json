@@ -1,7 +1,7 @@
 {
 	"name": "view-raw",
 	"version": "1.0.0",
-	"description": "Copy and view the raw content and data of messages.",
+	"description": "View and copy raw data for messages, channels, guilds, and user profiles.",
 	"private": true,
 	"type": "module",
 	"scripts": {

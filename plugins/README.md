@@ -23,6 +23,6 @@
 | Show Me Your Name | Display usernames next to display names, or show usernames only. | 1.0.0 | Unbound Team |
 | Text Replace | Replace text in messages before you send them. | 1.0.0 | Unbound Team |
 | Translate | Translate messages. | 1.0.0 | Unbound Team |
-| View Raw | Copy and view the raw content and data of messages. | 1.0.0 | Unbound Team |
+| View Raw | View and copy raw data for messages, channels, guilds, and user profiles. | 1.0.0 | Unbound Team |
 
 <!-- END AUTO-GENERATED -->
