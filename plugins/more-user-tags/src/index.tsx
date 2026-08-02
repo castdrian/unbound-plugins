@@ -1,5 +1,7 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
+import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);
 
@@ -149,49 +151,37 @@ function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRo
 }
 
 function MoreUserTagsSettings() {
-	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
 
-	if (!Discord?.TableRowGroup || !Discord?.TableRow) {
-		return (
-			<ReactNative.ScrollView contentContainerStyle={{ padding: 16 }}>
-				<ReactNative.Text>Settings are unavailable on this client build.</ReactNative.Text>
-			</ReactNative.ScrollView>
-		);
-	}
-
-	const SwitchRow = Discord.TableSwitchRow ?? Discord.TableRow;
-
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-			<Discord.TableRowGroup title="Tags">
+		<SettingsScrollView>
+			<SettingsSection title="Tags">
 				{TAGS.map((tag) => (
-					<SwitchRow
+					<SettingsSwitchRow
 						key={tag.name}
 						label={tag.displayName}
-						subLabel={tag.description}
+						description={tag.description}
 						value={state.get(`tag.${tag.name}`, true)}
 						onValueChange={(value: boolean) => state.set(`tag.${tag.name}`, value)}
 					/>
 				))}
-			</Discord.TableRowGroup>
+			</SettingsSection>
 
-			<Discord.TableRowGroup title="Appearance">
-				<SwitchRow
+			<SettingsSection title="Appearance">
+				<SettingsSwitchRow
 					label="Coloured Tags"
-					subLabel="Give each tag its own colour instead of the default styling"
+					description="Give each tag its own colour instead of the default styling"
 					value={state.get('coloredTags', true)}
 					onValueChange={(value: boolean) => state.set('coloredTags', value)}
 				/>
-				<SwitchRow
+				<SettingsSwitchRow
 					label="Use Role Colour"
-					subLabel="Colour tags with the member's role colour where they have one"
+					description="Colour tags with the member's role colour where they have one"
 					value={state.get('useRoleColor', true)}
 					onValueChange={(value: boolean) => state.set('useRoleColor', value)}
 				/>
-			</Discord.TableRowGroup>
-		</ReactNative.ScrollView>
+			</SettingsSection>
+		</SettingsScrollView>
 	);
 }
 

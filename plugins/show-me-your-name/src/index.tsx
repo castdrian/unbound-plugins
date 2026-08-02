@@ -1,5 +1,7 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
+import { SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+
 const ADDON_ID = 'unbound.show-me-your-name';
 const STORE = storage.getStore(ADDON_ID);
 
@@ -53,67 +55,45 @@ function rewriteUsername(rowMessage: any, author?: Author): void {
 	if (label != null) rowMessage.username = label;
 }
 
-function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRow?: any } | null {
-	const discord = (metro as any)?.components?.Discord;
-	if (discord?.TableRowGroup && discord?.TableRow) return discord;
-
-	const found = metro.findByProps('TableRow', 'TableRowGroup') as any;
-	if (found?.TableRowGroup && found?.TableRow) return found;
-
-	return null;
-}
-
 function ReactNativeSettingsScreen() {
-	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
-
-	if (!Discord?.TableRowGroup || !Discord?.TableRow) {
-		return (
-			<ReactNative.ScrollView contentContainerStyle={{ padding: 16 }}>
-				<ReactNative.Text>Settings are unavailable on this client build.</ReactNative.Text>
-			</ReactNative.ScrollView>
-		);
-	}
-
-	const SwitchRow = Discord.TableSwitchRow ?? Discord.TableRow;
 	const mode = state.get<Mode>('mode', 'nick-user');
 
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-			<Discord.TableRowGroup title="Display Mode">
+		<SettingsScrollView>
+			<SettingsSection title="Display Mode">
 				{MODES.map(({ key, label, subLabel }) => (
-					<Discord.TableRow
+					<SettingsRow
 						key={key}
 						label={label}
-						subLabel={subLabel}
-						trailing={mode === key ? <ReactNative.Text>✓</ReactNative.Text> : null}
+						description={subLabel}
+						trailing={mode === key ? '✓' : null}
 						onPress={() => state.set('mode', key)}
 					/>
 				))}
-			</Discord.TableRowGroup>
+			</SettingsSection>
 
-			<Discord.TableRowGroup title="Preferences">
-				<SwitchRow
+			<SettingsSection title="Preferences">
+				<SettingsSwitchRow
 					label="Show Friend Nicknames"
-					subLabel="Prefer a friend's nickname wherever it applies"
+					description="Prefer a friend's nickname wherever it applies"
 					value={state.get('friendNicknames', true)}
 					onValueChange={(value: boolean) => state.set('friendNicknames', value)}
 				/>
-				<SwitchRow
+				<SettingsSwitchRow
 					label="Use Global Names"
-					subLabel="Show the account's global name instead of its username"
+					description="Show the account's global name instead of its username"
 					value={state.get('displayNames', false)}
 					onValueChange={(value: boolean) => state.set('displayNames', value)}
 				/>
-				<SwitchRow
+				<SettingsSwitchRow
 					label="Apply To Replies"
-					subLabel="Also apply to reply previews"
+					description="Also apply to reply previews"
 					value={state.get('inReplies', false)}
 					onValueChange={(value: boolean) => state.set('inReplies', value)}
 				/>
-			</Discord.TableRowGroup>
-		</ReactNative.ScrollView>
+			</SettingsSection>
+		</SettingsScrollView>
 	);
 }
 

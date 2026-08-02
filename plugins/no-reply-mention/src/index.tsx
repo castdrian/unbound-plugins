@@ -1,4 +1,9 @@
-import { metro, patcher, storage } from '@unbound-app/api';
+import { useState } from 'react';
+
+import { metro, patcher, storage, toasts } from '@unbound-app/api';
+
+import { SettingsCard, SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow, getSettingsColors } from '../../../shared/settings-ui';
+import { addUserId, editUserId, isUserId, parseUserList, removeUserId } from './user-list';
 
 const ADDON_ID = 'unbound.no-reply-mention';
 const STORE = storage.getStore(ADDON_ID);
@@ -10,13 +15,6 @@ interface PendingReply {
 	shouldMention?: boolean;
 }
 
-function parseUserList(): string[] {
-	return STORE.get('userList', '')
-		.split(/[\s,]+/)
-		.map((id: string) => id.trim())
-		.filter(Boolean);
-}
-
 function shouldMention(authorId: string | undefined): boolean {
 	if (!authorId) return false;
 
@@ -24,42 +22,137 @@ function shouldMention(authorId: string | undefined): boolean {
 	return STORE.get('shouldPingListed', false) && listed;
 }
 
-function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRow?: any } | null {
-	const discord = (metro as any)?.components?.Discord;
-	if (discord?.TableRowGroup && discord?.TableRow) return discord;
+type UserEditor = {
+	mode: 'add' | 'edit';
+	original?: string;
+};
 
-	const found = metro.findByProps('TableRow', 'TableRowGroup') as any;
-	if (found?.TableRowGroup && found?.TableRow) return found;
+function UserIdEditor({
+	initialValue,
+	onCancel,
+	onSave,
+}: {
+	initialValue: string;
+	onCancel: () => void;
+	onSave: (value: string) => void;
+}) {
+	const ReactNative = metro.common.ReactNative;
+	const colors = getSettingsColors();
+	const [value, setValue] = useState(initialValue);
 
-	return null;
+	return (
+		<SettingsCard>
+			<ReactNative.View style={{ gap: 12 }}>
+			<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
+				{initialValue ? 'Edit user ID' : 'Add user ID'}
+			</ReactNative.Text>
+			<ReactNative.TextInput
+				autoCapitalize="none"
+				autoCorrect={false}
+				keyboardType="number-pad"
+				placeholder="Discord user ID"
+				placeholderTextColor={colors.muted}
+				style={{ backgroundColor: colors.input, borderColor: colors.border, borderRadius: 8, borderWidth: 1, color: colors.text, paddingHorizontal: 12, paddingVertical: 10 }}
+				value={value}
+				onChangeText={setValue}
+			/>
+			<ReactNative.View style={{ flexDirection: 'row', gap: 12 }}>
+				<ReactNative.Pressable onPress={onCancel} style={{ alignItems: 'center', borderColor: colors.border, borderRadius: 10, borderWidth: 1, flex: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
+					<ReactNative.Text style={{ color: colors.text, fontWeight: '700' }}>Cancel</ReactNative.Text>
+				</ReactNative.Pressable>
+				<ReactNative.Pressable onPress={() => onSave(value)} style={{ alignItems: 'center', backgroundColor: colors.accent, borderRadius: 10, flex: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
+					<ReactNative.Text style={{ color: '#fff', fontWeight: '700' }}>Save</ReactNative.Text>
+				</ReactNative.Pressable>
+			</ReactNative.View>
+			</ReactNative.View>
+		</SettingsCard>
+	);
+}
+
+function UserIdRow({
+	userId,
+	onEdit,
+	onDelete,
+}: {
+	userId: string;
+	onEdit: () => void;
+	onDelete: () => void;
+}) {
+	const ReactNative = metro.common.ReactNative;
+	const colors = getSettingsColors();
+
+	return (
+		<SettingsCard>
+		<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 48 }}>
+			<ReactNative.Pressable onPress={onEdit} style={{ flex: 1, paddingVertical: 4 }}>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>{userId}</ReactNative.Text>
+				<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 19, marginTop: 3 }}>Tap to edit</ReactNative.Text>
+			</ReactNative.Pressable>
+			<ReactNative.Pressable hitSlop={8} onPress={onEdit} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
+				<ReactNative.Text style={{ color: colors.accent, fontWeight: '700' }}>Edit</ReactNative.Text>
+			</ReactNative.Pressable>
+			<ReactNative.Pressable hitSlop={8} onPress={onDelete} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
+				<ReactNative.Text style={{ color: colors.danger, fontWeight: '700' }}>Delete</ReactNative.Text>
+			</ReactNative.Pressable>
+		</ReactNative.View>
+		</SettingsCard>
+	);
 }
 
 function NoReplyMentionSettings() {
 	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
+	const [editor, setEditor] = useState<UserEditor | null>(null);
+	const pingListed = state.get('shouldPingListed', false);
+	const userIds = parseUserList(state.get('userList', ''));
+	const colors = getSettingsColors();
 
-	if (!Discord?.TableRowGroup || !Discord?.TableRow) {
-		return (
-			<ReactNative.ScrollView contentContainerStyle={{ padding: 16 }}>
-				<ReactNative.Text>Settings are unavailable on this client build.</ReactNative.Text>
-			</ReactNative.ScrollView>
-		);
+	function saveUserId(value: string): void {
+		const userId = value.trim();
+		if (!isUserId(userId)) {
+			toasts.showToast({ title: 'No Reply Mention', content: 'Enter a numeric Discord user ID.' });
+			return;
+		}
+
+		const current = state.get('userList', '');
+		state.set('userList', editor?.mode === 'edit' && editor.original ? editUserId(current, editor.original, userId) : addUserId(current, userId));
+		setEditor(null);
 	}
 
-	const SwitchRow = Discord.TableSwitchRow ?? Discord.TableRow;
-	const pingListed = state.get('shouldPingListed', false);
+	function deleteUserId(userId: string): void {
+		state.set('userList', removeUserId(state.get('userList', ''), userId));
+	}
 
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-			<Discord.TableRowGroup title="Exceptions">
-				<Discord.TableRow
-					label="User IDs"
-					subLabel={state.get('userList', '') || 'None set'}
+		<SettingsScrollView>
+			<SettingsSection title="Exceptions">
+				<SettingsRow
+					label="Add user ID"
+					description="Replies can mention these users when the exception is enabled"
+					arrow
+					onPress={() => setEditor({ mode: 'add' })}
 				/>
-				<SwitchRow
+				{editor?.mode === 'add' ? <UserIdEditor initialValue="" onCancel={() => setEditor(null)} onSave={saveUserId} /> : null}
+				{userIds.length ? (
+					<ReactNative.View style={{ gap: 12 }}>
+						{userIds.map((userId) => (
+							<ReactNative.View key={userId}>
+								{editor?.mode === 'edit' && editor.original === userId ? (
+									<UserIdEditor initialValue={userId} onCancel={() => setEditor(null)} onSave={saveUserId} />
+								) : (
+									<UserIdRow userId={userId} onDelete={() => deleteUserId(userId)} onEdit={() => setEditor({ mode: 'edit', original: userId })} />
+								)}
+							</ReactNative.View>
+						))}
+					</ReactNative.View>
+				) : (
+					<SettingsCard>
+						<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 19 }}>No users added yet.</ReactNative.Text>
+					</SettingsCard>
+				)}
+				<SettingsSwitchRow
 					label="Only Ping Listed Users"
-					subLabel={
+					description={
 						pingListed
 							? 'Replies mention only the users listed above'
 							: 'Replies do not mention anyone by default'
@@ -67,8 +160,8 @@ function NoReplyMentionSettings() {
 					value={pingListed}
 					onValueChange={(value: boolean) => state.set('shouldPingListed', value)}
 				/>
-			</Discord.TableRowGroup>
-		</ReactNative.ScrollView>
+			</SettingsSection>
+		</SettingsScrollView>
 	);
 }
 

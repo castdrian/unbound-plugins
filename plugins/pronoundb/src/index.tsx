@@ -1,5 +1,7 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
+import { SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+
 const ADDON_ID = 'unbound.pronoundb';
 const STORE = storage.getStore(ADDON_ID);
 const API_URL = 'https://pronoundb.org/api/v2/lookup';
@@ -146,38 +148,24 @@ function addPronouns(row: any, message: Message | undefined): void {
 	}
 }
 
-function getDesignModule(): { TableRow?: any; TableRowGroup?: any; TableSwitchRow?: any } | null {
-	const Discord = (metro as any).components?.Discord;
-	if (Discord?.TableRow && Discord?.TableRowGroup) return Discord;
-	const module = metro.findByProps('TableRow', 'TableRowGroup') as any;
-	return module?.TableRow && module?.TableRowGroup ? module : null;
-}
-
 function SettingsPanel() {
-	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
 	const state = STORE.useSettingsStore();
-	if (!Discord?.TableRow || !Discord?.TableRowGroup) {
-		return <ReactNative.Text style={{ padding: 16 }}>Settings are unavailable on this client build.</ReactNative.Text>;
-	}
-
-	const SwitchRow = Discord.TableSwitchRow ?? Discord.TableRow;
 	const format = state.get<Format>('format', 'lowercase');
 	const priority = state.get<Priority>('priority', 'pronoundb');
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ gap: 12, padding: 16 }}>
-			<Discord.TableRowGroup title="Pronouns">
-				<Discord.TableRow label="Lowercase" trailing={format === 'lowercase' ? <ReactNative.Text>✓</ReactNative.Text> : null} onPress={() => state.set('format', 'lowercase')} />
-				<Discord.TableRow label="Capitalized" trailing={format === 'capitalized' ? <ReactNative.Text>✓</ReactNative.Text> : null} onPress={() => state.set('format', 'capitalized')} />
-			</Discord.TableRowGroup>
-			<Discord.TableRowGroup title="Source">
-				<Discord.TableRow label="Prefer PronounDB" subLabel="Fall back to Discord profile pronouns" trailing={priority === 'pronoundb' ? <ReactNative.Text>✓</ReactNative.Text> : null} onPress={() => state.set('priority', 'pronoundb')} />
-				<Discord.TableRow label="Prefer Discord" subLabel="Fall back to PronounDB" trailing={priority === 'discord' ? <ReactNative.Text>✓</ReactNative.Text> : null} onPress={() => state.set('priority', 'discord')} />
-			</Discord.TableRowGroup>
-			<Discord.TableRowGroup title="Visibility">
-				<SwitchRow label="Show for Yourself" value={state.get('showSelf', true)} onValueChange={(value: boolean) => state.set('showSelf', value)} />
-			</Discord.TableRowGroup>
-		</ReactNative.ScrollView>
+		<SettingsScrollView>
+			<SettingsSection title="Pronouns">
+				<SettingsRow label="Lowercase" trailing={format === 'lowercase' ? '✓' : null} onPress={() => state.set('format', 'lowercase')} />
+				<SettingsRow label="Capitalized" trailing={format === 'capitalized' ? '✓' : null} onPress={() => state.set('format', 'capitalized')} />
+			</SettingsSection>
+			<SettingsSection title="Source">
+				<SettingsRow label="Prefer PronounDB" description="Fall back to Discord profile pronouns" trailing={priority === 'pronoundb' ? '✓' : null} onPress={() => state.set('priority', 'pronoundb')} />
+				<SettingsRow label="Prefer Discord" description="Fall back to PronounDB" trailing={priority === 'discord' ? '✓' : null} onPress={() => state.set('priority', 'discord')} />
+			</SettingsSection>
+			<SettingsSection title="Visibility">
+				<SettingsSwitchRow label="Show for Yourself" value={state.get('showSelf', true)} onValueChange={(value: boolean) => state.set('showSelf', value)} />
+			</SettingsSection>
+		</SettingsScrollView>
 	);
 }
 
