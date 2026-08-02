@@ -6,59 +6,55 @@ import { blockUser, deleteReview, deleteReviewVote, reportReview, unblockUser, v
 import { getCurrentUser } from '@reviewdb/auth';
 import { ReviewType, type Review } from '@reviewdb/entities';
 import { canBlockReviewAuthor, canDeleteReview, canReportReview, getCurrentUserId, showToast } from '@reviewdb/utils';
+import { getReviewColors, type ReviewColors } from '@reviewdb/sheets/theme';
 
-function getDesignModule(): { Text?: any; Card?: any } | null {
-	const discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as
-		| { Text?: any; Card?: any }
-		| undefined;
-	if (discord?.Text) return discord;
+const dateFormatter = new Intl.DateTimeFormat();
 
-	if (typeof metro?.findByProps === 'function') {
-		const found = metro.findByProps('Text', 'Heading') as { Text?: any; Card?: any } | null;
-		if (found?.Text) return found;
-	}
-
-	return null;
-}
-
-function getFormsModule(): { FormRow?: any; FormSubLabel?: any } | null {
-	const forms = (metro as { components?: { Forms?: unknown } } | undefined)?.components?.Forms as { FormRow?: any } | undefined;
-	if (forms?.FormRow) return forms;
-
-	if (typeof metro?.findByProps === 'function') {
-		const found = metro.findByProps('FormSliderRow') as { FormRow?: any; FormSubLabel?: any } | null;
-		if (found?.FormRow) return found;
-	}
-
-	return null;
-}
-
-function Tag({ label, color = '#5865f2' }: { label: string; color?: string }) {
+function Badge({ label, color, colors }: { label: string; color: string; colors: ReviewColors }) {
 	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
-	if (!Discord?.Text) return null;
 
 	return (
-		<ReactNative.View
-			style={{
-				paddingLeft: 4,
-				paddingRight: 4,
-				borderRadius: 4,
-				flexDirection: 'row',
-				justifyContent: 'center',
-				alignItems: 'center',
-				backgroundColor: color,
-				marginLeft: 4,
-			}}
-		>
-			<Discord.Text variant="text-xs/semibold" lineClamp={1} style={{ color: '#ffffff' }}>
+		<ReactNative.View style={{ backgroundColor: color, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+			<ReactNative.Text style={{ color: colors.accentText, fontSize: 11, fontWeight: '800', letterSpacing: 0.4 }}>
 				{label}
-			</Discord.Text>
+			</ReactNative.Text>
 		</ReactNative.View>
 	);
 }
 
-const dateFormatter = new Intl.DateTimeFormat();
+function ActionButton({
+	label,
+	onPress,
+	danger,
+	colors,
+}: {
+	label: string;
+	onPress: () => void;
+	danger?: boolean;
+	colors: ReviewColors;
+}) {
+	const ReactNative = metro.common.ReactNative;
+	const color = danger ? colors.danger : colors.text;
+
+	return (
+		<ReactNative.Pressable
+			onPress={onPress}
+			hitSlop={6}
+			style={({ pressed }: { pressed: boolean }) => ({
+				backgroundColor: danger ? `${colors.danger}22` : colors.surface,
+				borderColor: danger ? `${colors.danger}66` : colors.border,
+				borderRadius: 9,
+				borderWidth: 1,
+				opacity: pressed ? 0.65 : 1,
+				minHeight: 38,
+				justifyContent: 'center',
+				paddingHorizontal: 12,
+			})}
+		>
+			<ReactNative.Text style={{ color, fontSize: 13, fontWeight: '700' }}>{label}</ReactNative.Text>
+		</ReactNative.Pressable>
+	);
+}
 
 export default function ReviewItem({
 	review,
@@ -72,8 +68,7 @@ export default function ReviewItem({
 	onChanged(): void;
 }) {
 	const ReactNative = metro.common.ReactNative;
-	const Discord = getDesignModule();
-	const Forms = getFormsModule();
+	const colors = getReviewColors();
 	const [expanded, setExpanded] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [localVote, setLocalVote] = useState<boolean | null>(review.userVote ?? null);
@@ -143,36 +138,59 @@ export default function ReviewItem({
 		}
 	}
 
-	if (!Discord?.Text) return null;
-
 	const comment = review.comment ?? '';
 	const truncated = comment.length > 200 && !expanded;
 	const canVote = review.id !== 0;
 	const canDelete = canDeleteReview(profileId, review, myId);
 	const canReport = canReportReview(review, myId);
 	const canBlock = canBlockReviewAuthor(profileId, review, myId);
+	const timestamp = !hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 ? dateFormatter.format(review.timestamp * 1000) : null;
+
 	const voteControls = canVote ? (
-		<ReactNative.View style={{ alignItems: 'center', width: 24 }}>
+		<ReactNative.View
+			style={{
+				alignItems: 'center',
+				backgroundColor: colors.surfaceAlt,
+				borderColor: colors.border,
+				borderRadius: 10,
+				borderWidth: 1,
+				flexDirection: 'row',
+				height: 38,
+				overflow: 'hidden',
+			}}
+		>
 			<ReactNative.Pressable
 				disabled={busy}
-				hitSlop={8}
-				onPress={() => handleVote(true)}
-				style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
+				hitSlop={6}
+				onPress={() => void handleVote(true)}
+				style={({ pressed }: { pressed: boolean }) => ({
+					alignItems: 'center',
+					backgroundColor: localVote === true ? `${colors.positive}33` : 'transparent',
+					borderRadius: 8,
+					height: 36,
+					justifyContent: 'center',
+					opacity: pressed || busy ? 0.6 : 1,
+					width: 36,
+				})}
 			>
-				<Discord.Text variant="text-md/bold" color={localVote === true ? 'header-primary' : 'text-muted'}>
-					+
-				</Discord.Text>
+				<ReactNative.Text style={{ color: localVote === true ? colors.positive : colors.muted, fontSize: 18, fontWeight: '800' }}>▲</ReactNative.Text>
 			</ReactNative.Pressable>
-			<Discord.Text variant="text-sm/medium">{score}</Discord.Text>
+			<ReactNative.Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', minWidth: 24, textAlign: 'center' }}>{score}</ReactNative.Text>
 			<ReactNative.Pressable
 				disabled={busy}
-				hitSlop={8}
-				onPress={() => handleVote(false)}
-				style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}
+				hitSlop={6}
+				onPress={() => void handleVote(false)}
+				style={({ pressed }: { pressed: boolean }) => ({
+					alignItems: 'center',
+					backgroundColor: localVote === false ? `${colors.danger}33` : 'transparent',
+					borderRadius: 8,
+					height: 36,
+					justifyContent: 'center',
+					opacity: pressed || busy ? 0.6 : 1,
+					width: 36,
+				})}
 			>
-				<Discord.Text variant="text-md/bold" color={localVote === false ? 'header-primary' : 'text-muted'}>
-					-
-				</Discord.Text>
+				<ReactNative.Text style={{ color: localVote === false ? colors.danger : colors.muted, fontSize: 18, fontWeight: '800' }}>▼</ReactNative.Text>
 			</ReactNative.Pressable>
 		</ReactNative.View>
 	) : null;
@@ -183,155 +201,67 @@ export default function ReviewItem({
 		setActionsVisible(true);
 	}
 
-	if (Forms?.FormRow) {
-		const label = (
-			<ReactNative.View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-				<Discord.Text variant="text-sm/semibold">{review.sender.username}</Discord.Text>
-				{review.type === ReviewType.System && <Tag label="SYSTEM" />}
-				{isAuthorBlocked && (
-					<Discord.Text variant="text-xs/medium" color="text-danger">
-						Blocked
-					</Discord.Text>
-				)}
-				{!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 && (
-					<Discord.Text variant="text-xs/medium" color="text-muted">
-						{dateFormatter.format(review.timestamp * 1000)}
-					</Discord.Text>
-				)}
-			</ReactNative.View>
-		);
-		const subLabel = Forms.FormSubLabel ? <Forms.FormSubLabel text={comment} /> : comment;
-
-		function renderRow(props: Record<string, unknown> = {}) {
-			return (
-			<Forms.FormRow
-				{...props}
-				label={label}
-				subLabel={subLabel}
-				leading={<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ width: 36, height: 36, borderRadius: 18 }} />}
-				trailing={voteControls}
-				style={{ paddingVertical: 4 }}
+	return (
+		<ReactNative.View style={{ gap: 8 }}>
+			<ReactNative.Pressable
+				delayLongPress={350}
 				onLongPress={openReviewActions}
-			/>
-			);
-		}
-
-		return (
-			<ReactNative.View>
-				{renderRow()}
-				{actionsVisible && (
-					<ReactNative.View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8 }}>
-						{canReport && (
-							<ReactNative.Pressable disabled={busy} onPress={() => void handleReport()}>
-								<Discord.Text variant="text-xs/medium" color="text-muted">
-									Report
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-						{canBlock && (
-							<ReactNative.Pressable disabled={busy} onPress={() => void handleBlockToggle()}>
-								<Discord.Text variant="text-xs/medium" color="text-muted">
-									{isAuthorBlocked ? 'Unblock' : 'Block'}
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-						{canDelete && (
-							<ReactNative.Pressable
-								disabled={busy}
-								onPress={() => {
-									if (deleteArmed) {
-										void handleDelete();
-										return;
-									}
-									setDeleteArmed(true);
-								}}
-							>
-								<Discord.Text variant="text-xs/medium" color="text-danger">
-									{deleteArmed ? 'Confirm delete' : 'Delete'}
-								</Discord.Text>
-							</ReactNative.Pressable>
-						)}
-						<ReactNative.Pressable onPress={() => setActionsVisible(false)}>
-							<Discord.Text variant="text-xs/medium" color="text-muted">
-								Close
-							</Discord.Text>
-						</ReactNative.Pressable>
+				style={({ pressed }: { pressed: boolean }) => ({
+					backgroundColor: colors.surface,
+					borderColor: colors.border,
+					borderRadius: 16,
+					borderWidth: 1,
+					opacity: pressed ? 0.82 : 1,
+					padding: 14,
+				})}
+			>
+				<ReactNative.View style={{ flexDirection: 'row', gap: 11 }}>
+					<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ backgroundColor: colors.surfaceAlt, borderRadius: 22, height: 44, width: 44 }} />
+					<ReactNative.View style={{ flex: 1, gap: 7 }}>
+						<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+							<ReactNative.Text style={{ color: colors.text, flexShrink: 1, fontSize: 16, fontWeight: '800' }} numberOfLines={1}>
+								{review.sender.username}
+							</ReactNative.Text>
+							{review.type === ReviewType.System && <Badge color={colors.accent} colors={colors} label="SYSTEM" />}
+							{isAuthorBlocked && <Badge color={colors.danger} colors={colors} label="BLOCKED" />}
+						</ReactNative.View>
+						{timestamp && <ReactNative.Text style={{ color: colors.muted, fontSize: 12 }}>{timestamp}</ReactNative.Text>}
 					</ReactNative.View>
-				)}
-			</ReactNative.View>
-		);
-	}
+					{voteControls}
+				</ReactNative.View>
 
-	const details = (
-		<ReactNative.View style={{ gap: 4 }}>
-			<ReactNative.View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-				<Discord.Text variant="text-sm/semibold">{review.sender.username}</Discord.Text>
-				{review.type === ReviewType.System && <Tag label="SYSTEM" />}
-				{isAuthorBlocked && (
-					<Discord.Text variant="text-xs/medium" color="text-danger">
-						Blocked
-					</Discord.Text>
+				<ReactNative.View style={{ backgroundColor: colors.border, height: 1, marginTop: 13, opacity: 0.55 }} />
+				<ReactNative.Text style={{ color: colors.text, fontSize: 15, lineHeight: 22, paddingTop: 12 }}>
+					{truncated ? `${comment.slice(0, 200)}...` : comment}
+				</ReactNative.Text>
+				{comment.length > 200 && (
+					<ReactNative.Pressable hitSlop={6} onPress={() => setExpanded((value) => !value)} style={{ alignSelf: 'flex-start', marginTop: 6 }}>
+						<ReactNative.Text style={{ color: colors.link, fontSize: 13, fontWeight: '700' }}>{expanded ? 'Show less' : 'Read more'}</ReactNative.Text>
+					</ReactNative.Pressable>
 				)}
-				{!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 && (
-					<Discord.Text variant="text-xs/medium" color="text-muted">
-						{dateFormatter.format(review.timestamp * 1000)}
-					</Discord.Text>
-				)}
-			</ReactNative.View>
-			<Discord.Text variant="text-sm/normal">{truncated ? `${comment.slice(0, 200)}...` : comment}</Discord.Text>
-			{comment.length > 200 && (
-				<ReactNative.Pressable onPress={() => setExpanded((value) => !value)}>
-					<Discord.Text variant="text-xs/medium" color="text-link">
-						{expanded ? 'Show less' : 'Read more'}
-					</Discord.Text>
-				</ReactNative.Pressable>
-			)}
-			{(canDelete || canReport || canBlock) && review.id !== 0 && (
-				<ReactNative.View style={{ flexDirection: 'row', gap: 14 }}>
-					{canReport && (
-						<ReactNative.Pressable disabled={busy} onPress={handleReport}>
-							<Discord.Text variant="text-xs/medium" color="text-muted">
-								Report
-							</Discord.Text>
-						</ReactNative.Pressable>
-					)}
-					{canBlock && (
-						<ReactNative.Pressable disabled={busy} onPress={handleBlockToggle}>
-							<Discord.Text variant="text-xs/medium" color="text-muted">
-								{isAuthorBlocked ? 'Unblock' : 'Block'}
-							</Discord.Text>
-						</ReactNative.Pressable>
-					)}
-					{canDelete && (
-						<ReactNative.Pressable disabled={busy} onPress={handleDelete}>
-							<Discord.Text variant="text-xs/medium" color="text-danger">
-								Delete
-							</Discord.Text>
-						</ReactNative.Pressable>
-					)}
+			</ReactNative.Pressable>
+
+			{actionsVisible && (
+				<ReactNative.View style={{ backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderRadius: 13, borderWidth: 1, gap: 10, padding: 12 }}>
+					<ReactNative.Text style={{ color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6 }}>REVIEW ACTIONS</ReactNative.Text>
+					<ReactNative.View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+						{canReport && <ActionButton colors={colors} label="Report" onPress={() => void handleReport()} />}
+						{canBlock && <ActionButton colors={colors} label={isAuthorBlocked ? 'Unblock user' : 'Block user'} onPress={() => void handleBlockToggle()} />}
+						{canDelete && (
+							<ActionButton
+								colors={colors}
+								danger
+								label={deleteArmed ? 'Confirm delete' : 'Delete review'}
+								onPress={() => {
+									if (deleteArmed) void handleDelete();
+									else setDeleteArmed(true);
+								}}
+							/>
+						)}
+						<ActionButton colors={colors} label="Close" onPress={() => setActionsVisible(false)} />
+					</ReactNative.View>
 				</ReactNative.View>
 			)}
 		</ReactNative.View>
-	);
-	const Container = Discord.Card ?? ReactNative.View;
-	const containerProps = Discord.Card
-		? { variant: 'secondary', border: 'subtle', radius: 8 }
-		: {};
-
-	return (
-		<Container
-			{...containerProps}
-			style={{
-				flexDirection: 'row',
-				paddingVertical: 8,
-				paddingHorizontal: 12,
-				gap: 8,
-				marginBottom: 8,
-				marginHorizontal: 12,
-			}}
-		>
-			{voteControls}
-			<ReactNative.View style={{ flex: 1 }}>{details}</ReactNative.View>
-		</Container>
 	);
 }
