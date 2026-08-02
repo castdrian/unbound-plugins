@@ -1,0 +1,14 @@
+{
+	"id": "unbound.message-link-embeds",
+	"name": "Message Link Embeds",
+	"description": "Adds previews to messages that link to other Discord messages.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "LinkIcon",
+	"main": "index.tsx"
+}

@@ -1,6 +1,6 @@
 # Plugins
 
-18 plugins in this workspace.
+19 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -14,6 +14,7 @@
 | GIF Paste | Makes GIF picker selections paste a link into the chat box instead of sending immediately. | 1.0.0 | Unbound Team |
 | Hide Gift Button | Hide the gift button from the chat composer. | 1.0.0 | Unbound Team |
 | Mention Avatars | Shows user avatars and role icons inside mentions. | 1.0.0 | Unbound Team |
+| Message Link Embeds | Adds previews to messages that link to other Discord messages. | 1.0.0 | Unbound Team |
 | More User Tags | Adds tags for webhooks and moderative roles. | 1.0.0 | Unbound Team |
 | No Blocked Messages | Hides messages from blocked users completely. | 1.0.0 | Unbound Team |
 | No Reply Mention | Disable reply mentions by default. | 1.0.0 | Unbound Team |
