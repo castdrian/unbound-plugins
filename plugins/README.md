@@ -1,6 +1,6 @@
 # Plugins
 
-21 plugins in this workspace.
+22 plugins in this workspace.
 
 <!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
 
@@ -26,6 +26,7 @@
 | Show Timeout Duration | Shows how much longer a user's timeout will last. | 1.0.0 | Unbound Team |
 | Text Replace | Replace text in messages before you send them. | 1.0.0 | Unbound Team |
 | Translate | Translate messages. | 1.0.0 | Unbound Team |
+| View Icons | View user avatars, banners, server icons, server banners, and group DM icons. | 1.0.0 | Unbound Team |
 | View Raw | View and copy raw data for messages, channels, guilds, and user profiles. | 1.0.0 | Unbound Team |
 
 <!-- END AUTO-GENERATED -->

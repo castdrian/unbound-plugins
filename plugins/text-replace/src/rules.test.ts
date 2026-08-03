@@ -38,6 +38,22 @@ test('round-trips a ruleset without sharing internal ids', () => {
 	expect(decoded.stringRules[0]?.id).not.toBe(source.id);
 });
 
+test('exports each replacement value independently from its find value', () => {
+	const encoded = serializeRuleset(
+		[rule('oginstagram.com', 'ddinstagram.com'), rule('<timer:seconds>', '<timer:milliseconds>')],
+		[],
+	);
+
+	expect(JSON.parse(encoded)).toEqual({
+		version: 1,
+		stringRules: [
+			{ find: 'oginstagram.com', replace: 'ddinstagram.com', onlyIfIncludes: '' },
+			{ find: '<timer:seconds>', replace: '<timer:milliseconds>', onlyIfIncludes: '' },
+		],
+		regexRules: [],
+	});
+});
+
 test('rejects unsupported rulesets', () => {
 	expect(() => parseRuleset('{"version":2,"stringRules":[],"regexRules":[]}')).toThrow('unsupported');
 	expect(() => parseRuleset('not json')).toThrow('valid JSON');

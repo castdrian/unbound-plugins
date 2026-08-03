@@ -41,8 +41,14 @@ function hasRuleContent(rule: TextReplaceRule): boolean {
 	return Boolean(rule.find || rule.replace || rule.onlyIfIncludes);
 }
 
-function exportRules(rules: TextReplaceRule[]): Array<Omit<TextReplaceRule, 'id'>> {
-	return rules.filter(hasRuleContent).map(({ find, replace, onlyIfIncludes }) => ({ find, replace, onlyIfIncludes }));
+type ExportedRule = Pick<TextReplaceRule, 'find' | 'replace' | 'onlyIfIncludes'>;
+
+function exportRules(rules: TextReplaceRule[]): ExportedRule[] {
+	return rules.filter(hasRuleContent).map((rule) => ({
+		find: rule.find,
+		replace: rule.replace,
+		onlyIfIncludes: rule.onlyIfIncludes,
+	}));
 }
 
 export function serializeRuleset(stringRules: TextReplaceRule[], regexRules: TextReplaceRule[]): string {

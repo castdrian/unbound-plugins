@@ -1,0 +1,14 @@
+{
+	"id": "unbound.view-icons",
+	"name": "View Icons",
+	"description": "View user avatars, banners, server icons, server banners, and group DM icons.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "ImageIcon",
+	"main": "index.tsx"
+}

@@ -160,8 +160,10 @@ function embeddedRow(source: Message, linked: Message): Record<string, unknown> 
 			message,
 		});
 		row.separatorBefore = false;
-		row.renderContentOnly = true;
-		(row.message as Record<string, unknown>).renderContentOnly = true;
+		row.renderContentOnly = false;
+		const renderedMessage = row.message as Record<string, unknown>;
+		renderedMessage.renderContentOnly = false;
+		renderedMessage.isFirst = false;
 		return row;
 	} catch {
 		return null;
