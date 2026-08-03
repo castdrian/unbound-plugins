@@ -1,0 +1,14 @@
+{
+	"id": "unbound.typing-avatars",
+	"name": "Typing Avatars",
+	"description": "Shows the avatars of people typing in the channel.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"icon": "KeyboardIcon",
+	"main": "index.tsx"
+}
