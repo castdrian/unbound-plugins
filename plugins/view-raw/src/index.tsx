@@ -29,13 +29,15 @@ type SheetHost = {
 	openLazy?: (component: Promise<{ default: unknown }>, key: string, props?: object, options?: object) => void;
 };
 
-const patchedInstances = new WeakSet<object>();
+let patchedInstances = new WeakSet<object>();
 let patchedComponents = new WeakSet<object>();
+const unpatches: Array<() => void> = [];
 let currentItem: RawItem | null = null;
 let currentSheetKey: string | null = null;
 let currentProfileUserId: string | null = null;
 let contextMenuPatched = false;
 let contextMenuTimer: ReturnType<typeof setInterval> | null = null;
+let lifecycle = 0;
 
 function typeName(element: Element): string | undefined {
 	if (typeof element?.type === 'string') return element.type;
@@ -82,7 +84,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function supportsRawSheet(key: string): boolean {
+	return /MessageLongPressActionSheet$/i.test(key)
+		|| /^UserProfile/i.test(key)
+		|| /^GuildActionSheet:/i.test(key)
+		|| /Channel(?:LongPress)?ActionSheet/i.test(key);
+}
+
 function getRawItem(key: string, props: Record<string, unknown>): RawItem | null {
+	if (!supportsRawSheet(key)) return null;
 	if (isRecord(props.message)) {
 		const message = props.message as Message;
 		return { content: typeof message.content === 'string' ? message.content : '', data: cleanMessage(message), type: 'Message' };
@@ -203,8 +213,9 @@ function addContextMenuItem(menu: { items?: Array<Record<string, unknown>> }, it
 	menu.items.push(entry);
 }
 
-function patchSheetComponent(result: unknown, sheets: SheetHost, ActionSheetRow: any, depth = 0): unknown {
+function patchSheetComponent(result: unknown, sheets: SheetHost, ActionSheetRow: any, depth = 0, activeLifecycle = lifecycle): unknown {
 	const patchedResult = addMessageRow(result, sheets, ActionSheetRow);
+	if (activeLifecycle !== lifecycle) return patchedResult;
 	if (depth >= 15 || !isRecord(patchedResult)) return patchedResult;
 	const directHolder = typeof patchedResult.type === 'function' ? { holder: patchedResult, method: 'type' as const } : null;
 	const wrappedType = isRecord(patchedResult.type) ? patchedResult.type : null;
@@ -213,9 +224,10 @@ function patchSheetComponent(result: unknown, sheets: SheetHost, ActionSheetRow:
 	const target = directHolder ?? wrappedHolder ?? renderHolder;
 	if (!target || patchedComponents.has(target.holder)) return patchedResult;
 	patchedComponents.add(target.holder);
-	PATCHER.after(target.holder as { type?: (...args: unknown[]) => unknown; render?: (...args: unknown[]) => unknown }, target.method, (ctx) => {
-		return patchSheetComponent(ctx.result, sheets, ActionSheetRow, depth + 1);
-	});
+	unpatches.push(PATCHER.after(target.holder as { type?: (...args: unknown[]) => unknown; render?: (...args: unknown[]) => unknown }, target.method, (ctx) => {
+		if (activeLifecycle !== lifecycle) return ctx.result;
+		return patchSheetComponent(ctx.result, sheets, ActionSheetRow, depth + 1, activeLifecycle);
+	}));
 	return patchedResult;
 }
 
@@ -223,7 +235,7 @@ function patchContextMenus(): boolean {
 	if (contextMenuPatched) return true;
 	const contextMenus = metro.findByProps('showContextMenu', 'hideContextMenu') as { hideContextMenu?: () => void; showContextMenu?: (menu: { items?: Array<Record<string, unknown>>; key?: string }) => void } | null;
 	if (!contextMenus?.showContextMenu) return false;
-	PATCHER.before(contextMenus, 'showContextMenu', (ctx) => {
+	unpatches.push(PATCHER.before(contextMenus, 'showContextMenu', (ctx) => {
 		const menu = ctx.args[0] as { items?: Array<Record<string, unknown>>; key?: string } | undefined;
 		if (!menu) return;
 		const guilds = metro.findByProps('getGuild') as { getGuild?: (id: string) => Record<string, unknown> | undefined } | null;
@@ -235,46 +247,57 @@ function patchContextMenus(): boolean {
 		if (!menu.items?.some((item) => item.label === 'View Main Profile') || !currentProfileUserId) return;
 		const profile = getRawItem(`UserProfile${currentProfileUserId}`, { userId: currentProfileUserId });
 		if (profile) addContextMenuItem(menu, profile, () => contextMenus.hideContextMenu?.(), false);
-	});
+	}));
 	contextMenuPatched = true;
 	return true;
 }
 
 function start(): void {
+	const activeLifecycle = ++lifecycle;
 	const sheets = metro.findByProps('openLazy', 'hideActionSheet') as SheetHost | null;
 	const ActionSheetRow = (metro.findByProps('ActionSheetRow') as { ActionSheetRow?: any } | null)?.ActionSheetRow;
 	if (!sheets?.openLazy || !ActionSheetRow) return;
 	if (!patchContextMenus()) contextMenuTimer = setInterval(() => {
+		if (activeLifecycle !== lifecycle) return;
 		if (!patchContextMenus() || !contextMenuTimer) return;
 		clearInterval(contextMenuTimer);
 		contextMenuTimer = null;
 	}, 1000);
-	PATCHER.before(sheets, 'openLazy', (ctx) => {
+	unpatches.push(PATCHER.before(sheets, 'openLazy', (ctx) => {
 		const [componentPromise, key, props] = ctx.args as [Promise<{ default?: unknown }> | undefined, unknown, Record<string, unknown> | undefined];
 		if (typeof key !== 'string' || !componentPromise?.then || !props) return;
 		if (key.startsWith('UserProfile') && typeof props.userId === 'string') currentProfileUserId = props.userId;
+		currentItem = null;
+		currentSheetKey = null;
 		const item = getRawItem(key, props);
 		if (!item) return;
 		currentItem = item;
 		currentSheetKey = key;
 		componentPromise.then((instance) => {
+			if (activeLifecycle !== lifecycle) return;
 			if (!instance || patchedInstances.has(instance)) return;
 			patchedInstances.add(instance);
-			PATCHER.after(instance, 'default', ({ result }) => patchSheetComponent(result, sheets, ActionSheetRow));
+			unpatches.push(PATCHER.after(instance, 'default', ({ result }) => patchSheetComponent(result, sheets, ActionSheetRow, 0, activeLifecycle)));
 		}).catch(() => undefined);
-	});
+	}));
 }
 
 export default {
 	start,
 	stop() {
-		PATCHER.unpatchAll();
+		lifecycle++;
+		for (const unpatch of unpatches.splice(0)) {
+			try {
+				unpatch();
+			} catch {}
+		}
 		if (contextMenuTimer) clearInterval(contextMenuTimer);
 		currentItem = null;
 		currentSheetKey = null;
 		currentProfileUserId = null;
 		contextMenuPatched = false;
 		contextMenuTimer = null;
+		patchedInstances = new WeakSet<object>();
 		patchedComponents = new WeakSet<object>();
 	},
 };
