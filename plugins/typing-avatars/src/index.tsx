@@ -3,7 +3,7 @@ import { metro, patcher } from '@unbound-app/api';
 const TYPING_INDICATOR_PATH = 'modules/chat/native/TypingIndicator.tsx';
 const AVATAR_GUTTER = 24;
 const AVATAR_HEIGHT = 16;
-const AVATAR_LIFT = 4;
+const AVATAR_LIFT = 2;
 const AVATAR_OVERLAP = -6;
 const MAX_AVATARS = 3;
 
