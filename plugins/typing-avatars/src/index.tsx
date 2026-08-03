@@ -33,7 +33,7 @@ function TypingAvatars({ item, typingUsers }: { item: TypingItem; typingUsers: U
 	const ReactNative = metro.common.ReactNative;
 	const visibleUsers = typingUsers.slice(0, MAX_AVATARS);
 	return (
-		<ReactNative.View style={{ flexDirection: 'row', height: AVATAR_HEIGHT, marginRight: 0, paddingBottom: AVATAR_LIFT, width: visibleUsers.length ? AVATAR_HEIGHT + (visibleUsers.length - 1) * (AVATAR_HEIGHT + AVATAR_OVERLAP) : 0 }}>
+		<ReactNative.View style={{ flexDirection: 'row', height: AVATAR_HEIGHT, marginRight: 0, transform: [{ translateY: -AVATAR_LIFT }], width: visibleUsers.length ? AVATAR_HEIGHT + (visibleUsers.length - 1) * (AVATAR_HEIGHT + AVATAR_OVERLAP) : 0 }}>
 			{visibleUsers.map((user, index) => (
 				<ReactNative.View key={user.id} style={{ marginLeft: index ? AVATAR_OVERLAP : 0, zIndex: visibleUsers.length - index }}>
 					<components.Avatar
