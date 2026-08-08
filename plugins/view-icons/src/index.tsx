@@ -1,4 +1,4 @@
-import { metro, patcher, toasts } from '@unbound-app/api';
+import { assets, metro, patcher, toasts } from '@unbound-app/api';
 
 const PATCHER = patcher.createPatcher('unbound.view-icons');
 const DEFAULT_AVATAR_SIZE = 512;
@@ -178,6 +178,15 @@ function showMessage(content: string): void {
 	toasts.showToast({ title: 'View Icons', content });
 }
 
+function ViewIcon() {
+	const SVG = metro.common.SVG;
+	return (
+		<SVG.Svg width={20} height={20} viewBox="0 0 24 24">
+			<SVG.Path fill="#f2f3f5" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2Zm0 16H5V5h14v14ZM8.5 13.5 11 16.51 14.5 12 19 18H5l3.5-4.5ZM8 10.5A1.5 1.5 0 1 0 8 7.5a1.5 1.5 0 0 0 0 3Z" />
+		</SVG.Svg>
+	);
+}
+
 function openImage(target: ImageTarget): void {
 	const media = metro.findByProps('openMediaModal') as {
 		openMediaModal?: (options: Record<string, unknown>) => void;
@@ -218,6 +227,7 @@ function addTargetActions(menu: ContextMenu, target: ImageTarget, hide: () => vo
 	if (!menu.items.some((item) => item.label === viewLabel)) {
 		menu.items.push({
 			label: viewLabel,
+			IconComponent: ViewIcon,
 			action: () => {
 				hide();
 				openImage(target);
@@ -301,6 +311,7 @@ function addActionSheetRows(result: unknown, sheets: SheetHost, ActionSheetRow: 
 	if (!group?.props || !Array.isArray(rows)) return result;
 
 	const targets = getActionSheetTargets();
+	const iconId = assets.getIDByName('ImageIcon');
 	const rowsToAdd: unknown[] = [];
 	for (const target of targets) {
 		const label = `View ${target.label}`;
@@ -310,6 +321,9 @@ function addActionSheetRows(result: unknown, sheets: SheetHost, ActionSheetRow: 
 			metro.common.React.createElement(ActionSheetRow as never, {
 				key,
 				label,
+				icon: iconId != null && typeof (ActionSheetRow as { Icon?: unknown }).Icon === 'function'
+					? metro.common.React.createElement((ActionSheetRow as { Icon: unknown }).Icon as never, { source: iconId })
+					: undefined,
 				onPress: () => {
 					sheets.hideActionSheet?.(sheetKey);
 					openImage(target);

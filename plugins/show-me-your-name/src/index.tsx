@@ -19,6 +19,14 @@ interface Author {
 	globalName?: string;
 }
 
+function isAutomodMessage(message: any): boolean {
+	const type = message?.type;
+	return (typeof type === 'number' ? type : Number(type)) === 24
+		|| type === 'AUTOMOD_ACTION'
+		|| type === 'AUTO_MODERATION_ACTION'
+		|| message?.isAutomod === true
+		|| message?.isAutoModAction === true;
+}
 
 const MODES: { key: Mode; label: string; subLabel: string }[] = [
 	{ key: 'nick-user', label: 'Display name then username', subLabel: 'Display Name (@username)' },
@@ -109,11 +117,14 @@ export default {
 			try {
 				const row = ctx.result?.message;
 				if (!row) return;
+				const message = (ctx.args[0] as any)?.message;
+				if (isAutomodMessage(message)) return;
 
-				rewriteUsername(row, (ctx.args[0] as any)?.message?.author);
+				rewriteUsername(row, message?.author);
 
-				if (STORE.get('inReplies', false)) {
-					rewriteUsername(row.referencedMessage?.message);
+				const referencedMessage = message?.referencedMessage?.message ?? message?.referenced_message;
+				if (STORE.get('inReplies', false) && !isAutomodMessage(referencedMessage)) {
+					rewriteUsername(row.referencedMessage?.message, referencedMessage?.author);
 				}
 			} catch { }
 		});

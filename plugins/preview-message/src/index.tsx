@@ -1,6 +1,7 @@
-import { assets, metro, patcher } from '@unbound-app/api';
+import { assets, metro, patcher, plugins, storage } from '@unbound-app/api';
 
 import { extractUrls, fetchLinkEmbed, type LinkEmbed } from './embeds';
+import { applyRules, normalizeRules } from '../../text-replace/src/rules';
 
 const RIGHT_ACTIONS_PATH = 'modules/chat_input/native/action_buttons/ChatInputRightActions.tsx';
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
@@ -39,6 +40,18 @@ let chatInputs: {
 let eyeIcon: number | null = null;
 let stickerPreviews: any = null;
 let removeModuleListener: (() => boolean) | null = null;
+const textReplaceStore = storage.getStore('unbound.text-replace');
+
+function applyTextReplace(content: string): string {
+	const textReplace = (plugins as any).getEntity?.('unbound.text-replace');
+	if (!textReplace?.started) return content;
+
+	return applyRules(
+		content,
+		normalizeRules(textReplaceStore.get('stringRules', [])),
+		normalizeRules(textReplaceStore.get('regexRules', [])),
+	);
+}
 
 function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	let holder = mod;
@@ -138,13 +151,14 @@ function PreviewOverlay({
 }) {
 	const { React, ReactNative } = metro.common;
 	const ChatItem = chatItem;
+	const renderedContent = applyTextReplace(content);
 	const opacity = React.useRef(new ReactNative.Animated.Value(0)).current;
 	const [embeds, setEmbeds] = React.useState<LinkEmbed[]>([]);
 
 	React.useEffect(() => {
 		let active = true;
 		setEmbeds([]);
-		const urls = extractUrls(content).slice(0, MAX_PREVIEW_URLS);
+		const urls = extractUrls(renderedContent).slice(0, MAX_PREVIEW_URLS);
 		if (!urls.length) return () => { active = false; };
 
 		void Promise.all(urls.map((url) => fetchLinkEmbed(url, restApi))).then((resolved) => {
@@ -152,7 +166,7 @@ function PreviewOverlay({
 		});
 
 		return () => { active = false; };
-	}, [content]);
+	}, [renderedContent]);
 
 	React.useEffect(() => {
 		haptics?.triggerHapticFeedback?.(haptics.HapticFeedbackTypes.IMPACT_MEDIUM);
@@ -174,7 +188,7 @@ function PreviewOverlay({
 
 	let body: any;
 	try {
-		const record = buildRecord(channelId, content, stickers, embeds);
+		const record = buildRecord(channelId, renderedContent, stickers, embeds);
 		const generator = new rowManager();
 		generator.generate({ rowType: MESSAGE_ROW_TYPE, message: record });
 		body = <ChatItem rowGenerator={generator} message={record} />;
