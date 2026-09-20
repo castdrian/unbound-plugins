@@ -269,8 +269,9 @@ function textViewsInView(view: NativeValue): NativeValue[] {
 	const views: NativeValue[] = [];
 	if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText')) views.push(view);
 	if (!objc.respondsTo(view, 'subviews')) return views;
-	for (const child of objc.array(objc.call(view, 'subviews') as NativeObjectHandle))
-		views.push(...textViewsInView(child));
+	const children = objc.call(view, 'subviews');
+	if (!Array.isArray(children)) return views;
+	for (const child of children) views.push(...textViewsInView(child));
 	return views;
 }
 
