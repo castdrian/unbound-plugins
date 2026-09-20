@@ -1,3 +1,9 @@
+import type {
+	NativeHookToken,
+	NativeObjCBridge,
+	NativeObjectHandle,
+	PluginContext,
+} from '@unbound-app/api/native';
 import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.mention-avatars';
@@ -6,41 +12,6 @@ const MENTION_PLACEHOLDER = '\uFFFC';
 const ROLE_IMAGE_NAME = 'person.2';
 
 type NativeValue = any;
-
-type NativeHookContext = {
-	self: NativeValue;
-	selector: string;
-	args: NativeValue[];
-};
-
-type NativeHookToken = {
-	remove(): void;
-};
-
-type NativeObjC = {
-	getClass(name: string): NativeValue | null;
-	alloc(classOrName: string | NativeValue): NativeValue;
-	respondsTo(handle: NativeValue, selector: string): boolean;
-	call(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue;
-	getIvar(handle: NativeValue, name: string): NativeValue;
-	createAssociationKey(): NativeValue;
-	getAssociatedObject(handle: NativeValue, key: NativeValue): NativeValue;
-	setAssociatedObject(handle: NativeValue, key: NativeValue, value: NativeValue, policy?: string): void;
-	struct(name: string, fields: NativeValue): NativeValue;
-	array(handle: NativeValue): NativeValue[];
-	data(value: ArrayBuffer | Uint8Array): NativeValue;
-	hook(
-		className: string,
-		selector: string,
-		handlers: { after(context: NativeHookContext): void },
-	): NativeHookToken;
-};
-
-type NativePluginContext = {
-	native: {
-		objc: NativeObjC;
-	};
-};
 
 type Mention = {
 	avatarURL?: string;
@@ -69,7 +40,7 @@ let roles: {
 	getRole?: (guildId: string, roleId: string) => { icon?: string | null; id: string; name?: string } | undefined;
 	getSortedRoles?: (guildId: string) => unknown[];
 } | null = null;
-let objc: NativeObjC | null = null;
+let objc: NativeObjCBridge | null = null;
 let originalTextKey: NativeValue | null = null;
 let hookTokens: NativeHookToken[] = [];
 let activeCells = new Set<NativeValue>();
@@ -281,7 +252,12 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 		const values = { YYTextHighlight: attributes, NSForegroundColor: foreground, NSFont: font };
 		const text = STORE.get('showAtSymbol', true) ? bestText : bestText.slice(1);
 		const replacement = attributedMention(text, metadata, values, image);
-		objc.call(result, 'replaceCharactersInRange:withAttributedString:', range(bestIndex, bestText.length), replacement);
+	objc.call(
+		result as NativeObjectHandle,
+		'replaceCharactersInRange:withAttributedString:',
+		range(bestIndex, bestText.length),
+		replacement,
+	);
 		searchIndex = bestIndex + asNumber(objc.call(replacement, 'length'));
 	}
 
@@ -293,7 +269,8 @@ function textViewsInView(view: NativeValue): NativeValue[] {
 	const views: NativeValue[] = [];
 	if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText')) views.push(view);
 	if (!objc.respondsTo(view, 'subviews')) return views;
-	for (const child of objc.array(objc.call(view, 'subviews'))) views.push(...textViewsInView(child));
+	for (const child of objc.array(objc.call(view, 'subviews') as NativeObjectHandle))
+		views.push(...textViewsInView(child));
 	return views;
 }
 
@@ -341,7 +318,7 @@ function installNativeHooks(): void {
 	hookTokens = [layout, reuse];
 }
 
-function start(context?: NativePluginContext): void {
+function start(context?: PluginContext): void {
 	objc = context?.native.objc ?? null;
 	if (!objc) return;
 	originalTextKey = objc.createAssociationKey();
