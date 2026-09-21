@@ -106,7 +106,20 @@ export function cellRenderDecision(
 }
 
 export function containsMentionText(value: string, mentions: Mention[]): boolean {
-	return mentions.every((metadata) => metadata.labels.some((label) => value.includes(`@${label}`)));
+	return mentions.every((metadata) =>
+		metadata.labels.some((label) => {
+			const prefix = `@${label}`;
+			let searchIndex = 0;
+			while (searchIndex < value.length) {
+				const index = value.indexOf(prefix, searchIndex);
+				if (index === -1) return false;
+				const next = value[index + prefix.length];
+				if (!next || next === '\u2068' || next === '\u2069' || /\s/u.test(next)) return true;
+				searchIndex = index + 1;
+			}
+			return false;
+		}),
+	);
 }
 
 const ADDON_ID = 'unbound.mention-avatars';
@@ -502,17 +515,15 @@ function nextMentionRange(
 	start: number,
 	labels: string[],
 ): HighlightedRange | null {
-	let fallback: HighlightedRange | null = null;
 	let searchIndex = start;
 	while (searchIndex < string.length) {
 		const highlighted = nextHighlightedRange(value, string, searchIndex);
-		if (!highlighted) return fallback;
+		if (!highlighted) return null;
 		searchIndex = highlighted.index + highlighted.length;
 		if (!highlighted.text.includes('@')) continue;
-		fallback ??= highlighted;
-		if (labels.some((label) => highlighted.text.includes(`@${label}`))) return highlighted;
+		if (selectMentionLabel(highlighted.text, labels)) return highlighted;
 	}
-	return fallback;
+	return null;
 }
 
 function imageForMention(metadata: Mention, color: NativeValue): NativeValue | null {

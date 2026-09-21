@@ -21,6 +21,7 @@ describe('mention token matching', () => {
 	test('matches the complete visible label instead of a shared prefix', () => {
 		expect(selectMentionLabel('@autosupport', ['auto', 'autosupport'])).toBe('autosupport');
 		expect(selectMentionLabel('@dylib.dev\u2069', ['autosupport', 'dylib.dev'])).toBe('dylib.dev');
+		expect(selectMentionLabel('@autosupporter', ['autosupport'])).toBeUndefined();
 	});
 
 	test('checks every mention label before replacing a saved string', () => {
@@ -30,6 +31,9 @@ describe('mention token matching', () => {
 				{ labels: ['dylib.dev'], type: 'user' },
 			]),
 		).toBe(true);
+		expect(containsMentionText('@autosupporter', [{ labels: ['autosupport'], type: 'user' }])).toBe(
+			false,
+		);
 	});
 });
 
