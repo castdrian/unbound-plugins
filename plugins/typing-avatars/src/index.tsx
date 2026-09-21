@@ -33,9 +33,22 @@ function TypingAvatars({ item, typingUsers }: { item: TypingItem; typingUsers: U
 	const ReactNative = metro.common.ReactNative;
 	const visibleUsers = typingUsers.slice(0, MAX_AVATARS);
 	return (
-		<ReactNative.View style={{ flexDirection: 'row', height: AVATAR_HEIGHT, marginRight: 0, transform: [{ translateY: -AVATAR_LIFT }], width: visibleUsers.length ? AVATAR_HEIGHT + (visibleUsers.length - 1) * (AVATAR_HEIGHT + AVATAR_OVERLAP) : 0 }}>
+		<ReactNative.View
+			style={{
+				flexDirection: 'row',
+				height: AVATAR_HEIGHT,
+				marginRight: 0,
+				transform: [{ translateY: -AVATAR_LIFT }],
+				width: visibleUsers.length
+					? AVATAR_HEIGHT + (visibleUsers.length - 1) * (AVATAR_HEIGHT + AVATAR_OVERLAP)
+					: 0,
+			}}
+		>
 			{visibleUsers.map((user, index) => (
-				<ReactNative.View key={user.id} style={{ marginLeft: index ? AVATAR_OVERLAP : 0, zIndex: visibleUsers.length - index }}>
+				<ReactNative.View
+					key={user.id}
+					style={{ marginLeft: index ? AVATAR_OVERLAP : 0, zIndex: visibleUsers.length - index }}
+				>
 					<components.Avatar
 						user={user}
 						size={components.AvatarSizes.SIZE_16}
@@ -73,7 +86,10 @@ function patchTypingIndicator(module: { default?: unknown } | null): boolean {
 		const item = result?.props?.item as TypingItem | undefined;
 		const directIds = result?.props?.typingUserIds;
 		const ids = item?.typingUserIds ?? (Array.isArray(directIds) ? directIds : undefined);
-		const resolvedItem = item ?? { channel: result?.props?.channel, wrapperStyle: result?.props?.wrapperStyle };
+		const resolvedItem = item ?? {
+			channel: result?.props?.channel,
+			wrapperStyle: result?.props?.wrapperStyle,
+		};
 		if (typeof renderItem !== 'function' || !ids?.length) return result;
 		const { React, ReactNative } = metro.common;
 		collapseGutter(resolvedItem);
@@ -85,7 +101,9 @@ function patchTypingIndicator(module: { default?: unknown } | null): boolean {
 					.filter((user): user is User => Boolean(user));
 				if (!typingUsers.length) return inner;
 				return (
-					<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', paddingLeft: AVATAR_GUTTER }}>
+					<ReactNative.View
+						style={{ alignItems: 'center', flexDirection: 'row', paddingLeft: AVATAR_GUTTER }}
+					>
 						<TypingAvatars item={resolvedItem} typingUsers={typingUsers} />
 						<ReactNative.View style={{ flex: 1, marginLeft: -26 }}>{inner}</ReactNative.View>
 					</ReactNative.View>

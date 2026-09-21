@@ -6,9 +6,13 @@ import { translate } from '../src/translator';
 test('keeps the lexicon lowercase with distinct mappings and sources', () => {
 	const sources = mappings.map(([source]) => source);
 	expect(sources.every((source) => source === source.toLowerCase())).toBe(true);
-	expect(mappings.every(([source, replacement]) => source.toLowerCase() !== replacement.toLowerCase())).toBe(true);
+	expect(
+		mappings.every(([source, replacement]) => source.toLowerCase() !== replacement.toLowerCase()),
+	).toBe(true);
 	expect(new Set(sources).size).toBe(sources.length);
-	expect(Object.keys(australianSpellings).every((source) => source === source.toLowerCase())).toBe(true);
+	expect(Object.keys(australianSpellings).every((source) => source === source.toLowerCase())).toBe(
+		true,
+	);
 });
 
 test('uses the exaggerated larrikin register', () => {

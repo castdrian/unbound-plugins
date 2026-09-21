@@ -47,7 +47,9 @@ type ShareApi = {
 };
 
 function getRules(kind: RuleKind): TextReplaceRule[] {
-	return normalizeRules(STORE.get(kind, [])).filter((rule) => rule.find || rule.replace || rule.onlyIfIncludes);
+	return normalizeRules(STORE.get(kind, [])).filter(
+		(rule) => rule.find || rule.replace || rule.onlyIfIncludes,
+	);
 }
 
 function saveRules(kind: RuleKind, rules: TextReplaceRule[]): void {
@@ -57,8 +59,13 @@ function saveRules(kind: RuleKind, rules: TextReplaceRule[]): void {
 function parseRgb(value: string): [number, number, number] | null {
 	const hex = value.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
 	if (hex) {
-		const normalized = hex[1].length === 3 ? hex[1].replace(/./g, (part) => `${part}${part}`) : hex[1];
-		return [0, 2, 4].map((index) => Number.parseInt(normalized.slice(index, index + 2), 16)) as [number, number, number];
+		const normalized =
+			hex[1].length === 3 ? hex[1].replace(/./g, (part) => `${part}${part}`) : hex[1];
+		return [0, 2, 4].map((index) => Number.parseInt(normalized.slice(index, index + 2), 16)) as [
+			number,
+			number,
+			number,
+		];
 	}
 
 	const rgb = value.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
@@ -91,10 +98,18 @@ function getThemeColor(colors: Record<string, unknown>, key: string, fallback: s
 
 function getColors(): SettingsColors {
 	const colors = (metro.common.Theme as any)?.colors ?? {};
-	const page = getThemeColor(colors, 'BACKGROUND_MOBILE_PRIMARY', getThemeColor(colors, 'BACKGROUND_PRIMARY', '#111214'));
+	const page = getThemeColor(
+		colors,
+		'BACKGROUND_MOBILE_PRIMARY',
+		getThemeColor(colors, 'BACKGROUND_PRIMARY', '#111214'),
+	);
 	const surface = getThemeColor(colors, 'BACKGROUND_SECONDARY', '#1e1f22');
 	const surfaceAlt = getThemeColor(colors, 'BACKGROUND_SECONDARY_ALT', '#232428');
-	const input = getThemeColor(colors, 'BACKGROUND_TERTIARY', getThemeColor(colors, 'BACKGROUND_PRIMARY', '#111214'));
+	const input = getThemeColor(
+		colors,
+		'BACKGROUND_TERTIARY',
+		getThemeColor(colors, 'BACKGROUND_PRIMARY', '#111214'),
+	);
 	const accent = getThemeColor(
 		colors,
 		'BUTTON_FILLED_BRAND_BACKGROUND',
@@ -122,10 +137,13 @@ function getClipboard(): ClipboardApi | null {
 
 function getShare(): ShareApi | null {
 	const ReactNative = metro.common.ReactNative as { Share?: ShareApi } | undefined;
-	return ReactNative?.Share ?? ((metro.common as { Share?: ShareApi }).Share ?? null);
+	return ReactNative?.Share ?? (metro.common as { Share?: ShareApi }).Share ?? null;
 }
 
-async function exportRuleset(stringRules: TextReplaceRule[], regexRules: TextReplaceRule[]): Promise<void> {
+async function exportRuleset(
+	stringRules: TextReplaceRule[],
+	regexRules: TextReplaceRule[],
+): Promise<void> {
 	const value = serializeRuleset(stringRules, regexRules);
 	const clipboard = getClipboard();
 	let copied = false;
@@ -134,21 +152,26 @@ async function exportRuleset(stringRules: TextReplaceRule[], regexRules: TextRep
 		try {
 			await clipboard.setString(value);
 			copied = true;
-		} catch { }
+		} catch {}
 	}
 
 	const share = getShare();
 	if (typeof share?.share === 'function') {
 		try {
 			await share.share({ message: value });
-			toasts.showToast({ title: 'Text Replace', content: copied ? 'Ruleset copied and ready to share.' : 'Ruleset shared.' });
+			toasts.showToast({
+				title: 'Text Replace',
+				content: copied ? 'Ruleset copied and ready to share.' : 'Ruleset shared.',
+			});
 			return;
-		} catch { }
+		} catch {}
 	}
 
 	toasts.showToast({
 		title: 'Text Replace',
-		content: copied ? 'Ruleset copied to your clipboard.' : 'Sharing is unavailable on this client build.',
+		content: copied
+			? 'Ruleset copied to your clipboard.'
+			: 'Sharing is unavailable on this client build.',
 	});
 }
 
@@ -184,7 +207,9 @@ function RuleInput({
 
 	return (
 		<ReactNative.View style={{ gap: 8 }}>
-			<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>{label}</ReactNative.Text>
+			<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
+				{label}
+			</ReactNative.Text>
 			<ReactNative.TextInput
 				autoCapitalize='none'
 				autoCorrect={false}
@@ -245,7 +270,13 @@ function Button({
 				paddingVertical: compact ? 10 : 14,
 			})}
 		>
-			<ReactNative.Text style={{ color: secondary ? colors.text : colors.accentText, fontSize: compact ? 14 : 16, fontWeight: '800' }}>
+			<ReactNative.Text
+				style={{
+					color: secondary ? colors.text : colors.accentText,
+					fontSize: compact ? 14 : 16,
+					fontWeight: '800',
+				}}
+			>
 				{label}
 			</ReactNative.Text>
 		</ReactNative.Pressable>
@@ -275,10 +306,23 @@ function RuleEditor({
 	}
 
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ backgroundColor: colors.page, gap: 20, padding: 16, paddingBottom: 32 }}>
+		<ReactNative.ScrollView
+			contentContainerStyle={{
+				backgroundColor: colors.page,
+				gap: 20,
+				padding: 16,
+				paddingBottom: 32,
+			}}
+		>
 			<ReactNative.View style={{ gap: 8 }}>
-				<ReactNative.Pressable onPress={onClose} hitSlop={8} style={{ alignSelf: 'flex-start', paddingVertical: 4 }}>
-					<ReactNative.Text style={{ color: colors.link, fontSize: 16, fontWeight: '700' }}>‹ Back to rules</ReactNative.Text>
+				<ReactNative.Pressable
+					onPress={onClose}
+					hitSlop={8}
+					style={{ alignSelf: 'flex-start', paddingVertical: 4 }}
+				>
+					<ReactNative.Text style={{ color: colors.link, fontSize: 16, fontWeight: '700' }}>
+						‹ Back to rules
+					</ReactNative.Text>
 				</ReactNative.Pressable>
 				<ReactNative.Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>
 					{editing.isNew ? `New ${isRegex ? 'regex' : 'text'} rule` : 'Edit rule'}
@@ -319,10 +363,20 @@ function RuleEditor({
 	);
 }
 
-function RuleRow({ rule, isRegex, onPress }: { rule: TextReplaceRule; isRegex: boolean; onPress: () => void }) {
+function RuleRow({
+	rule,
+	isRegex,
+	onPress,
+}: {
+	rule: TextReplaceRule;
+	isRegex: boolean;
+	onPress: () => void;
+}) {
 	const { ReactNative } = metro.common;
 	const colors = getColors();
-	const condition = rule.onlyIfIncludes ? `Only when it includes “${rule.onlyIfIncludes}”` : 'Applies to every message';
+	const condition = rule.onlyIfIncludes
+		? `Only when it includes “${rule.onlyIfIncludes}”`
+		: 'Applies to every message';
 
 	return (
 		<ReactNative.Pressable
@@ -338,14 +392,18 @@ function RuleRow({ rule, isRegex, onPress }: { rule: TextReplaceRule; isRegex: b
 		>
 			<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', gap: 12 }}>
 				<ReactNative.View style={{ flex: 1, gap: 4 }}>
-					<ReactNative.Text numberOfLines={1} style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>
+					<ReactNative.Text
+						numberOfLines={1}
+						style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}
+					>
 						{rule.find}
 					</ReactNative.Text>
 					<ReactNative.Text numberOfLines={1} style={{ color: colors.text, fontSize: 14 }}>
 						→ {rule.replace || 'Remove it'}
 					</ReactNative.Text>
 					<ReactNative.Text numberOfLines={1} style={{ color: colors.muted, fontSize: 13 }}>
-						{isRegex ? 'Regex · ' : ''}{condition}
+						{isRegex ? 'Regex · ' : ''}
+						{condition}
 					</ReactNative.Text>
 				</ReactNative.View>
 				<ReactNative.Text style={{ color: colors.muted, fontSize: 24 }}>›</ReactNative.Text>
@@ -354,7 +412,13 @@ function RuleRow({ rule, isRegex, onPress }: { rule: TextReplaceRule; isRegex: b
 	);
 }
 
-function RuleTester({ stringRules, regexRules }: { stringRules: TextReplaceRule[]; regexRules: TextReplaceRule[] }) {
+function RuleTester({
+	stringRules,
+	regexRules,
+}: {
+	stringRules: TextReplaceRule[];
+	regexRules: TextReplaceRule[];
+}) {
 	const { ReactNative } = metro.common;
 	const colors = getColors();
 	const [example, setExample] = useState('');
@@ -362,10 +426,29 @@ function RuleTester({ stringRules, regexRules }: { stringRules: TextReplaceRule[
 
 	return (
 		<ReactNative.View style={{ gap: 12 }}>
-			<ReactNative.Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>Try your rules</ReactNative.Text>
-			<RuleInput label='Example message' multiline placeholder='Type a message to test' value={example} onChange={setExample} />
-			<ReactNative.View style={{ backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderRadius: 14, borderWidth: 1, gap: 6, padding: 14 }}>
-				<ReactNative.Text style={{ color: colors.muted, fontSize: 13, fontWeight: '700' }}>RESULT</ReactNative.Text>
+			<ReactNative.Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>
+				Try your rules
+			</ReactNative.Text>
+			<RuleInput
+				label='Example message'
+				multiline
+				placeholder='Type a message to test'
+				value={example}
+				onChange={setExample}
+			/>
+			<ReactNative.View
+				style={{
+					backgroundColor: colors.surfaceAlt,
+					borderColor: colors.border,
+					borderRadius: 14,
+					borderWidth: 1,
+					gap: 6,
+					padding: 14,
+				}}
+			>
+				<ReactNative.Text style={{ color: colors.muted, fontSize: 13, fontWeight: '700' }}>
+					RESULT
+				</ReactNative.Text>
 				<ReactNative.Text style={{ color: colors.text, fontSize: 16, lineHeight: 22 }}>
 					{output || 'Your transformed message will appear here.'}
 				</ReactNative.Text>
@@ -392,14 +475,20 @@ function RulesetTransfer({
 			onImported(parseRuleset(value));
 			setImportText('');
 		} catch (error) {
-			toasts.showToast({ title: 'Text Replace', content: error instanceof Error ? error.message : 'Could not import ruleset.' });
+			toasts.showToast({
+				title: 'Text Replace',
+				content: error instanceof Error ? error.message : 'Could not import ruleset.',
+			});
 		}
 	}
 
 	async function importClipboard(): Promise<void> {
 		const value = await readClipboard();
 		if (!value?.trim()) {
-		toasts.showToast({ title: 'Text Replace', content: 'Your clipboard does not contain a ruleset.' });
+			toasts.showToast({
+				title: 'Text Replace',
+				content: 'Your clipboard does not contain a ruleset.',
+			});
 			return;
 		}
 
@@ -407,15 +496,30 @@ function RulesetTransfer({
 	}
 
 	return (
-		<ReactNative.View style={{ backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, gap: 8, padding: 10 }}>
+		<ReactNative.View
+			style={{
+				backgroundColor: colors.surface,
+				borderColor: colors.border,
+				borderRadius: 12,
+				borderWidth: 1,
+				gap: 8,
+				padding: 10,
+			}}
+		>
 			<ReactNative.View style={{ gap: 5 }}>
-				<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>Share rules</ReactNative.Text>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>
+					Share rules
+				</ReactNative.Text>
 				<ReactNative.Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>
 					Export or import both rule lists as portable JSON.
 				</ReactNative.Text>
 			</ReactNative.View>
 			<ReactNative.View style={{ flexDirection: 'row', gap: 8 }}>
-				<Button compact label='Export & share' onPress={() => void exportRuleset(stringRules, regexRules)} />
+				<Button
+					compact
+					label='Export & share'
+					onPress={() => void exportRuleset(stringRules, regexRules)}
+				/>
 				<Button compact label='Import clipboard' onPress={() => void importClipboard()} secondary />
 			</ReactNative.View>
 			<RuleInput
@@ -426,7 +530,13 @@ function RulesetTransfer({
 				value={importText}
 				onChange={setImportText}
 			/>
-			<Button compact disabled={!importText.trim()} label='Import pasted' onPress={() => importValue(importText)} secondary />
+			<Button
+				compact
+				disabled={!importText.trim()}
+				label='Import pasted'
+				onPress={() => importValue(importText)}
+				secondary
+			/>
 		</ReactNative.View>
 	);
 }
@@ -443,7 +553,10 @@ export function TextReplaceSettingsScreen() {
 	const rules = kind === 'stringRules' ? stringRules : regexRules;
 	const isRegex = kind === 'regexRules';
 	const subtitle = useMemo(
-		() => (isRegex ? 'Powerful pattern replacements for advanced rules.' : 'Simple text replacements that work as you type.'),
+		() =>
+			isRegex
+				? 'Powerful pattern replacements for advanced rules.'
+				: 'Simple text replacements that work as you type.',
 		[isRegex],
 	);
 
@@ -463,7 +576,10 @@ export function TextReplaceSettingsScreen() {
 
 	function deleteEditedRule(): void {
 		if (!editing) return;
-		saveRules(editing.kind, getRules(editing.kind).filter((rule) => rule.id !== editing.rule.id));
+		saveRules(
+			editing.kind,
+			getRules(editing.kind).filter((rule) => rule.id !== editing.rule.id),
+		);
 		setEditing(null);
 		refresh();
 	}
@@ -476,13 +592,29 @@ export function TextReplaceSettingsScreen() {
 	}
 
 	if (editing) {
-		return <RuleEditor editing={editing} onClose={() => setEditing(null)} onDelete={deleteEditedRule} onSave={saveEditedRule} />;
+		return (
+			<RuleEditor
+				editing={editing}
+				onClose={() => setEditing(null)}
+				onDelete={deleteEditedRule}
+				onSave={saveEditedRule}
+			/>
+		);
 	}
 
 	return (
-		<ReactNative.ScrollView contentContainerStyle={{ backgroundColor: colors.page, gap: 20, padding: 16, paddingBottom: 32 }}>
+		<ReactNative.ScrollView
+			contentContainerStyle={{
+				backgroundColor: colors.page,
+				gap: 20,
+				padding: 16,
+				paddingBottom: 32,
+			}}
+		>
 			<ReactNative.View style={{ gap: 8 }}>
-				<ReactNative.Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>Text Replace</ReactNative.Text>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>
+					Text Replace
+				</ReactNative.Text>
 				<ReactNative.Text style={{ color: colors.muted, fontSize: 15, lineHeight: 21 }}>
 					Automatically rewrite messages before you send them.
 				</ReactNative.Text>
@@ -498,17 +630,37 @@ export function TextReplaceSettingsScreen() {
 						paddingVertical: 4,
 					})}
 				>
-					<ReactNative.Text style={{ color: colors.link, fontSize: 16, fontWeight: '800' }}>Test your rules</ReactNative.Text>
-					<ReactNative.Text style={{ color: colors.link, fontSize: 20 }}>{showTester ? '⌃' : '⌄'}</ReactNative.Text>
+					<ReactNative.Text style={{ color: colors.link, fontSize: 16, fontWeight: '800' }}>
+						Test your rules
+					</ReactNative.Text>
+					<ReactNative.Text style={{ color: colors.link, fontSize: 20 }}>
+						{showTester ? '⌃' : '⌄'}
+					</ReactNative.Text>
 				</ReactNative.Pressable>
 				{showTester ? <RuleTester regexRules={regexRules} stringRules={stringRules} /> : null}
 			</ReactNative.View>
-			<RulesetTransfer regexRules={regexRules} stringRules={stringRules} onImported={importRuleset} />
-			<ReactNative.View style={{ backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 6, padding: 5 }}>
-				{([
-					['stringRules', 'Text'],
-					['regexRules', 'Regex'],
-				] as [RuleKind, string][]).map(([candidate, label]) => (
+			<RulesetTransfer
+				regexRules={regexRules}
+				stringRules={stringRules}
+				onImported={importRuleset}
+			/>
+			<ReactNative.View
+				style={{
+					backgroundColor: colors.surface,
+					borderColor: colors.border,
+					borderRadius: 14,
+					borderWidth: 1,
+					flexDirection: 'row',
+					gap: 6,
+					padding: 5,
+				}}
+			>
+				{(
+					[
+						['stringRules', 'Text'],
+						['regexRules', 'Regex'],
+					] as [RuleKind, string][]
+				).map(([candidate, label]) => (
 					<ReactNative.Pressable
 						key={candidate}
 						onPress={() => setKind(candidate)}
@@ -521,7 +673,9 @@ export function TextReplaceSettingsScreen() {
 							paddingVertical: 10,
 						})}
 					>
-						<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{label}</ReactNative.Text>
+						<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>
+							{label}
+						</ReactNative.Text>
 					</ReactNative.Pressable>
 				))}
 			</ReactNative.View>
@@ -529,21 +683,45 @@ export function TextReplaceSettingsScreen() {
 				<ReactNative.Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>
 					{isRegex ? 'Regex rules' : 'Text rules'} · {rules.length}
 				</ReactNative.Text>
-				<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>{subtitle}</ReactNative.Text>
+				<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>
+					{subtitle}
+				</ReactNative.Text>
 			</ReactNative.View>
 			{rules.length ? (
 				<ReactNative.View style={{ gap: 10 }}>
 					{rules.map((rule) => (
-						<RuleRow key={rule.id} isRegex={isRegex} rule={rule} onPress={() => setEditing({ kind, rule, isNew: false })} />
+						<RuleRow
+							key={rule.id}
+							isRegex={isRegex}
+							rule={rule}
+							onPress={() => setEditing({ kind, rule, isNew: false })}
+						/>
 					))}
 				</ReactNative.View>
 			) : (
-				<ReactNative.View style={{ alignItems: 'center', backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderRadius: 14, borderWidth: 1, gap: 6, padding: 20 }}>
-					<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>No rules yet</ReactNative.Text>
-					<ReactNative.Text style={{ color: colors.muted, fontSize: 14, textAlign: 'center' }}>Add one when you are ready.</ReactNative.Text>
+				<ReactNative.View
+					style={{
+						alignItems: 'center',
+						backgroundColor: colors.surfaceAlt,
+						borderColor: colors.border,
+						borderRadius: 14,
+						borderWidth: 1,
+						gap: 6,
+						padding: 20,
+					}}
+				>
+					<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>
+						No rules yet
+					</ReactNative.Text>
+					<ReactNative.Text style={{ color: colors.muted, fontSize: 14, textAlign: 'center' }}>
+						Add one when you are ready.
+					</ReactNative.Text>
 				</ReactNative.View>
 			)}
-			<Button label={`Add ${isRegex ? 'regex' : 'text'} rule`} onPress={() => setEditing({ kind, rule: createRule(), isNew: true })} />
+			<Button
+				label={`Add ${isRegex ? 'regex' : 'text'} rule`}
+				onPress={() => setEditing({ kind, rule: createRule(), isNew: true })}
+			/>
 		</ReactNative.ScrollView>
 	);
 }

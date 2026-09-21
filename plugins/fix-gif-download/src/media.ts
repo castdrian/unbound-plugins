@@ -15,7 +15,10 @@ function isGifProvider(value: string): boolean {
 function isDiscordExternalProxy(value: string): boolean {
 	try {
 		const url = new URL(value);
-		return /^(?:images-ext-\d+|media)\.discordapp\.net$/i.test(url.hostname) && /\/external\//i.test(url.pathname);
+		return (
+			/^(?:images-ext-\d+|media)\.discordapp\.net$/i.test(url.hostname) &&
+			/\/external\//i.test(url.pathname)
+		);
 	} catch {
 		return false;
 	}
@@ -60,7 +63,17 @@ function findKlipyPageSlug(value: unknown, depth = 0): string | null {
 	if (depth > 5) return null;
 	if (typeof value === 'string') return klipyPageSlug(value);
 	if (!isRecord(value)) return null;
-	for (const key of ['url', 'uri', 'sourceURI', 'sourceUri', 'sourceUrl', 'embed', 'original', 'source', 'media']) {
+	for (const key of [
+		'url',
+		'uri',
+		'sourceURI',
+		'sourceUri',
+		'sourceUrl',
+		'embed',
+		'original',
+		'source',
+		'media',
+	]) {
 		const slug = findKlipyPageSlug(value[key], depth + 1);
 		if (slug) return slug;
 	}
@@ -82,7 +95,19 @@ function findKlipyHash(value: unknown, depth = 0): string | null {
 		const hash = findKlipyHash(value[key], depth + 1);
 		if (hash) return hash;
 	}
-	for (const key of ['media', 'source', 'original', 'attachment', 'gif', 'result', 'data', 'image', 'thumbnail', 'video', 'embed']) {
+	for (const key of [
+		'media',
+		'source',
+		'original',
+		'attachment',
+		'gif',
+		'result',
+		'data',
+		'image',
+		'thumbnail',
+		'video',
+		'embed',
+	]) {
 		const hash = findKlipyHash(value[key], depth + 1);
 		if (hash) return hash;
 	}
@@ -98,7 +123,16 @@ function findKlipyTitle(value: unknown, depth = 0): string | null {
 	for (const key of ['title', 'description', 'slug']) {
 		if (typeof value[key] === 'string' && value[key]) return value[key] as string;
 	}
-	for (const key of ['media', 'source', 'original', 'attachment', 'gif', 'result', 'data', 'embed']) {
+	for (const key of [
+		'media',
+		'source',
+		'original',
+		'attachment',
+		'gif',
+		'result',
+		'data',
+		'embed',
+	]) {
 		const title = findKlipyTitle(value[key], depth + 1);
 		if (title) return title;
 	}
@@ -111,9 +145,18 @@ function findKlipyTitle(value: unknown, depth = 0): string | null {
 
 function findGifUrl(value: unknown, depth = 0): string | null {
 	if (depth > 7) return null;
-	if (typeof value === 'string') return /\.gif(?:$|[?#])/i.test(value) && /klipy/i.test(value) ? value : null;
+	if (typeof value === 'string')
+		return /\.gif(?:$|[?#])/i.test(value) && /klipy/i.test(value) ? value : null;
 	if (!isRecord(value)) return null;
-	for (const key of ['gif', 'url', 'sourceURI', 'sourceUri', 'sourceUrl', 'originalUrl', 'mediaUrl']) {
+	for (const key of [
+		'gif',
+		'url',
+		'sourceURI',
+		'sourceUri',
+		'sourceUrl',
+		'originalUrl',
+		'mediaUrl',
+	]) {
 		const url = findGifUrl(value[key], depth + 1);
 		if (url) return url;
 	}
@@ -149,7 +192,9 @@ export async function resolveKlipyGifUrl(value: unknown): Promise<string | null>
 		if (!slug) return null;
 		try {
 			const query = encodeURIComponent(slug.replace(/[-_]+/g, ' '));
-			const response = await fetch(`https://api.klipy.com/api/v1/${KLIPY_API_KEY}/gifs/search?per_page=30&q=${query}&page=1&customer_id=unbound`);
+			const response = await fetch(
+				`https://api.klipy.com/api/v1/${KLIPY_API_KEY}/gifs/search?per_page=30&q=${query}&page=1&customer_id=unbound`,
+			);
 			if (!response.ok) return null;
 			const payload = (await response.json()) as Record<string, unknown>;
 			const data = isRecord(payload.data) ? payload.data.data : null;
@@ -192,7 +237,12 @@ function likelyGifVideo(value: string): boolean {
 		const format = url.searchParams.get('format')?.toLowerCase();
 		return (
 			isGifProvider(`${host}${pathname}${url.search}`) &&
-			(pathname.endsWith('.mp4') || pathname.endsWith('.webm') || pathname.endsWith('.webp') || format === 'mp4' || format === 'video' || format === 'webp')
+			(pathname.endsWith('.mp4') ||
+				pathname.endsWith('.webm') ||
+				pathname.endsWith('.webp') ||
+				format === 'mp4' ||
+				format === 'video' ||
+				format === 'webp')
 		);
 	} catch {
 		return isGifProvider(value) && /\.(?:mp4|webm|webp)(?:$|[?#])/i.test(value);
@@ -221,7 +271,10 @@ function directGifUrl(value: string): string | null {
 			if (format && format !== 'gif') parsed.searchParams.set('format', 'gif');
 			return parsed.toString();
 		}
-		if (parsed.searchParams.get('animated') === 'true' && (pathname.endsWith('.webp') || pathname.endsWith('.avif') || pathname.endsWith('.mp4'))) {
+		if (
+			parsed.searchParams.get('animated') === 'true' &&
+			(pathname.endsWith('.webp') || pathname.endsWith('.avif') || pathname.endsWith('.mp4'))
+		) {
 			parsed.pathname = parsed.pathname.replace(/\.(?:webp|avif|mp4)$/i, '.gif');
 			parsed.searchParams.set('format', 'gif');
 			return parsed.toString();
@@ -230,7 +283,10 @@ function directGifUrl(value: string): string | null {
 			const normalized = canonicalGiphyUrl(parsed);
 			if (normalized !== parsed.toString()) return normalized;
 		}
-		if (parsed.hostname.toLowerCase() === 'tenor.com' && !parsed.pathname.toLowerCase().endsWith('.gif')) {
+		if (
+			parsed.hostname.toLowerCase() === 'tenor.com' &&
+			!parsed.pathname.toLowerCase().endsWith('.gif')
+		) {
 			parsed.pathname = `${parsed.pathname}.gif`;
 			return parsed.toString();
 		}
@@ -299,7 +355,19 @@ export function getPreferredGifUrl(value: unknown, depth = 0): string | null {
 	if (fallback) return fallback;
 
 	let nestedFallback: string | null = null;
-	for (const key of ['media', 'source', 'original', 'attachment', 'gif', 'result', 'data', 'image', 'thumbnail', 'video', 'embed']) {
+	for (const key of [
+		'media',
+		'source',
+		'original',
+		'attachment',
+		'gif',
+		'result',
+		'data',
+		'image',
+		'thumbnail',
+		'video',
+		'embed',
+	]) {
 		const nested = getPreferredGifUrl(value[key], depth + 1);
 		if (nested && !nestedFallback) nestedFallback = nested;
 	}
@@ -309,18 +377,37 @@ export function getPreferredGifUrl(value: unknown, depth = 0): string | null {
 
 export function isGifSource(value: unknown, contentType?: unknown, depth = 0): boolean {
 	if (depth > 3) return false;
-	if (typeof contentType === 'string' && contentType.toLowerCase().startsWith('image/gif')) return true;
+	if (typeof contentType === 'string' && contentType.toLowerCase().startsWith('image/gif'))
+		return true;
 	if (typeof value === 'string') return hasGifExtension(value) || likelyGifVideo(value);
 	if (!isRecord(value)) return false;
 	if (typeof value.providerName === 'string' && isGifProvider(value.providerName)) return true;
 
 	const nestedType = value.contentType ?? value.mimeType ?? value.type;
-	if (typeof nestedType === 'string' && nestedType.toLowerCase().startsWith('image/gif')) return true;
-	return sourceKeys.some((key) => isGifSource(value[key], undefined, depth + 1)) ||
-		['media', 'source', 'original', 'attachment', 'gif', 'result', 'data', 'image', 'thumbnail', 'video', 'embed'].some((key) => isGifSource(value[key], undefined, depth + 1));
+	if (typeof nestedType === 'string' && nestedType.toLowerCase().startsWith('image/gif'))
+		return true;
+	return (
+		sourceKeys.some((key) => isGifSource(value[key], undefined, depth + 1)) ||
+		[
+			'media',
+			'source',
+			'original',
+			'attachment',
+			'gif',
+			'result',
+			'data',
+			'image',
+			'thumbnail',
+			'video',
+			'embed',
+		].some((key) => isGifSource(value[key], undefined, depth + 1))
+	);
 }
 
-export function rewriteGifMedia(value: unknown, contentType?: unknown): { source: unknown; contentType: unknown } | null {
+export function rewriteGifMedia(
+	value: unknown,
+	contentType?: unknown,
+): { source: unknown; contentType: unknown } | null {
 	const gifUrl = getPreferredGifUrl(value);
 	if (!gifUrl && !isGifSource(value, contentType)) return null;
 	if (isRecord(value) && gifUrl) {

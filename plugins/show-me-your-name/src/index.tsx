@@ -1,6 +1,11 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
-import { SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+import {
+	SettingsRow,
+	SettingsScrollView,
+	SettingsSection,
+	SettingsSwitchRow,
+} from '../../../shared/settings-ui';
 
 const ADDON_ID = 'unbound.show-me-your-name';
 const STORE = storage.getStore(ADDON_ID);
@@ -21,11 +26,13 @@ interface Author {
 
 function isAutomodMessage(message: any): boolean {
 	const type = message?.type;
-	return (typeof type === 'number' ? type : Number(type)) === 24
-		|| type === 'AUTOMOD_ACTION'
-		|| type === 'AUTO_MODERATION_ACTION'
-		|| message?.isAutomod === true
-		|| message?.isAutoModAction === true;
+	return (
+		(typeof type === 'number' ? type : Number(type)) === 24 ||
+		type === 'AUTOMOD_ACTION' ||
+		type === 'AUTO_MODERATION_ACTION' ||
+		message?.isAutomod === true ||
+		message?.isAutoModAction === true
+	);
 }
 
 const MODES: { key: Mode; label: string; subLabel: string }[] = [
@@ -45,7 +52,10 @@ function buildLabel(author: Author | undefined, displayed: string | undefined): 
 	if (!username) return null;
 
 	const prefix = displayed.startsWith('@') ? '@' : '';
-	const friendNickname = STORE.get('friendNicknames', true) && author.id ? relationships?.getNickname?.(author.id) : null;
+	const friendNickname =
+		STORE.get('friendNicknames', true) && author.id
+			? relationships?.getNickname?.(author.id)
+			: null;
 	const nick = friendNickname ?? (prefix ? displayed.slice(1) : displayed);
 	const tag = `@${username}`;
 
@@ -58,7 +68,8 @@ function buildLabel(author: Author | undefined, displayed: string | undefined): 
 function rewriteUsername(rowMessage: any, author?: Author): void {
 	if (!rowMessage) return;
 
-	const resolved = author ?? (rowMessage.authorId ? users?.getUser?.(rowMessage.authorId) : undefined);
+	const resolved =
+		author ?? (rowMessage.authorId ? users?.getUser?.(rowMessage.authorId) : undefined);
 	const label = buildLabel(resolved, rowMessage.username);
 	if (label != null) rowMessage.username = label;
 }
@@ -69,7 +80,7 @@ function ReactNativeSettingsScreen() {
 
 	return (
 		<SettingsScrollView>
-			<SettingsSection title="Display Mode">
+			<SettingsSection title='Display Mode'>
 				{MODES.map(({ key, label, subLabel }) => (
 					<SettingsRow
 						key={key}
@@ -81,22 +92,22 @@ function ReactNativeSettingsScreen() {
 				))}
 			</SettingsSection>
 
-			<SettingsSection title="Preferences">
+			<SettingsSection title='Preferences'>
 				<SettingsSwitchRow
-					label="Show Friend Nicknames"
+					label='Show Friend Nicknames'
 					description="Prefer a friend's nickname wherever it applies"
 					value={state.get('friendNicknames', true)}
 					onValueChange={(value: boolean) => state.set('friendNicknames', value)}
 				/>
 				<SettingsSwitchRow
-					label="Use Global Names"
+					label='Use Global Names'
 					description="Show the account's global name instead of its username"
 					value={state.get('displayNames', false)}
 					onValueChange={(value: boolean) => state.set('displayNames', value)}
 				/>
 				<SettingsSwitchRow
-					label="Apply To Replies"
-					description="Also apply to reply previews"
+					label='Apply To Replies'
+					description='Also apply to reply previews'
 					value={state.get('inReplies', false)}
 					onValueChange={(value: boolean) => state.set('inReplies', value)}
 				/>
@@ -122,11 +133,12 @@ export default {
 
 				rewriteUsername(row, message?.author);
 
-				const referencedMessage = message?.referencedMessage?.message ?? message?.referenced_message;
+				const referencedMessage =
+					message?.referencedMessage?.message ?? message?.referenced_message;
 				if (STORE.get('inReplies', false) && !isAutomodMessage(referencedMessage)) {
 					rewriteUsername(row.referencedMessage?.message, referencedMessage?.author);
 				}
-			} catch { }
+			} catch {}
 		});
 	},
 

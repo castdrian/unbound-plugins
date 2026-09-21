@@ -17,7 +17,8 @@ export type ReviewColors = {
 
 export function getReviewColors(): ReviewColors {
 	const colors = ((metro.common.Theme as any)?.colors ?? {}) as Record<string, unknown>;
-	const color = (key: string, fallback: string): string => (typeof colors[key] === 'string' ? colors[key] as string : fallback);
+	const color = (key: string, fallback: string): string =>
+		typeof colors[key] === 'string' ? (colors[key] as string) : fallback;
 
 	return {
 		page: color('BACKGROUND_MOBILE_PRIMARY', color('BACKGROUND_PRIMARY', '#111214')),

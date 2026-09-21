@@ -123,7 +123,10 @@ export function startRotation(): void {
 		rotateFileComponent(filePath);
 	}
 
-	rotateNavigatorScreen(['root', 'search_chat_preview', 'pinned-messages', 'mute', 'threads'], 'root');
+	rotateNavigatorScreen(
+		['root', 'search_chat_preview', 'pinned-messages', 'mute', 'threads'],
+		'root',
+	);
 
 	rotateActionSheets();
 }

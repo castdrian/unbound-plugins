@@ -49,7 +49,11 @@ async function rdbRequest<T = unknown>(path: string, options: RequestInit = {}):
 	const data = await response.json().catch(() => null);
 
 	if (!response.ok) {
-		showToast(typeof data?.message === 'string' ? data.message : `ReviewDB: Request failed with status ${response.status}`);
+		showToast(
+			typeof data?.message === 'string'
+				? data.message
+				: `ReviewDB: Request failed with status ${response.status}`,
+		);
 		return null;
 	}
 
@@ -58,20 +62,33 @@ async function rdbRequest<T = unknown>(path: string, options: RequestInit = {}):
 
 export async function getReviews(
 	id: string,
-	{ limit, offset = 0, fetchVotes = false }: { limit?: number; offset?: number; fetchVotes?: boolean } = {},
+	{
+		limit,
+		offset = 0,
+		fetchVotes = false,
+	}: { limit?: number; offset?: number; fetchVotes?: boolean } = {},
 ): Promise<UserReviewsData> {
 	const params = new URLSearchParams();
 	if (offset) params.append('offset', String(offset));
 	if (limit) params.append('limit', String(limit));
 
-	const votesPromise = fetchVotes ? getReviewVotes(id).catch(() => [] as ReviewVote[]) : Promise.resolve([] as ReviewVote[]);
+	const votesPromise = fetchVotes
+		? getReviewVotes(id).catch(() => [] as ReviewVote[])
+		: Promise.resolve([] as ReviewVote[]);
 
 	let response: Response;
 	try {
 		response = await fetch(`${API_URL}/users/${id}/reviews?${params}`);
 	} catch {
 		showToast('Network error: Failed to connect to ReviewDB.');
-		return { message: 'Network error.', reviews: [], updated: false, hasNextPage: false, reviewCount: 0, hasOptedOut: false };
+		return {
+			message: 'Network error.',
+			reviews: [],
+			updated: false,
+			hasNextPage: false,
+			reviewCount: 0,
+			hasOptedOut: false,
+		};
 	}
 
 	if (!response.ok) {
@@ -80,7 +97,14 @@ export async function getReviews(
 				? 'You are sending requests too fast. Wait a few seconds and try again.'
 				: 'An error occurred while fetching reviews. Please try again later.';
 		showToast(message);
-		return { message, reviews: [], updated: false, hasNextPage: false, reviewCount: 0, hasOptedOut: false };
+		return {
+			message,
+			reviews: [],
+			updated: false,
+			hasNextPage: false,
+			reviewCount: 0,
+			hasOptedOut: false,
+		};
 	}
 
 	const data = (await response.json()) as UserReviewsData;
@@ -90,7 +114,10 @@ export async function getReviews(
 	if (votes.length === 0) return data;
 
 	const voteByReviewId = new Map(votes.map((vote) => [vote.reviewID, vote.isUpvote]));
-	data.reviews = data.reviews.map((review) => ({ ...review, userVote: voteByReviewId.get(review.id) ?? null }));
+	data.reviews = data.reviews.map((review) => ({
+		...review,
+		userVote: voteByReviewId.get(review.id) ?? null,
+	}));
 
 	return data;
 }
@@ -101,7 +128,10 @@ export async function getReviewVotes(id: string): Promise<ReviewVote[]> {
 	return data?.votes ?? [];
 }
 
-export async function addReview(review: { userid: string; comment: string }): Promise<UserReviewsData | null> {
+export async function addReview(review: {
+	userid: string;
+	comment: string;
+}): Promise<UserReviewsData | null> {
 	if (!getToken()) {
 		showToast('Please authorize to add a review.');
 		return null;
@@ -171,7 +201,10 @@ async function patchBlock(action: 'block' | 'unblock', userId: string): Promise<
 
 	const user = getCurrentUser();
 	if (user?.blockedUsers) {
-		const blockedUsers = action === 'block' ? [...user.blockedUsers, userId] : user.blockedUsers.filter((id) => id !== userId);
+		const blockedUsers =
+			action === 'block'
+				? [...user.blockedUsers, userId]
+				: user.blockedUsers.filter((id) => id !== userId);
 		setCurrentUser({ ...user, blockedUsers });
 	}
 }

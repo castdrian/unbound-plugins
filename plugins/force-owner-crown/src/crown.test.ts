@@ -13,7 +13,11 @@ test('uses the stable embed URI when the native asset URI is transient', () => {
 });
 
 test('falls back to the registered asset id when no URI is usable', () => {
-	const source = resolveCrownSource(42, () => ({ uri: '' }), () => null);
+	const source = resolveCrownSource(
+		42,
+		() => ({ uri: '' }),
+		() => null,
+	);
 
 	expect(source).toBe(42);
 });

@@ -29,10 +29,18 @@ type Channel = {
 
 type UrlBuilder = {
 	getUserAvatarURL?: (user: User, canAnimate?: boolean) => string | null;
-	getGuildMemberAvatarURLSimple?: (options: { userId: string; avatar: string; guildId: string; canAnimate?: boolean }) => string | null;
+	getGuildMemberAvatarURLSimple?: (options: {
+		userId: string;
+		avatar: string;
+		guildId: string;
+		canAnimate?: boolean;
+	}) => string | null;
 	getUserBannerURL?: (user: User, canAnimate?: boolean) => string | null;
 	getGuildIconURL?: (options: { id: string; icon: string; canAnimate?: boolean }) => string | null;
-	getGuildBannerURL?: (guild: Guild | { id: string; banner: string }, canAnimate?: boolean) => string | null;
+	getGuildBannerURL?: (
+		guild: Guild | { id: string; banner: string },
+		canAnimate?: boolean,
+	) => string | null;
 	getChannelIconURL?: (channel: Channel) => string | null;
 };
 
@@ -63,10 +71,18 @@ type ContextMenu = {
 
 type SheetHost = {
 	hideActionSheet?: (key?: string) => void;
-	openLazy?: (component: Promise<{ default?: unknown }>, key: string, props?: object, options?: object) => void;
+	openLazy?: (
+		component: Promise<{ default?: unknown }>,
+		key: string,
+		props?: object,
+		options?: object,
+	) => void;
 };
 
-type ComponentFunction = ((...args: unknown[]) => unknown) & { displayName?: string; name?: string };
+type ComponentFunction = ((...args: unknown[]) => unknown) & {
+	displayName?: string;
+	name?: string;
+};
 
 type ComponentObject = {
 	displayName?: string;
@@ -109,7 +125,12 @@ function getStore(name: string): Store | null {
 	return metro.findStore(name) as Store | null;
 }
 
-function makeTarget(label: string, url: string | null | undefined, width: number, height: number): ImageTarget | null {
+function makeTarget(
+	label: string,
+	url: string | null | undefined,
+	width: number,
+	height: number,
+): ImageTarget | null {
 	return url ? { label, url, width, height } : null;
 }
 
@@ -122,20 +143,36 @@ function getUserTargets(userId: string, guildId?: string): ImageTarget[] {
 	if (!user || !builder) return [];
 
 	const profile = guildId
-		? profiles?.getGuildMemberProfile?.(userId, guildId) ?? profiles?.getUserProfile?.(userId)
+		? (profiles?.getGuildMemberProfile?.(userId, guildId) ?? profiles?.getUserProfile?.(userId))
 		: profiles?.getUserProfile?.(userId);
 	const targetUser = profile ? { ...user, ...profile } : user;
 	const targets: ImageTarget[] = [];
 	const avatar = builder.getUserAvatarURL?.(targetUser, true);
 	const banner = builder.getUserBannerURL?.(targetUser, true);
 	const memberAvatar = guildId ? members?.getMember?.(guildId, userId)?.avatar : null;
-	const serverAvatar = guildId && memberAvatar
-		? builder.getGuildMemberAvatarURLSimple?.({ userId, avatar: memberAvatar, guildId, canAnimate: true })
-		: null;
+	const serverAvatar =
+		guildId && memberAvatar
+			? builder.getGuildMemberAvatarURLSimple?.({
+					userId,
+					avatar: memberAvatar,
+					guildId,
+					canAnimate: true,
+				})
+			: null;
 
 	const userAvatarTarget = makeTarget('Avatar', avatar, DEFAULT_AVATAR_SIZE, DEFAULT_AVATAR_SIZE);
-	const userBannerTarget = makeTarget('Banner', banner, DEFAULT_BANNER_WIDTH, DEFAULT_BANNER_HEIGHT);
-	const serverAvatarTarget = makeTarget('Server Avatar', serverAvatar, DEFAULT_AVATAR_SIZE, DEFAULT_AVATAR_SIZE);
+	const userBannerTarget = makeTarget(
+		'Banner',
+		banner,
+		DEFAULT_BANNER_WIDTH,
+		DEFAULT_BANNER_HEIGHT,
+	);
+	const serverAvatarTarget = makeTarget(
+		'Server Avatar',
+		serverAvatar,
+		DEFAULT_AVATAR_SIZE,
+		DEFAULT_AVATAR_SIZE,
+	);
 	if (userAvatarTarget) targets.push(userAvatarTarget);
 	if (userBannerTarget) targets.push(userBannerTarget);
 	if (serverAvatarTarget) targets.push(serverAvatarTarget);
@@ -146,11 +183,18 @@ function getGuildTargets(guild: Guild): ImageTarget[] {
 	const builder = getUrlBuilder();
 	if (!builder) return [];
 
-	const icon = guild.icon ? builder.getGuildIconURL?.({ id: guild.id, icon: guild.icon, canAnimate: true }) : null;
+	const icon = guild.icon
+		? builder.getGuildIconURL?.({ id: guild.id, icon: guild.icon, canAnimate: true })
+		: null;
 	const banner = guild.banner ? builder.getGuildBannerURL?.(guild, true) : null;
 	const targets: ImageTarget[] = [];
 	const iconTarget = makeTarget('Server Icon', icon, DEFAULT_AVATAR_SIZE, DEFAULT_AVATAR_SIZE);
-	const bannerTarget = makeTarget('Server Banner', banner, DEFAULT_BANNER_WIDTH, DEFAULT_BANNER_HEIGHT);
+	const bannerTarget = makeTarget(
+		'Server Banner',
+		banner,
+		DEFAULT_BANNER_WIDTH,
+		DEFAULT_BANNER_HEIGHT,
+	);
 	if (iconTarget) targets.push(iconTarget);
 	if (bannerTarget) targets.push(bannerTarget);
 	return targets;
@@ -167,7 +211,9 @@ function normalizeImageUrl(source: string, size: number): string {
 	if (source.startsWith('data:')) return source;
 
 	const url = new URL(source, 'https://discord.com');
-	const animated = url.searchParams.get('animated') === 'true' || /\/a_[^/]+\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
+	const animated =
+		url.searchParams.get('animated') === 'true' ||
+		/\/a_[^/]+\.(?:png|jpe?g|webp|gif)$/i.test(url.pathname);
 	const format = animated ? 'gif' : 'webp';
 	url.searchParams.set('size', String(size));
 	url.pathname = url.pathname.replace(/\.(?:png|jpe?g|webp|gif)$/i, `.${format}`);
@@ -181,8 +227,11 @@ function showMessage(content: string): void {
 function ViewIcon() {
 	const SVG = metro.common.SVG;
 	return (
-		<SVG.Svg width={20} height={20} viewBox="0 0 24 24">
-			<SVG.Path fill="#f2f3f5" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2Zm0 16H5V5h14v14ZM8.5 13.5 11 16.51 14.5 12 19 18H5l3.5-4.5ZM8 10.5A1.5 1.5 0 1 0 8 7.5a1.5 1.5 0 0 0 0 3Z" />
+		<SVG.Svg width={20} height={20} viewBox='0 0 24 24'>
+			<SVG.Path
+				fill='#f2f3f5'
+				d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2Zm0 16H5V5h14v14ZM8.5 13.5 11 16.51 14.5 12 19 18H5l3.5-4.5ZM8 10.5A1.5 1.5 0 1 0 8 7.5a1.5 1.5 0 0 0 0 3Z'
+			/>
 		</SVG.Svg>
 	);
 }
@@ -244,10 +293,21 @@ function typeName(element: Element | null): string | undefined {
 	if (typeof element?.type === 'string') return element.type;
 	const type = element?.type;
 	if (typeof type === 'function') return type.displayName ?? type.name;
-	return type?.displayName ?? type?.name ?? type?.render?.displayName ?? type?.render?.name ?? type?.type?.displayName ?? type?.type?.name;
+	return (
+		type?.displayName ??
+		type?.name ??
+		type?.render?.displayName ??
+		type?.render?.name ??
+		type?.type?.displayName ??
+		type?.type?.name
+	);
 }
 
-function findElement(node: unknown, predicate: (element: Element) => boolean, depth = 0): Element | null {
+function findElement(
+	node: unknown,
+	predicate: (element: Element) => boolean,
+	depth = 0,
+): Element | null {
 	if (depth > 15 || !node || typeof node !== 'object') return null;
 	if (Array.isArray(node)) {
 		for (const child of node) {
@@ -266,15 +326,26 @@ function resolveContextTargets(menu: ContextMenu): ImageTarget[] {
 	const key = stringValue(menu.key);
 	const guildId = stringValue(menu.guildId) ?? stringValue(context.guildId) ?? profileGuildId;
 	const explicitUserId = stringValue(menu.userId) ?? stringValue(context.userId);
-	const guild = menu.guild ?? (key ? getStore('Guild')?.getGuild?.(key) ?? undefined : undefined);
+	const guild = menu.guild ?? (key ? (getStore('Guild')?.getGuild?.(key) ?? undefined) : undefined);
 	if (guild) return getGuildTargets(guild);
-	const user = menu.user ?? (explicitUserId ? getStore('User')?.getUser?.(explicitUserId) : undefined) ?? (key ? getStore('User')?.getUser?.(key) ?? undefined : undefined);
+	const user =
+		menu.user ??
+		(explicitUserId ? getStore('User')?.getUser?.(explicitUserId) : undefined) ??
+		(key ? (getStore('User')?.getUser?.(key) ?? undefined) : undefined);
 	if (user) return getUserTargets(user.id, guildId ?? undefined);
-	const channel = menu.channel ?? (key ? getStore('Channel')?.getChannel?.(key) ?? undefined : undefined);
+	const channel =
+		menu.channel ?? (key ? (getStore('Channel')?.getChannel?.(key) ?? undefined) : undefined);
 	if (channel?.icon) return getChannelTargets(channel);
-	const isProfileMenu = menu.items?.some((item) => /^(View (?:Main )?Profile|Message)$/.test(item.label ?? ''));
-	const isUserActionMenu = menu.items?.some((item) => /^(Change Friend Nickname|Copy Username|Copy User ID|Report User Profile)$/.test(item.label ?? ''));
-	if (profileUserId && (isProfileMenu || isUserActionMenu)) return getUserTargets(profileUserId, guildId ?? undefined);
+	const isProfileMenu = menu.items?.some((item) =>
+		/^(View (?:Main )?Profile|Message)$/.test(item.label ?? ''),
+	);
+	const isUserActionMenu = menu.items?.some((item) =>
+		/^(Change Friend Nickname|Copy Username|Copy User ID|Report User Profile)$/.test(
+			item.label ?? '',
+		),
+	);
+	if (profileUserId && (isProfileMenu || isUserActionMenu))
+		return getUserTargets(profileUserId, guildId ?? undefined);
 	return [];
 }
 
@@ -291,9 +362,9 @@ function patchContextMenus(): boolean {
 		if (!menu || !Array.isArray(menu.items)) return;
 		try {
 			const targets = resolveContextTargets(menu);
-			for (const target of targets) addTargetActions(menu, target, () => contextMenus.hideContextMenu?.());
-		} catch {
-		}
+			for (const target of targets)
+				addTargetActions(menu, target, () => contextMenus.hideContextMenu?.());
+		} catch {}
 	});
 	contextMenuPatched = true;
 	return true;
@@ -305,7 +376,12 @@ function getActionSheetTargets(): ImageTarget[] {
 	return [];
 }
 
-function addActionSheetRows(result: unknown, sheets: SheetHost, ActionSheetRow: unknown, sheetKey: string): unknown {
+function addActionSheetRows(
+	result: unknown,
+	sheets: SheetHost,
+	ActionSheetRow: unknown,
+	sheetKey: string,
+): unknown {
 	const group = findElement(result, (element) => typeName(element) === 'ActionSheetRowGroup');
 	const rows = group?.props?.children;
 	if (!group?.props || !Array.isArray(rows)) return result;
@@ -321,9 +397,13 @@ function addActionSheetRows(result: unknown, sheets: SheetHost, ActionSheetRow: 
 			metro.common.React.createElement(ActionSheetRow as never, {
 				key,
 				label,
-				icon: iconId != null && typeof (ActionSheetRow as { Icon?: unknown }).Icon === 'function'
-					? metro.common.React.createElement((ActionSheetRow as { Icon: unknown }).Icon as never, { source: iconId })
-					: undefined,
+				icon:
+					iconId != null && typeof (ActionSheetRow as { Icon?: unknown }).Icon === 'function'
+						? metro.common.React.createElement(
+								(ActionSheetRow as { Icon: unknown }).Icon as never,
+								{ source: iconId },
+							)
+						: undefined,
 				onPress: () => {
 					sheets.hideActionSheet?.(sheetKey);
 					openImage(target);
@@ -335,37 +415,67 @@ function addActionSheetRows(result: unknown, sheets: SheetHost, ActionSheetRow: 
 	return result;
 }
 
-function patchNestedActionSheetComponents(node: unknown, sheets: SheetHost, ActionSheetRow: unknown, sheetKey: string, depth: number): void {
+function patchNestedActionSheetComponents(
+	node: unknown,
+	sheets: SheetHost,
+	ActionSheetRow: unknown,
+	sheetKey: string,
+	depth: number,
+): void {
 	if (depth >= 15 || !node || typeof node !== 'object') return;
 	if (Array.isArray(node)) {
-		for (const child of node) patchNestedActionSheetComponents(child, sheets, ActionSheetRow, sheetKey, depth + 1);
+		for (const child of node)
+			patchNestedActionSheetComponents(child, sheets, ActionSheetRow, sheetKey, depth + 1);
 		return;
 	}
 
 	const element = node as Element;
 	const component = element.type;
 	const componentLabel = typeName(element);
-	const shouldPatch = componentLabel === 'GuildActionSheetSecondaryActions' || componentLabel === 'UserProfileActionSheetActions';
+	const shouldPatch =
+		componentLabel === 'GuildActionSheetSecondaryActions' ||
+		componentLabel === 'UserProfileActionSheetActions';
 	if (shouldPatch && typeof component === 'function') {
 		if (!patchedSheetElements.has(element as object)) {
 			patchedSheetElements.add(element as object);
-			element.type = (...args: unknown[]) => patchActionSheetComponent(component(...args), sheets, ActionSheetRow, sheetKey, depth + 1);
+			element.type = (...args: unknown[]) =>
+				patchActionSheetComponent(component(...args), sheets, ActionSheetRow, sheetKey, depth + 1);
 		}
 	} else if (shouldPatch && component && typeof component === 'object') {
 		const componentObject = component as ComponentObject;
-		const wrappedType = typeof componentObject.type === 'function' ? { holder: componentObject, method: 'type' as const } : null;
-		const renderHolder = typeof componentObject.render === 'function' ? { holder: componentObject, method: 'render' as const } : null;
+		const wrappedType =
+			typeof componentObject.type === 'function'
+				? { holder: componentObject, method: 'type' as const }
+				: null;
+		const renderHolder =
+			typeof componentObject.render === 'function'
+				? { holder: componentObject, method: 'render' as const }
+				: null;
 		const target = wrappedType ?? renderHolder;
 		if (target && !patchedSheetComponents.has(target.holder as object)) {
 			patchedSheetComponents.add(target.holder as object);
-			PATCHER.after(target.holder as never, target.method as never, ({ result }) => patchActionSheetComponent(result, sheets, ActionSheetRow, sheetKey, depth + 1));
+			PATCHER.after(target.holder as never, target.method as never, ({ result }) =>
+				patchActionSheetComponent(result, sheets, ActionSheetRow, sheetKey, depth + 1),
+			);
 		}
 	}
 
-	patchNestedActionSheetComponents(element.props?.children, sheets, ActionSheetRow, sheetKey, depth + 1);
+	patchNestedActionSheetComponents(
+		element.props?.children,
+		sheets,
+		ActionSheetRow,
+		sheetKey,
+		depth + 1,
+	);
 }
 
-function patchActionSheetComponent(result: unknown, sheets: SheetHost, ActionSheetRow: unknown, sheetKey: string, depth = 0): unknown {
+function patchActionSheetComponent(
+	result: unknown,
+	sheets: SheetHost,
+	ActionSheetRow: unknown,
+	sheetKey: string,
+	depth = 0,
+): unknown {
 	const patchedResult = addActionSheetRows(result, sheets, ActionSheetRow, sheetKey);
 	patchNestedActionSheetComponents(patchedResult, sheets, ActionSheetRow, sheetKey, depth);
 	return patchedResult;
@@ -374,35 +484,60 @@ function patchActionSheetComponent(result: unknown, sheets: SheetHost, ActionShe
 function patchActionSheets(): boolean {
 	if (profileSheetPatched) return true;
 	const sheets = metro.findByProps('openLazy', 'hideActionSheet') as SheetHost | null;
-	const ActionSheetRow = (metro.findByProps('ActionSheetRow') as { ActionSheetRow?: unknown } | null)?.ActionSheetRow;
+	const ActionSheetRow = (
+		metro.findByProps('ActionSheetRow') as { ActionSheetRow?: unknown } | null
+	)?.ActionSheetRow;
 	if (typeof sheets?.openLazy !== 'function' || !ActionSheetRow) return false;
 
 	PATCHER.before(sheets as never, 'openLazy' as never, (ctx) => {
-		const [componentPromise, key, props] = ctx.args as [Promise<{ default?: unknown }> | undefined, unknown, Record<string, unknown> | undefined];
+		const [componentPromise, key, props] = ctx.args as [
+			Promise<{ default?: unknown }> | undefined,
+			unknown,
+			Record<string, unknown> | undefined,
+		];
 		if (typeof key !== 'string' || !componentPromise?.then || !props) return;
 		const isProfileSheet = /^UserProfile/i.test(key) && Boolean(props.userId);
-		const isGuildSheet = /^GuildActionSheet:/i.test(key) && props.guild && typeof props.guild === 'object';
+		const isGuildSheet =
+			/^GuildActionSheet:/i.test(key) && props.guild && typeof props.guild === 'object';
 		if (!isProfileSheet && !isGuildSheet) return;
-		profileUserId = isProfileSheet ? stringValue(props.userId) ?? null : null;
-		profileGuildId = isProfileSheet ? stringValue(props.guildId) ?? null : null;
-		actionSheetGuild = isGuildSheet ? props.guild as Guild : null;
+		profileUserId = isProfileSheet ? (stringValue(props.userId) ?? null) : null;
+		profileGuildId = isProfileSheet ? (stringValue(props.guildId) ?? null) : null;
+		actionSheetGuild = isGuildSheet ? (props.guild as Guild) : null;
 		currentSheetKey = key;
-		componentPromise.then((instance) => {
-			if (!instance || patchedSheetInstances.has(instance)) return;
-			patchedSheetInstances.add(instance);
-			const defaultExport = instance.default;
-			if (typeof defaultExport === 'function') {
-				PATCHER.after(instance as { default: (...args: unknown[]) => unknown }, 'default', ({ result }) => patchActionSheetComponent(result, sheets, ActionSheetRow, key));
-				return;
-			}
-			if (defaultExport && typeof defaultExport === 'object' && typeof (defaultExport as ComponentObject).type === 'function') {
-				PATCHER.after(defaultExport as never, 'type' as never, ({ result }) => patchActionSheetComponent(result, sheets, ActionSheetRow, key));
-				return;
-			}
-			if (defaultExport && typeof defaultExport === 'object' && typeof (defaultExport as ComponentObject).render === 'function') {
-				PATCHER.after(defaultExport as never, 'render' as never, ({ result }) => patchActionSheetComponent(result, sheets, ActionSheetRow, key));
-			}
-		}).catch(() => undefined);
+		componentPromise
+			.then((instance) => {
+				if (!instance || patchedSheetInstances.has(instance)) return;
+				patchedSheetInstances.add(instance);
+				const defaultExport = instance.default;
+				if (typeof defaultExport === 'function') {
+					PATCHER.after(
+						instance as { default: (...args: unknown[]) => unknown },
+						'default',
+						({ result }) => patchActionSheetComponent(result, sheets, ActionSheetRow, key),
+					);
+					return;
+				}
+				if (
+					defaultExport &&
+					typeof defaultExport === 'object' &&
+					typeof (defaultExport as ComponentObject).type === 'function'
+				) {
+					PATCHER.after(defaultExport as never, 'type' as never, ({ result }) =>
+						patchActionSheetComponent(result, sheets, ActionSheetRow, key),
+					);
+					return;
+				}
+				if (
+					defaultExport &&
+					typeof defaultExport === 'object' &&
+					typeof (defaultExport as ComponentObject).render === 'function'
+				) {
+					PATCHER.after(defaultExport as never, 'render' as never, ({ result }) =>
+						patchActionSheetComponent(result, sheets, ActionSheetRow, key),
+					);
+				}
+			})
+			.catch(() => undefined);
 	});
 	profileSheetPatched = true;
 	return true;

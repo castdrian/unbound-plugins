@@ -1,7 +1,14 @@
 export function parseUserList(value: unknown): string[] {
 	if (typeof value !== 'string') return [];
 
-	return [...new Set(value.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean))];
+	return [
+		...new Set(
+			value
+				.split(/[\s,]+/)
+				.map((entry) => entry.trim())
+				.filter(Boolean),
+		),
+	];
 }
 
 export function isUserId(value: string): boolean {
@@ -17,7 +24,9 @@ export function addUserId(value: unknown, userId: string): string {
 }
 
 export function editUserId(value: unknown, currentUserId: string, nextUserId: string): string {
-	return serializeUserList(parseUserList(value).map((id) => (id === currentUserId ? nextUserId : id)));
+	return serializeUserList(
+		parseUserList(value).map((id) => (id === currentUserId ? nextUserId : id)),
+	);
 }
 
 export function removeUserId(value: unknown, userId: string): string {

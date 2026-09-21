@@ -51,7 +51,10 @@ function exportRules(rules: TextReplaceRule[]): ExportedRule[] {
 	}));
 }
 
-export function serializeRuleset(stringRules: TextReplaceRule[], regexRules: TextReplaceRule[]): string {
+export function serializeRuleset(
+	stringRules: TextReplaceRule[],
+	regexRules: TextReplaceRule[],
+): string {
 	return JSON.stringify(
 		{
 			version: RULESET_VERSION,
@@ -75,7 +78,11 @@ export function parseRuleset(value: unknown): TextReplaceRuleset {
 	if (!parsed || typeof parsed !== 'object') throw new Error('This is not a Text Replace ruleset.');
 
 	const ruleset = parsed as { version?: unknown; stringRules?: unknown; regexRules?: unknown };
-	if (ruleset.version !== RULESET_VERSION || !Array.isArray(ruleset.stringRules) || !Array.isArray(ruleset.regexRules)) {
+	if (
+		ruleset.version !== RULESET_VERSION ||
+		!Array.isArray(ruleset.stringRules) ||
+		!Array.isArray(ruleset.regexRules)
+	) {
 		throw new Error('This Text Replace ruleset is unsupported.');
 	}
 
@@ -119,7 +126,7 @@ export function applyRules(
 
 		try {
 			content = content.replace(stringToRegex(rule.find), replaceNewlines(rule.replace));
-		} catch { }
+		} catch {}
 	}
 
 	return content.trim();

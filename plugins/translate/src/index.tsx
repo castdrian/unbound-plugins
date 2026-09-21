@@ -18,8 +18,7 @@ export default {
 	stop() {
 		try {
 			stopTranslateMenuPatch();
-		} catch { }
-
+		} catch {}
 	},
 	getSettingsPanel: () => <TranslateSettingsScreen />,
 };

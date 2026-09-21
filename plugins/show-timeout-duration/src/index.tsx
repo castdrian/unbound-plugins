@@ -11,8 +11,14 @@ const MARKER = 'timeout remaining';
 
 let unpatch: (() => void) | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
-let members: { getMember?: (guildId: string, userId: string) => { communicationDisabledUntil?: unknown } | undefined } | null = null;
-let channels: { getChannel?: (channelId: string) => { guild_id?: string } | undefined } | null = null;
+let members: {
+	getMember?: (
+		guildId: string,
+		userId: string,
+	) => { communicationDisabledUntil?: unknown } | undefined;
+} | null = null;
+let channels: { getChannel?: (channelId: string) => { guild_id?: string } | undefined } | null =
+	null;
 let dispatcher: { dispatch?: (event: unknown) => void } | null = null;
 const touchedMessages = new Map<string, Message>();
 
@@ -34,7 +40,9 @@ function formatRemaining(deadline: number): string {
 }
 
 function resolveDeadline(message: Message): number | null {
-	const guildId = message.channel_id ? channels?.getChannel?.(message.channel_id)?.guild_id : undefined;
+	const guildId = message.channel_id
+		? channels?.getChannel?.(message.channel_id)?.guild_id
+		: undefined;
 	const userId = message.author?.id;
 	if (!guildId || !userId) return null;
 	return timeoutDeadline(members?.getMember?.(guildId, userId)?.communicationDisabledUntil);
@@ -75,7 +83,7 @@ export default {
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
 				addTimeoutDuration(ctx.result?.message, ctx.args[0]?.message);
-			} catch { }
+			} catch {}
 		});
 		refreshTimer = setInterval(refreshMessages, REFRESH_INTERVAL);
 	},

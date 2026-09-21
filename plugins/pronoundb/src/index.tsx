@@ -1,6 +1,11 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
-import { SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+import {
+	SettingsRow,
+	SettingsScrollView,
+	SettingsSection,
+	SettingsSwitchRow,
+} from '../../../shared/settings-ui';
 
 const ADDON_ID = 'unbound.pronoundb';
 const STORE = storage.getStore(ADDON_ID);
@@ -55,12 +60,17 @@ function formatPronouns(codes: string[] | undefined): string | null {
 	if (!codes?.length) return null;
 	if (codes.length > 1) {
 		const pronouns = codes.map((code) => code[0]?.toUpperCase() + code.slice(1)).join('/');
-		return STORE.get<Format>('format', 'lowercase') === 'lowercase' ? pronouns.toLowerCase() : pronouns;
+		return STORE.get<Format>('format', 'lowercase') === 'lowercase'
+			? pronouns.toLowerCase()
+			: pronouns;
 	}
 
 	const code = codes[0];
 	const value = pronounMapping[code] ?? code;
-	if (STORE.get<Format>('format', 'lowercase') === 'capitalized' || ['any', 'ask', 'avoid', 'other', 'unspecified'].includes(code)) {
+	if (
+		STORE.get<Format>('format', 'lowercase') === 'capitalized' ||
+		['any', 'ask', 'avoid', 'other', 'unspecified'].includes(code)
+	) {
 		return value;
 	}
 	return value.toLowerCase();
@@ -69,7 +79,11 @@ function formatPronouns(codes: string[] | undefined): string | null {
 function discordPronouns(userId: string, channelId?: string): string | null {
 	const global = profiles?.getUserProfile?.(userId)?.pronouns?.trim().replace(/\n+/g, '');
 	const guildId = channelId ? channels?.getChannel?.(channelId)?.guild_id : undefined;
-	return profiles?.getGuildMemberProfile?.(userId, guildId)?.pronouns?.trim().replace(/\n+/g, '') || global || null;
+	return (
+		profiles?.getGuildMemberProfile?.(userId, guildId)?.pronouns?.trim().replace(/\n+/g, '') ||
+		global ||
+		null
+	);
 }
 
 function resolvePronouns(userId: string, channelId?: string): string | null {
@@ -131,7 +145,8 @@ function enqueue(userId: string): void {
 function shouldShow(message: Message | undefined): message is Message {
 	if (!message) return false;
 	const author = message.author;
-	if (!author?.id || author.bot || author.system || message.type === AUTO_MODERATION_ACTION) return false;
+	if (!author?.id || author.bot || author.system || message.type === AUTO_MODERATION_ACTION)
+		return false;
 	if (!STORE.get('showSelf', true) && author.id === users?.getCurrentUser?.()?.id) return false;
 	return true;
 }
@@ -141,7 +156,8 @@ function addPronouns(row: any, message: Message | undefined): void {
 	touchedMessages.set(message.id ?? message.author.id, message);
 	const pronouns = resolvePronouns(message.author.id, message.channel_id);
 	if (!cache.has(message.author.id)) enqueue(message.author.id);
-	if (!pronouns || typeof row?.timestamp !== 'string' || row.timestamp.includes(`• ${pronouns}`)) return;
+	if (!pronouns || typeof row?.timestamp !== 'string' || row.timestamp.includes(`• ${pronouns}`))
+		return;
 	row.timestamp = `${row.timestamp} • ${pronouns}`;
 	if (typeof row.timestampAccessibilityLabel === 'string') {
 		row.timestampAccessibilityLabel = `${row.timestampAccessibilityLabel} • ${pronouns}`;
@@ -154,16 +170,38 @@ function SettingsPanel() {
 	const priority = state.get<Priority>('priority', 'pronoundb');
 	return (
 		<SettingsScrollView>
-			<SettingsSection title="Pronouns">
-				<SettingsRow label="Lowercase" trailing={format === 'lowercase' ? '✓' : null} onPress={() => state.set('format', 'lowercase')} />
-				<SettingsRow label="Capitalized" trailing={format === 'capitalized' ? '✓' : null} onPress={() => state.set('format', 'capitalized')} />
+			<SettingsSection title='Pronouns'>
+				<SettingsRow
+					label='Lowercase'
+					trailing={format === 'lowercase' ? '✓' : null}
+					onPress={() => state.set('format', 'lowercase')}
+				/>
+				<SettingsRow
+					label='Capitalized'
+					trailing={format === 'capitalized' ? '✓' : null}
+					onPress={() => state.set('format', 'capitalized')}
+				/>
 			</SettingsSection>
-			<SettingsSection title="Source">
-				<SettingsRow label="Prefer PronounDB" description="Fall back to Discord profile pronouns" trailing={priority === 'pronoundb' ? '✓' : null} onPress={() => state.set('priority', 'pronoundb')} />
-				<SettingsRow label="Prefer Discord" description="Fall back to PronounDB" trailing={priority === 'discord' ? '✓' : null} onPress={() => state.set('priority', 'discord')} />
+			<SettingsSection title='Source'>
+				<SettingsRow
+					label='Prefer PronounDB'
+					description='Fall back to Discord profile pronouns'
+					trailing={priority === 'pronoundb' ? '✓' : null}
+					onPress={() => state.set('priority', 'pronoundb')}
+				/>
+				<SettingsRow
+					label='Prefer Discord'
+					description='Fall back to PronounDB'
+					trailing={priority === 'discord' ? '✓' : null}
+					onPress={() => state.set('priority', 'discord')}
+				/>
 			</SettingsSection>
-			<SettingsSection title="Visibility">
-				<SettingsSwitchRow label="Show for Yourself" value={state.get('showSelf', true)} onValueChange={(value: boolean) => state.set('showSelf', value)} />
+			<SettingsSection title='Visibility'>
+				<SettingsSwitchRow
+					label='Show for Yourself'
+					value={state.get('showSelf', true)}
+					onValueChange={(value: boolean) => state.set('showSelf', value)}
+				/>
 			</SettingsSection>
 		</SettingsScrollView>
 	);

@@ -8,9 +8,9 @@ function resolveUsername(userId: string): string {
 	if (typeof metro?.findByProps !== 'function') return 'User';
 
 	try {
-		const UserStore = metro.findByProps('getCurrentUser', 'getUser') as
-			| { getUser?: (id: string) => { username?: string; globalName?: string } | null }
-			| null;
+		const UserStore = metro.findByProps('getCurrentUser', 'getUser') as {
+			getUser?: (id: string) => { username?: string; globalName?: string } | null;
+		} | null;
 		const user = UserStore?.getUser?.(userId);
 		return user?.globalName ?? user?.username ?? 'User';
 	} catch {
@@ -31,15 +31,16 @@ function extractUserId(children: unknown): string | null {
 
 function ReviewsButton({ userId }: { userId: string }) {
 	const ReactNative = metro.common.ReactNative;
-	const Discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components?.Discord as { Button?: any } | undefined;
+	const Discord = (metro as { components?: { Discord?: unknown } } | undefined)?.components
+		?.Discord as { Button?: any } | undefined;
 	if (!Discord?.Button) return null;
 
 	return (
 		<ReactNative.View style={{ marginTop: 8, alignSelf: 'flex-start' }}>
 			<Discord.Button
-				text="View Reviews"
-				variant="secondary"
-				size="sm"
+				text='View Reviews'
+				variant='secondary'
+				size='sm'
 				onPress={() => openReviewsSheet(userId, resolveUsername(userId))}
 			/>
 		</ReactNative.View>
@@ -49,7 +50,9 @@ function ReviewsButton({ userId }: { userId: string }) {
 export function startReviewMenuPatch(): void {
 	if (typeof metro?.findByName !== 'function') return;
 
-	const mod = metro.findByName('UserProfileCard', { interop: false }) as { default?: unknown } | null;
+	const mod = metro.findByName('UserProfileCard', { interop: false }) as {
+		default?: unknown;
+	} | null;
 	if (typeof mod?.default !== 'function') return;
 
 	Patcher.after(mod as { default: unknown }, 'default', (ctx) => {

@@ -21,7 +21,10 @@ function openLanguageSheet(options: {
 	includeAuto?: boolean;
 	onSelect: (code: string) => void;
 }) {
-	const sheets = typeof metro?.findByProps === 'function' ? metro.findByProps('openLazy', 'hideActionSheet') : null;
+	const sheets =
+		typeof metro?.findByProps === 'function'
+			? metro.findByProps('openLazy', 'hideActionSheet')
+			: null;
 	if (!sheets) {
 		toasts.showToast({ title: 'Translate', content: 'Language picker is unavailable.' });
 		return;
@@ -46,10 +49,22 @@ export function TranslateSettingsScreen() {
 
 	return (
 		<SettingsScrollView>
-			<SettingsSection title="Translate API">
+			<SettingsSection title='Translate API'>
 				<SettingsRow
-					label={connecting ? 'Connecting Discord account…' : refreshConfigured ? 'Reconnect Discord account' : 'Connect Discord account'}
-					description={connecting ? 'Finishing Discord authorization' : refreshConfigured ? 'Re-authenticate with Discord' : 'Sign in to enable translation'}
+					label={
+						connecting
+							? 'Connecting Discord account…'
+							: refreshConfigured
+								? 'Reconnect Discord account'
+								: 'Connect Discord account'
+					}
+					description={
+						connecting
+							? 'Finishing Discord authorization'
+							: refreshConfigured
+								? 'Re-authenticate with Discord'
+								: 'Sign in to enable translation'
+					}
 					disabled={connecting}
 					onPress={() => {
 						setConnecting(true);
@@ -58,9 +73,9 @@ export function TranslateSettingsScreen() {
 				/>
 			</SettingsSection>
 
-			<SettingsSection title="Languages">
+			<SettingsSection title='Languages'>
 				<SettingsRow
-					label="Source Language"
+					label='Source Language'
 					description={sourceLanguage}
 					arrow
 					disabled={!refreshConfigured}
@@ -75,7 +90,7 @@ export function TranslateSettingsScreen() {
 					}
 				/>
 				<SettingsRow
-					label="Target Language"
+					label='Target Language'
 					description={targetLanguage}
 					arrow
 					disabled={!refreshConfigured}

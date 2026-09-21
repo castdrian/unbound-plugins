@@ -88,7 +88,9 @@ export function storeSessionTokens(tokens: SessionTokens): void {
 }
 
 export function hasRefreshToken(): boolean {
-	return typeof STORE.get('refreshToken', '') === 'string' && STORE.get('refreshToken', '').length > 0;
+	return (
+		typeof STORE.get('refreshToken', '') === 'string' && STORE.get('refreshToken', '').length > 0
+	);
 }
 
 export function clearTokens(): void {

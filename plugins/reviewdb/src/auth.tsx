@@ -52,7 +52,9 @@ function getQueryParam(url: string, key: string): string | null {
 
 function findOAuth2AuthorizeModal(): any | null {
 	if (typeof metro?.findByProps === 'function') {
-		const byProp = metro.findByProps('OAuth2AuthorizeModal') as { OAuth2AuthorizeModal?: unknown } | null;
+		const byProp = metro.findByProps('OAuth2AuthorizeModal') as {
+			OAuth2AuthorizeModal?: unknown;
+		} | null;
 		if (byProp?.OAuth2AuthorizeModal) return byProp.OAuth2AuthorizeModal;
 	}
 
@@ -67,7 +69,10 @@ async function handleAuthResult(location: string, onSuccess?: () => void): Promi
 	const errorCode = getQueryParam(location, 'error');
 	if (errorCode) {
 		if (errorCode !== 'access_denied') {
-			toasts.showToast({ title: 'ReviewDB', content: getQueryParam(location, 'error_description') ?? errorCode });
+			toasts.showToast({
+				title: 'ReviewDB',
+				content: getQueryParam(location, 'error_description') ?? errorCode,
+			});
 		}
 		return;
 	}
@@ -79,10 +84,15 @@ async function handleAuthResult(location: string, onSuccess?: () => void): Promi
 		url.searchParams.append('clientMod', CLIENT_MOD);
 
 		const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-		const payload = (await response.json().catch(() => null)) as { token?: unknown; message?: unknown } | null;
+		const payload = (await response.json().catch(() => null)) as {
+			token?: unknown;
+			message?: unknown;
+		} | null;
 
 		if (!response.ok) {
-			throw new Error(typeof payload?.message === 'string' ? payload.message : 'ReviewDB login failed.');
+			throw new Error(
+				typeof payload?.message === 'string' ? payload.message : 'ReviewDB login failed.',
+			);
 		}
 
 		if (typeof payload?.token !== 'string') {
@@ -106,9 +116,10 @@ export function authorize(onSuccess?: () => void): void {
 		return;
 	}
 
-	const modals = metro.findByProps('pushModal', 'popModal') as
-		| { pushModal?: (options: { key: string; modal: any; closable?: boolean }) => void; popModal?: (key: string) => void }
-		| null;
+	const modals = metro.findByProps('pushModal', 'popModal') as {
+		pushModal?: (options: { key: string; modal: any; closable?: boolean }) => void;
+		popModal?: (key: string) => void;
+	} | null;
 	const OAuth2AuthorizeModal = findOAuth2AuthorizeModal();
 
 	if (!modals?.pushModal || !modals?.popModal || !OAuth2AuthorizeModal) {

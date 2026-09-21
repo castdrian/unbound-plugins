@@ -2,10 +2,23 @@ import { useState } from 'react';
 
 import { metro } from '@unbound-app/api';
 
-import { blockUser, deleteReview, deleteReviewVote, reportReview, unblockUser, voteReview } from '@reviewdb/api';
+import {
+	blockUser,
+	deleteReview,
+	deleteReviewVote,
+	reportReview,
+	unblockUser,
+	voteReview,
+} from '@reviewdb/api';
 import { getCurrentUser } from '@reviewdb/auth';
 import { ReviewType, type Review } from '@reviewdb/entities';
-import { canBlockReviewAuthor, canDeleteReview, canReportReview, getCurrentUserId, showToast } from '@reviewdb/utils';
+import {
+	canBlockReviewAuthor,
+	canDeleteReview,
+	canReportReview,
+	getCurrentUserId,
+	showToast,
+} from '@reviewdb/utils';
 import { getReviewColors, type ReviewColors } from '@reviewdb/sheets/theme';
 
 const dateFormatter = new Intl.DateTimeFormat();
@@ -14,8 +27,12 @@ function Badge({ label, color, colors }: { label: string; color: string; colors:
 	const ReactNative = metro.common.ReactNative;
 
 	return (
-		<ReactNative.View style={{ backgroundColor: color, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
-			<ReactNative.Text style={{ color: colors.accentText, fontSize: 11, fontWeight: '800', letterSpacing: 0.4 }}>
+		<ReactNative.View
+			style={{ backgroundColor: color, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}
+		>
+			<ReactNative.Text
+				style={{ color: colors.accentText, fontSize: 11, fontWeight: '800', letterSpacing: 0.4 }}
+			>
 				{label}
 			</ReactNative.Text>
 		</ReactNative.View>
@@ -51,7 +68,9 @@ function ActionButton({
 				paddingHorizontal: 12,
 			})}
 		>
-			<ReactNative.Text style={{ color, fontSize: 13, fontWeight: '700' }}>{label}</ReactNative.Text>
+			<ReactNative.Text style={{ color, fontSize: 13, fontWeight: '700' }}>
+				{label}
+			</ReactNative.Text>
 		</ReactNative.Pressable>
 	);
 }
@@ -78,7 +97,8 @@ export default function ReviewItem({
 
 	const myId = getCurrentUserId();
 	const isOwnReview = review.sender.discordID === myId;
-	const isAuthorBlocked = getCurrentUser()?.blockedUsers?.includes(review.sender.discordID) ?? false;
+	const isAuthorBlocked =
+		getCurrentUser()?.blockedUsers?.includes(review.sender.discordID) ?? false;
 
 	async function handleVote(isUpvote: boolean) {
 		if (busy || review.id === 0) return;
@@ -131,7 +151,9 @@ export default function ReviewItem({
 		if (busy) return;
 		setBusy(true);
 		try {
-			await (isAuthorBlocked ? unblockUser(review.sender.discordID) : blockUser(review.sender.discordID));
+			await (isAuthorBlocked
+				? unblockUser(review.sender.discordID)
+				: blockUser(review.sender.discordID));
 			onChanged();
 		} finally {
 			setBusy(false);
@@ -144,7 +166,10 @@ export default function ReviewItem({
 	const canDelete = canDeleteReview(profileId, review, myId);
 	const canReport = canReportReview(review, myId);
 	const canBlock = canBlockReviewAuthor(profileId, review, myId);
-	const timestamp = !hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0 ? dateFormatter.format(review.timestamp * 1000) : null;
+	const timestamp =
+		!hideTimestamps && review.type !== ReviewType.System && review.timestamp > 0
+			? dateFormatter.format(review.timestamp * 1000)
+			: null;
 
 	const voteControls = canVote ? (
 		<ReactNative.View
@@ -173,9 +198,27 @@ export default function ReviewItem({
 					width: 36,
 				})}
 			>
-				<ReactNative.Text style={{ color: localVote === true ? colors.positive : colors.muted, fontSize: 18, fontWeight: '800' }}>▲</ReactNative.Text>
+				<ReactNative.Text
+					style={{
+						color: localVote === true ? colors.positive : colors.muted,
+						fontSize: 18,
+						fontWeight: '800',
+					}}
+				>
+					▲
+				</ReactNative.Text>
 			</ReactNative.Pressable>
-			<ReactNative.Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', minWidth: 24, textAlign: 'center' }}>{score}</ReactNative.Text>
+			<ReactNative.Text
+				style={{
+					color: colors.text,
+					fontSize: 14,
+					fontWeight: '800',
+					minWidth: 24,
+					textAlign: 'center',
+				}}
+			>
+				{score}
+			</ReactNative.Text>
 			<ReactNative.Pressable
 				disabled={busy}
 				hitSlop={6}
@@ -190,7 +233,15 @@ export default function ReviewItem({
 					width: 36,
 				})}
 			>
-				<ReactNative.Text style={{ color: localVote === false ? colors.danger : colors.muted, fontSize: 18, fontWeight: '800' }}>▼</ReactNative.Text>
+				<ReactNative.Text
+					style={{
+						color: localVote === false ? colors.danger : colors.muted,
+						fontSize: 18,
+						fontWeight: '800',
+					}}
+				>
+					▼
+				</ReactNative.Text>
 			</ReactNative.Pressable>
 		</ReactNative.View>
 	) : null;
@@ -216,37 +267,82 @@ export default function ReviewItem({
 				})}
 			>
 				<ReactNative.View style={{ flexDirection: 'row', gap: 11 }}>
-					<ReactNative.Image source={{ uri: review.sender.profilePhoto }} style={{ backgroundColor: colors.surfaceAlt, borderRadius: 22, height: 44, width: 44 }} />
+					<ReactNative.Image
+						source={{ uri: review.sender.profilePhoto }}
+						style={{ backgroundColor: colors.surfaceAlt, borderRadius: 22, height: 44, width: 44 }}
+					/>
 					<ReactNative.View style={{ flex: 1, gap: 7 }}>
-						<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-							<ReactNative.Text style={{ color: colors.text, flexShrink: 1, fontSize: 16, fontWeight: '800' }} numberOfLines={1}>
+						<ReactNative.View
+							style={{ alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}
+						>
+							<ReactNative.Text
+								style={{ color: colors.text, flexShrink: 1, fontSize: 16, fontWeight: '800' }}
+								numberOfLines={1}
+							>
 								{review.sender.username}
 							</ReactNative.Text>
-							{review.type === ReviewType.System && <Badge color={colors.accent} colors={colors} label="SYSTEM" />}
-							{isAuthorBlocked && <Badge color={colors.danger} colors={colors} label="BLOCKED" />}
+							{review.type === ReviewType.System && (
+								<Badge color={colors.accent} colors={colors} label='SYSTEM' />
+							)}
+							{isAuthorBlocked && <Badge color={colors.danger} colors={colors} label='BLOCKED' />}
 						</ReactNative.View>
-						{timestamp && <ReactNative.Text style={{ color: colors.muted, fontSize: 12 }}>{timestamp}</ReactNative.Text>}
+						{timestamp && (
+							<ReactNative.Text style={{ color: colors.muted, fontSize: 12 }}>
+								{timestamp}
+							</ReactNative.Text>
+						)}
 					</ReactNative.View>
 					{voteControls}
 				</ReactNative.View>
 
-				<ReactNative.View style={{ backgroundColor: colors.border, height: 1, marginTop: 13, opacity: 0.55 }} />
-				<ReactNative.Text style={{ color: colors.text, fontSize: 15, lineHeight: 22, paddingTop: 12 }}>
+				<ReactNative.View
+					style={{ backgroundColor: colors.border, height: 1, marginTop: 13, opacity: 0.55 }}
+				/>
+				<ReactNative.Text
+					style={{ color: colors.text, fontSize: 15, lineHeight: 22, paddingTop: 12 }}
+				>
 					{truncated ? `${comment.slice(0, 200)}...` : comment}
 				</ReactNative.Text>
 				{comment.length > 200 && (
-					<ReactNative.Pressable hitSlop={6} onPress={() => setExpanded((value) => !value)} style={{ alignSelf: 'flex-start', marginTop: 6 }}>
-						<ReactNative.Text style={{ color: colors.link, fontSize: 13, fontWeight: '700' }}>{expanded ? 'Show less' : 'Read more'}</ReactNative.Text>
+					<ReactNative.Pressable
+						hitSlop={6}
+						onPress={() => setExpanded((value) => !value)}
+						style={{ alignSelf: 'flex-start', marginTop: 6 }}
+					>
+						<ReactNative.Text style={{ color: colors.link, fontSize: 13, fontWeight: '700' }}>
+							{expanded ? 'Show less' : 'Read more'}
+						</ReactNative.Text>
 					</ReactNative.Pressable>
 				)}
 			</ReactNative.Pressable>
 
 			{actionsVisible && (
-				<ReactNative.View style={{ backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderRadius: 13, borderWidth: 1, gap: 10, padding: 12 }}>
-					<ReactNative.Text style={{ color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6 }}>REVIEW ACTIONS</ReactNative.Text>
+				<ReactNative.View
+					style={{
+						backgroundColor: colors.surfaceAlt,
+						borderColor: colors.border,
+						borderRadius: 13,
+						borderWidth: 1,
+						gap: 10,
+						padding: 12,
+					}}
+				>
+					<ReactNative.Text
+						style={{ color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6 }}
+					>
+						REVIEW ACTIONS
+					</ReactNative.Text>
 					<ReactNative.View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-						{canReport && <ActionButton colors={colors} label="Report" onPress={() => void handleReport()} />}
-						{canBlock && <ActionButton colors={colors} label={isAuthorBlocked ? 'Unblock user' : 'Block user'} onPress={() => void handleBlockToggle()} />}
+						{canReport && (
+							<ActionButton colors={colors} label='Report' onPress={() => void handleReport()} />
+						)}
+						{canBlock && (
+							<ActionButton
+								colors={colors}
+								label={isAuthorBlocked ? 'Unblock user' : 'Block user'}
+								onPress={() => void handleBlockToggle()}
+							/>
+						)}
 						{canDelete && (
 							<ActionButton
 								colors={colors}
@@ -258,7 +354,7 @@ export default function ReviewItem({
 								}}
 							/>
 						)}
-						<ActionButton colors={colors} label="Close" onPress={() => setActionsVisible(false)} />
+						<ActionButton colors={colors} label='Close' onPress={() => setActionsVisible(false)} />
 					</ReactNative.View>
 				</ReactNative.View>
 			)}

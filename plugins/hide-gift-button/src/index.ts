@@ -1,6 +1,7 @@
 import { metro, patcher } from '@unbound-app/api';
 
-const GIFT_BUTTON_PATH = 'modules/chat_input/native/action_buttons/ChatInputActionButtonGiftOrThread.tsx';
+const GIFT_BUTTON_PATH =
+	'modules/chat_input/native/action_buttons/ChatInputActionButtonGiftOrThread.tsx';
 const RIGHT_ACTIONS_PATH = 'modules/chat_input/native/action_buttons/ChatInputRightActions.tsx';
 
 let unpatchGiftButton: (() => void) | null = null;
@@ -15,7 +16,8 @@ function unwrapComponent(mod: any): { holder: any; prop: string; component: any 
 	let depth = 0;
 
 	while (current && typeof current === 'object' && depth < 5) {
-		const next = current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
+		const next =
+			current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
 		if (!next) break;
 
 		holder = current;
@@ -36,7 +38,8 @@ function resolveComponent(value: any): any {
 	let depth = 0;
 
 	while (current && typeof current === 'object' && depth < 5) {
-		const next = current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
+		const next =
+			current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
 		if (!next) break;
 		current = current[next];
 		depth++;
@@ -53,7 +56,8 @@ function containsGift(node: any, depth = 0): boolean {
 	if (!props || typeof props !== 'object') return false;
 	if (containsGift(props.item, depth + 1)) return true;
 	if (containsGift(props.children, depth + 1)) return true;
-	if (Array.isArray(props.children)) return props.children.some((child) => containsGift(child, depth + 1));
+	if (Array.isArray(props.children))
+		return props.children.some((child) => containsGift(child, depth + 1));
 	return false;
 }
 
@@ -92,14 +96,16 @@ function patchRightActions(mod: any): boolean {
 			if (filtered.length === children.length) return;
 
 			return React.cloneElement(result, null, ...filtered);
-		} catch { }
+		} catch {}
 	});
 	return true;
 }
 
 function patchLoadedModules(): boolean {
 	const giftPatched = patchGiftButton(metro.findByFilePath(GIFT_BUTTON_PATH, { interop: false }));
-	const rightActionsPatched = patchRightActions(metro.findByFilePath(RIGHT_ACTIONS_PATH, { interop: false }));
+	const rightActionsPatched = patchRightActions(
+		metro.findByFilePath(RIGHT_ACTIONS_PATH, { interop: false }),
+	);
 	return giftPatched && rightActionsPatched;
 }
 

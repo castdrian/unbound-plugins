@@ -2,7 +2,14 @@ import { useState } from 'react';
 
 import { metro, patcher, storage, toasts } from '@unbound-app/api';
 
-import { SettingsCard, SettingsRow, SettingsScrollView, SettingsSection, SettingsSwitchRow, getSettingsColors } from '../../../shared/settings-ui';
+import {
+	SettingsCard,
+	SettingsRow,
+	SettingsScrollView,
+	SettingsSection,
+	SettingsSwitchRow,
+	getSettingsColors,
+} from '../../../shared/settings-ui';
 import { addUserId, editUserId, isUserId, parseUserList, removeUserId } from './user-list';
 
 const ADDON_ID = 'unbound.no-reply-mention';
@@ -43,27 +50,60 @@ function UserIdEditor({
 	return (
 		<SettingsCard>
 			<ReactNative.View style={{ gap: 12 }}>
-			<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
-				{initialValue ? 'Edit user ID' : 'Add user ID'}
-			</ReactNative.Text>
-			<ReactNative.TextInput
-				autoCapitalize="none"
-				autoCorrect={false}
-				keyboardType="number-pad"
-				placeholder="Discord user ID"
-				placeholderTextColor={colors.muted}
-				style={{ backgroundColor: colors.input, borderColor: colors.border, borderRadius: 8, borderWidth: 1, color: colors.text, paddingHorizontal: 12, paddingVertical: 10 }}
-				value={value}
-				onChangeText={setValue}
-			/>
-			<ReactNative.View style={{ flexDirection: 'row', gap: 12 }}>
-				<ReactNative.Pressable onPress={onCancel} style={{ alignItems: 'center', borderColor: colors.border, borderRadius: 10, borderWidth: 1, flex: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
-					<ReactNative.Text style={{ color: colors.text, fontWeight: '700' }}>Cancel</ReactNative.Text>
-				</ReactNative.Pressable>
-				<ReactNative.Pressable onPress={() => onSave(value)} style={{ alignItems: 'center', backgroundColor: colors.accent, borderRadius: 10, flex: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
-					<ReactNative.Text style={{ color: '#fff', fontWeight: '700' }}>Save</ReactNative.Text>
-				</ReactNative.Pressable>
-			</ReactNative.View>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
+					{initialValue ? 'Edit user ID' : 'Add user ID'}
+				</ReactNative.Text>
+				<ReactNative.TextInput
+					autoCapitalize='none'
+					autoCorrect={false}
+					keyboardType='number-pad'
+					placeholder='Discord user ID'
+					placeholderTextColor={colors.muted}
+					style={{
+						backgroundColor: colors.input,
+						borderColor: colors.border,
+						borderRadius: 8,
+						borderWidth: 1,
+						color: colors.text,
+						paddingHorizontal: 12,
+						paddingVertical: 10,
+					}}
+					value={value}
+					onChangeText={setValue}
+				/>
+				<ReactNative.View style={{ flexDirection: 'row', gap: 12 }}>
+					<ReactNative.Pressable
+						onPress={onCancel}
+						style={{
+							alignItems: 'center',
+							borderColor: colors.border,
+							borderRadius: 10,
+							borderWidth: 1,
+							flex: 1,
+							minHeight: 48,
+							justifyContent: 'center',
+							paddingHorizontal: 12,
+						}}
+					>
+						<ReactNative.Text style={{ color: colors.text, fontWeight: '700' }}>
+							Cancel
+						</ReactNative.Text>
+					</ReactNative.Pressable>
+					<ReactNative.Pressable
+						onPress={() => onSave(value)}
+						style={{
+							alignItems: 'center',
+							backgroundColor: colors.accent,
+							borderRadius: 10,
+							flex: 1,
+							minHeight: 48,
+							justifyContent: 'center',
+							paddingHorizontal: 12,
+						}}
+					>
+						<ReactNative.Text style={{ color: '#fff', fontWeight: '700' }}>Save</ReactNative.Text>
+					</ReactNative.Pressable>
+				</ReactNative.View>
 			</ReactNative.View>
 		</SettingsCard>
 	);
@@ -83,18 +123,38 @@ function UserIdRow({
 
 	return (
 		<SettingsCard>
-		<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 48 }}>
-			<ReactNative.Pressable onPress={onEdit} style={{ flex: 1, paddingVertical: 4 }}>
-				<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>{userId}</ReactNative.Text>
-				<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 19, marginTop: 3 }}>Tap to edit</ReactNative.Text>
-			</ReactNative.Pressable>
-			<ReactNative.Pressable hitSlop={8} onPress={onEdit} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
-				<ReactNative.Text style={{ color: colors.accent, fontWeight: '700' }}>Edit</ReactNative.Text>
-			</ReactNative.Pressable>
-			<ReactNative.Pressable hitSlop={8} onPress={onDelete} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
-				<ReactNative.Text style={{ color: colors.danger, fontWeight: '700' }}>Delete</ReactNative.Text>
-			</ReactNative.Pressable>
-		</ReactNative.View>
+			<ReactNative.View
+				style={{ alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 48 }}
+			>
+				<ReactNative.Pressable onPress={onEdit} style={{ flex: 1, paddingVertical: 4 }}>
+					<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>
+						{userId}
+					</ReactNative.Text>
+					<ReactNative.Text
+						style={{ color: colors.muted, fontSize: 14, lineHeight: 19, marginTop: 3 }}
+					>
+						Tap to edit
+					</ReactNative.Text>
+				</ReactNative.Pressable>
+				<ReactNative.Pressable
+					hitSlop={8}
+					onPress={onEdit}
+					style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}
+				>
+					<ReactNative.Text style={{ color: colors.accent, fontWeight: '700' }}>
+						Edit
+					</ReactNative.Text>
+				</ReactNative.Pressable>
+				<ReactNative.Pressable
+					hitSlop={8}
+					onPress={onDelete}
+					style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}
+				>
+					<ReactNative.Text style={{ color: colors.danger, fontWeight: '700' }}>
+						Delete
+					</ReactNative.Text>
+				</ReactNative.Pressable>
+			</ReactNative.View>
 		</SettingsCard>
 	);
 }
@@ -115,7 +175,12 @@ function NoReplyMentionSettings() {
 		}
 
 		const current = state.get('userList', '');
-		state.set('userList', editor?.mode === 'edit' && editor.original ? editUserId(current, editor.original, userId) : addUserId(current, userId));
+		state.set(
+			'userList',
+			editor?.mode === 'edit' && editor.original
+				? editUserId(current, editor.original, userId)
+				: addUserId(current, userId),
+		);
 		setEditor(null);
 	}
 
@@ -125,33 +190,45 @@ function NoReplyMentionSettings() {
 
 	return (
 		<SettingsScrollView>
-			<SettingsSection title="Exceptions">
+			<SettingsSection title='Exceptions'>
 				<SettingsRow
-					label="Add user ID"
-					description="Replies can mention these users when the exception is enabled"
+					label='Add user ID'
+					description='Replies can mention these users when the exception is enabled'
 					arrow
 					onPress={() => setEditor({ mode: 'add' })}
 				/>
-				{editor?.mode === 'add' ? <UserIdEditor initialValue="" onCancel={() => setEditor(null)} onSave={saveUserId} /> : null}
+				{editor?.mode === 'add' ? (
+					<UserIdEditor initialValue='' onCancel={() => setEditor(null)} onSave={saveUserId} />
+				) : null}
 				{userIds.length ? (
 					<ReactNative.View style={{ gap: 12 }}>
 						{userIds.map((userId) => (
 							<ReactNative.View key={userId}>
 								{editor?.mode === 'edit' && editor.original === userId ? (
-									<UserIdEditor initialValue={userId} onCancel={() => setEditor(null)} onSave={saveUserId} />
+									<UserIdEditor
+										initialValue={userId}
+										onCancel={() => setEditor(null)}
+										onSave={saveUserId}
+									/>
 								) : (
-									<UserIdRow userId={userId} onDelete={() => deleteUserId(userId)} onEdit={() => setEditor({ mode: 'edit', original: userId })} />
+									<UserIdRow
+										userId={userId}
+										onDelete={() => deleteUserId(userId)}
+										onEdit={() => setEditor({ mode: 'edit', original: userId })}
+									/>
 								)}
 							</ReactNative.View>
 						))}
 					</ReactNative.View>
 				) : (
 					<SettingsCard>
-						<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 19 }}>No users added yet.</ReactNative.Text>
+						<ReactNative.Text style={{ color: colors.muted, fontSize: 14, lineHeight: 19 }}>
+							No users added yet.
+						</ReactNative.Text>
 					</SettingsCard>
 				)}
 				<SettingsSwitchRow
-					label="Only Ping Listed Users"
+					label='Only Ping Listed Users'
 					description={
 						pingListed
 							? 'Replies mention only the users listed above'

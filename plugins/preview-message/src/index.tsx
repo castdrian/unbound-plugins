@@ -32,9 +32,16 @@ let chatItem: any = null;
 let messageRecord: any = null;
 let rowManager: any = null;
 let haptics: any = null;
-let restApi: { post?: (options: { url: string; body: { urls: string[] } }) => Promise<{ body?: { embeds?: unknown[] } }> } | null = null;
+let restApi: {
+	post?: (options: {
+		url: string;
+		body: { urls: string[] };
+	}) => Promise<{ body?: { embeds?: unknown[] } }>;
+} | null = null;
 let chatInputs: {
-	getBestActiveInputForChannelId?: (channelId: string) => { closeCustomKeyboard?: () => void } | null;
+	getBestActiveInputForChannelId?: (
+		channelId: string,
+	) => { closeCustomKeyboard?: () => void } | null;
 	dismissKeyboard?: () => void;
 } | null = null;
 let eyeIcon: number | null = null;
@@ -60,7 +67,8 @@ function unwrapComponent(mod: any): { holder: any; prop: string } | null {
 	let depth = 0;
 
 	while (current && typeof current === 'object' && depth < 5) {
-		const next = current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
+		const next =
+			current.type !== undefined ? 'type' : current.render !== undefined ? 'render' : null;
 		if (!next) break;
 
 		holder = current;
@@ -92,10 +100,10 @@ function patchRightActions(mod: any): boolean {
 
 			const { React } = metro.common;
 			const children = React.Children.toArray(result.props.children);
-			children.unshift(<PreviewButton key="unbound-preview-message" channelId={channelId} />);
+			children.unshift(<PreviewButton key='unbound-preview-message' channelId={channelId} />);
 
 			return React.cloneElement(result, null, ...children);
-		} catch { }
+		} catch {}
 	});
 
 	return true;
@@ -159,13 +167,18 @@ function PreviewOverlay({
 		let active = true;
 		setEmbeds([]);
 		const urls = extractUrls(renderedContent).slice(0, MAX_PREVIEW_URLS);
-		if (!urls.length) return () => { active = false; };
+		if (!urls.length)
+			return () => {
+				active = false;
+			};
 
 		void Promise.all(urls.map((url) => fetchLinkEmbed(url, restApi))).then((resolved) => {
 			if (active) setEmbeds(resolved.filter((embed): embed is LinkEmbed => embed !== null));
 		});
 
-		return () => { active = false; };
+		return () => {
+			active = false;
+		};
 	}, [renderedContent]);
 
 	React.useEffect(() => {
@@ -219,7 +232,7 @@ function PreviewOverlay({
 				style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
 			/>
 			<ReactNative.KeyboardAvoidingView
-				behavior="padding"
+				behavior='padding'
 				keyboardVerticalOffset={0}
 				style={{ flex: 1, justifyContent: 'center' }}
 			>
@@ -261,10 +274,13 @@ function PreviewButton({ channelId }: { channelId: string }) {
 		setSlotVisible(next);
 	};
 
-	React.useEffect(() => () => {
-		if (keyboardTimer.current) clearTimeout(keyboardTimer.current);
-		if (visibilityTimer.current) clearTimeout(visibilityTimer.current);
-	}, []);
+	React.useEffect(
+		() => () => {
+			if (keyboardTimer.current) clearTimeout(keyboardTimer.current);
+			if (visibilityTimer.current) clearTimeout(visibilityTimer.current);
+		},
+		[],
+	);
 
 	const draft = React.useSyncExternalStore(
 		(onChange: () => void) => {
@@ -306,7 +322,8 @@ function PreviewButton({ channelId }: { channelId: string }) {
 			setOpen(true);
 		};
 
-		if (typeof keyboard.addListener === 'function') subscription = keyboard.addListener('keyboardDidHide', open);
+		if (typeof keyboard.addListener === 'function')
+			subscription = keyboard.addListener('keyboardDidHide', open);
 		keyboard.dismiss();
 		keyboardTimer.current = setTimeout(open, KEYBOARD_DISMISS_DELAY_MS);
 	};
@@ -410,10 +427,18 @@ export default {
 		messageRecord = metro.findByName('MessageRecord');
 		rowManager = metro.findByName('RowManager');
 		haptics = metro.findByFilePath(HAPTICS_PATH);
-		restApi = metro.findByProps('get', 'post', 'put', 'patch', 'del') ?? metro.findByProps('get', 'post');
+		restApi =
+			metro.findByProps('get', 'post', 'put', 'patch', 'del') ?? metro.findByProps('get', 'post');
 		eyeIcon = assets.getIDByName('EyeIcon');
 
-		if (!drafts?.getDraft || !stickerPreviews?.getStickerPreview || !users?.getCurrentUser || !chatItem || !messageRecord) return;
+		if (
+			!drafts?.getDraft ||
+			!stickerPreviews?.getStickerPreview ||
+			!users?.getCurrentUser ||
+			!chatItem ||
+			!messageRecord
+		)
+			return;
 		if (!rowManager || !selectedChannel || eyeIcon == null) return;
 
 		waitForRightActions();

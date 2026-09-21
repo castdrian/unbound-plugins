@@ -43,8 +43,7 @@ export default {
 	stop() {
 		try {
 			stopReviewMenuPatch();
-		} catch { }
-
+		} catch {}
 	},
 	getSettingsPanel: () => <ReviewDBSettingsScreen />,
 };

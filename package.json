@@ -11,9 +11,12 @@
 		"prepare": "git config core.hooksPath .githooks || true",
 		"dev": "ubd dev",
 		"build": "ubd build",
+		"format": "biome format --write plugins",
+		"format:check": "biome format plugins",
 		"postbuild": "bun scripts/generate-plugins-readme.ts"
 	},
 	"devDependencies": {
+		"@biomejs/biome": "2.5.14",
 		"@unbound-app/cli": "latest"
 	}
 }

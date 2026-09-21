@@ -3,8 +3,12 @@ import { expect, test } from 'bun:test';
 import { extractUrls, normalizeDiscordEmbed, parseOpenGraph } from './embeds';
 
 test('extracts unique links and removes sentence punctuation', () => {
-	expect(extractUrls('See https://example.com/a, then https://example.com/a.')).toEqual(['https://example.com/a']);
-	expect(extractUrls('Suppress <https://example.com/private> but show https://example.com/public')).toEqual(['https://example.com/public']);
+	expect(extractUrls('See https://example.com/a, then https://example.com/a.')).toEqual([
+		'https://example.com/a',
+	]);
+	expect(
+		extractUrls('Suppress <https://example.com/private> but show https://example.com/public'),
+	).toEqual(['https://example.com/public']);
 });
 
 test('parses Open Graph metadata into a Discord link embed', () => {
@@ -47,36 +51,58 @@ test('falls back to the document title and Twitter metadata', () => {
 });
 
 test('returns no embed when a page has no preview metadata', () => {
-	expect(parseOpenGraph('<html><body>Nothing here</body></html>', 'https://example.com')).toBeNull();
+	expect(
+		parseOpenGraph('<html><body>Nothing here</body></html>', 'https://example.com'),
+	).toBeNull();
 });
 
 test('normalizes Discord resolver results and preserves the source URL', () => {
-	expect(normalizeDiscordEmbed({ type: 'article', title: 'Resolved', image: { url: 'https://cdn.example.com/image.png' } }, 'https://example.com')).toEqual({
+	expect(
+		normalizeDiscordEmbed(
+			{ type: 'article', title: 'Resolved', image: { url: 'https://cdn.example.com/image.png' } },
+			'https://example.com',
+		),
+	).toEqual({
 		type: 'article',
 		title: 'Resolved',
 		image: { url: 'https://cdn.example.com/image.png' },
 		url: 'https://example.com',
 	});
-	expect(normalizeDiscordEmbed({ footer: { text: 'not enough' } }, 'https://example.com')).toBeNull();
+	expect(
+		normalizeDiscordEmbed({ footer: { text: 'not enough' } }, 'https://example.com'),
+	).toBeNull();
 });
 
 test('drops invalid embed timestamps before rendering', () => {
-	const embed = normalizeDiscordEmbed({ type: 'article', title: 'Resolved', timestamp: 'not-a-date' }, 'https://example.com');
+	const embed = normalizeDiscordEmbed(
+		{ type: 'article', title: 'Resolved', timestamp: 'not-a-date' },
+		'https://example.com',
+	);
 
 	expect(embed).not.toBeNull();
 	expect(embed).not.toHaveProperty('timestamp');
-	expect(normalizeDiscordEmbed({ type: 'article', title: 'Resolved', timestamp: '2026-08-02T12:00:00.000Z' }, 'https://example.com')).not.toHaveProperty('timestamp');
+	expect(
+		normalizeDiscordEmbed(
+			{ type: 'article', title: 'Resolved', timestamp: '2026-08-02T12:00:00.000Z' },
+			'https://example.com',
+		),
+	).not.toHaveProperty('timestamp');
 });
 
 test('drops optional resolver metadata that native rows cannot safely render', () => {
-	expect(normalizeDiscordEmbed({
-		type: 'article',
-		title: 'Resolved',
-		provider: { name: 'Example' },
-		author: { name: 'Author' },
-		footer: { text: 'Footer', timestamp: 'not-a-date' },
-		fields: [{ name: 'Field', value: 'Value' }],
-	}, 'https://example.com')).toEqual({
+	expect(
+		normalizeDiscordEmbed(
+			{
+				type: 'article',
+				title: 'Resolved',
+				provider: { name: 'Example' },
+				author: { name: 'Author' },
+				footer: { text: 'Footer', timestamp: 'not-a-date' },
+				fields: [{ name: 'Field', value: 'Value' }],
+			},
+			'https://example.com',
+		),
+	).toEqual({
 		type: 'article',
 		title: 'Resolved',
 		url: 'https://example.com',

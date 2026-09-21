@@ -4,7 +4,9 @@ import { getApiBaseUrlSetting, storeSessionTokens } from '@translate/api';
 
 function findOAuth2AuthorizeModal(): any | null {
 	if (typeof metro?.findByProps === 'function') {
-		const byProp = metro.findByProps('OAuth2AuthorizeModal') as { OAuth2AuthorizeModal?: unknown } | null;
+		const byProp = metro.findByProps('OAuth2AuthorizeModal') as {
+			OAuth2AuthorizeModal?: unknown;
+		} | null;
 		if (byProp?.OAuth2AuthorizeModal) return byProp.OAuth2AuthorizeModal;
 	}
 
@@ -43,7 +45,12 @@ function getOAuthLocation(result: unknown): string | null {
 	if (typeof result === 'string') return result;
 	if (!result || typeof result !== 'object') return null;
 
-	const value = result as { location?: unknown; url?: unknown; redirectUrl?: unknown; redirectURL?: unknown };
+	const value = result as {
+		location?: unknown;
+		url?: unknown;
+		redirectUrl?: unknown;
+		redirectURL?: unknown;
+	};
 	for (const location of [value.location, value.url, value.redirectUrl, value.redirectURL]) {
 		if (typeof location === 'string') return location;
 	}
@@ -127,12 +134,10 @@ export function openDiscordLoginFlow(onSettled?: () => void): void {
 
 	void (async () => {
 		try {
-			const modals = metro.findByProps('pushModal', 'popModal') as
-				| {
-					pushModal?: (options: { key: string; modal: any; closable?: boolean }) => void;
-					popModal?: (key: string) => void;
-				}
-				| null;
+			const modals = metro.findByProps('pushModal', 'popModal') as {
+				pushModal?: (options: { key: string; modal: any; closable?: boolean }) => void;
+				popModal?: (key: string) => void;
+			} | null;
 			const OAuth2AuthorizeModal = findOAuth2AuthorizeModal();
 
 			if (!modals?.pushModal || !modals?.popModal || !OAuth2AuthorizeModal) {
@@ -146,7 +151,9 @@ export function openDiscordLoginFlow(onSettled?: () => void): void {
 				redirect: 'manual' as any,
 			} as any);
 			const authorizeUrl =
-				typeof response.headers?.get === 'function' ? (response.headers.get('location') ?? response.url) : response.url;
+				typeof response.headers?.get === 'function'
+					? (response.headers.get('location') ?? response.url)
+					: response.url;
 			const clientId = getQueryParam(authorizeUrl, 'client_id');
 			const state = getQueryParam(authorizeUrl, 'state');
 			const redirectUri = `${getApiBaseUrlSetting()}/auth/callback`;

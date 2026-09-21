@@ -42,7 +42,8 @@ test('preserves Klipy video media while marking it as a GIF download', () => {
 });
 
 test('preserves Discord external Klipy proxies because their path is signed', () => {
-	const url = 'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.mp4';
+	const url =
+		'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.mp4';
 
 	expect(getPreferredGifUrl(url)).toBeNull();
 	expect(rewriteGifMedia(url, 'video/mp4')).toEqual({
@@ -96,7 +97,8 @@ test('prefers a retained direct GIF over a derived video URL', () => {
 });
 
 test('normalizes Discord’s animated proxy format to GIF', () => {
-	const url = 'https://media.discordapp.net/attachments/1/2/reaction.gif?format=webp&animated=true&width=320';
+	const url =
+		'https://media.discordapp.net/attachments/1/2/reaction.gif?format=webp&animated=true&width=320';
 
 	expect(getPreferredGifUrl(url)).toBe(
 		'https://media.discordapp.net/attachments/1/2/reaction.gif?format=gif&animated=true&width=320',
@@ -104,7 +106,8 @@ test('normalizes Discord’s animated proxy format to GIF', () => {
 });
 
 test('keeps string GIF sources primitive for the native media method', () => {
-	const url = 'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.gif';
+	const url =
+		'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.gif';
 
 	expect(rewriteGifMedia(url, 'image/gif')).toEqual({
 		source: 'https://static.klipy.com/ii/example.gif',
@@ -113,13 +116,15 @@ test('keeps string GIF sources primitive for the native media method', () => {
 });
 
 test('unwraps Discord external GIF proxies for native fetching', () => {
-	const url = 'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.gif';
+	const url =
+		'https://images-ext-1.discordapp.net/external/example/https/static.klipy.com/ii/example.gif';
 
 	expect(getPreferredGifUrl(url)).toBe('https://static.klipy.com/ii/example.gif');
 });
 
 test('unwraps signed Discord Tenor proxies to a valid direct GIF', () => {
-	const url = 'https://images-ext-1.discordapp.net/external/example/https/media.tenor.com/abc123/AAAAC/example.mp4';
+	const url =
+		'https://images-ext-1.discordapp.net/external/example/https/media.tenor.com/abc123/AAAAC/example.mp4';
 
 	expect(getPreferredGifUrl(url)).toBe('https://media.tenor.com/abc123/AAAAC/example.gif');
 });

@@ -1,6 +1,10 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
-import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '../../../shared/settings-ui';
+import {
+	SettingsScrollView,
+	SettingsSection,
+	SettingsSwitchRow,
+} from '../../../shared/settings-ui';
 
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);
@@ -155,7 +159,7 @@ function MoreUserTagsSettings() {
 
 	return (
 		<SettingsScrollView>
-			<SettingsSection title="Tags">
+			<SettingsSection title='Tags'>
 				{TAGS.map((tag) => (
 					<SettingsSwitchRow
 						key={tag.name}
@@ -167,15 +171,15 @@ function MoreUserTagsSettings() {
 				))}
 			</SettingsSection>
 
-			<SettingsSection title="Appearance">
+			<SettingsSection title='Appearance'>
 				<SettingsSwitchRow
-					label="Coloured Tags"
-					description="Give each tag its own colour instead of the default styling"
+					label='Coloured Tags'
+					description='Give each tag its own colour instead of the default styling'
 					value={state.get('coloredTags', true)}
 					onValueChange={(value: boolean) => state.set('coloredTags', value)}
 				/>
 				<SettingsSwitchRow
-					label="Use Role Colour"
+					label='Use Role Colour'
 					description="Colour tags with the member's role colour where they have one"
 					value={state.get('useRoleColor', true)}
 					onValueChange={(value: boolean) => state.set('useRoleColor', value)}
@@ -226,7 +230,7 @@ export default {
 					tagBackgroundColor: processColor(background),
 					tagTextColor: processColor(contrastingTextColor(background)),
 				};
-			} catch { }
+			} catch {}
 		});
 	},
 

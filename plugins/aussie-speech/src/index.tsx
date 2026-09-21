@@ -6,7 +6,11 @@ const unpatches: Array<() => void> = [];
 
 function findMessageArg(args: unknown[]): { content?: string } | null {
 	for (const arg of args) {
-		if (arg && typeof arg === 'object' && typeof (arg as { content?: unknown }).content === 'string') {
+		if (
+			arg &&
+			typeof arg === 'object' &&
+			typeof (arg as { content?: unknown }).content === 'string'
+		) {
 			return arg as { content?: string };
 		}
 	}
@@ -14,7 +18,10 @@ function findMessageArg(args: unknown[]): { content?: string } | null {
 }
 
 function getMessageActions(): { sendMessage?: unknown; editMessage?: unknown } | null {
-	return metro.findByProps('sendMessage', 'editMessage') as { sendMessage?: unknown; editMessage?: unknown } | null;
+	return metro.findByProps('sendMessage', 'editMessage') as {
+		sendMessage?: unknown;
+		editMessage?: unknown;
+	} | null;
 }
 
 function transformMessage(ctx: { args: unknown[] }): void {

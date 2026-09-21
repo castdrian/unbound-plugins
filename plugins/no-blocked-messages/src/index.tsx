@@ -30,18 +30,19 @@ let unpatchUpdatesQueueAdd: (() => void) | null = null;
 function getRuntime(): ChatRuntime {
 	const root = globalThis as Record<string, ChatRuntime | undefined>;
 
-	return root.__unboundNoBlockedMessagesRuntime ??= {
+	return (root.__unboundNoBlockedMessagesRuntime ??= {
 		chatManager: null,
 		rowManager: null,
 		messages: null,
 		updatesQueue: null,
-	};
+	});
 }
 
 function refreshRows(): void {
 	const runtime = getRuntime();
 
-	if (!runtime.chatManager || !runtime.rowManager || !runtime.messages || !runtime.updatesQueue) return;
+	if (!runtime.chatManager || !runtime.rowManager || !runtime.messages || !runtime.updatesQueue)
+		return;
 
 	runtime.chatManager.setup(runtime.messages);
 	for (const row of runtime.messages) {
@@ -55,7 +56,9 @@ function refreshRows(): void {
 function installPatches(): void {
 	const ChatManager = metro.find((module) => module?.default?.name === 'ChatManager')?.default;
 	const RowManager = metro.find((module) => module?.default?.name === 'RowManager')?.default;
-	const ChatUpdatesQueue = metro.find((module) => module?.default?.name === 'ChatUpdatesQueue')?.default;
+	const ChatUpdatesQueue = metro.find(
+		(module) => module?.default?.name === 'ChatUpdatesQueue',
+	)?.default;
 	const runtime = getRuntime();
 
 	if (ChatManager?.prototype?.createRow) {

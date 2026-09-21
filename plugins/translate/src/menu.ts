@@ -73,10 +73,12 @@ const patchedInstances = new WeakSet<object>();
 export function startTranslateMenuPatch(): void {
 	if (typeof metro?.findByProps !== 'function') return;
 
-	const sheetsHost = metro.findByProps('openLazy', 'hideActionSheet') as
-		| { openLazy?: (...args: unknown[]) => unknown; hideActionSheet?: (key: string) => void }
-		| null;
-	const ActionSheetRow = (metro.findByProps('ActionSheetRow') as { ActionSheetRow?: any } | null)?.ActionSheetRow;
+	const sheetsHost = metro.findByProps('openLazy', 'hideActionSheet') as {
+		openLazy?: (...args: unknown[]) => unknown;
+		hideActionSheet?: (key: string) => void;
+	} | null;
+	const ActionSheetRow = (metro.findByProps('ActionSheetRow') as { ActionSheetRow?: any } | null)
+		?.ActionSheetRow;
 
 	if (!sheetsHost?.openLazy || !ActionSheetRow) return;
 
@@ -90,7 +92,12 @@ export function startTranslateMenuPatch(): void {
 			{ message?: MessageLike } | undefined,
 		];
 
-		if (typeof key !== 'string' || !key.endsWith('MessageLongPressActionSheet') || !componentPromise?.then) return;
+		if (
+			typeof key !== 'string' ||
+			!key.endsWith('MessageLongPressActionSheet') ||
+			!componentPromise?.then
+		)
+			return;
 
 		if (extra?.message) currentMessage = extra.message;
 		currentKey = key;
@@ -102,7 +109,8 @@ export function startTranslateMenuPatch(): void {
 
 				Patcher.after(instance, 'default', ({ result }) => {
 					const message = currentMessage;
-					if (!message || typeof message.content !== 'string' || !message.content.trim()) return result;
+					if (!message || typeof message.content !== 'string' || !message.content.trim())
+						return result;
 
 					const rowGroup = findInTree(result, (node) => typeName(node) === 'ActionSheetRowGroup');
 					const rows = rowGroup?.props?.children;
@@ -121,7 +129,9 @@ export function startTranslateMenuPatch(): void {
 					const translateRow = metro.common.React.createElement(ActionSheetRow, {
 						key: TRANSLATE_ROW_KEY,
 						label: 'Translate',
-						icon: iconId ? metro.common.React.createElement(ActionSheetRow.Icon, { source: iconId }) : undefined,
+						icon: iconId
+							? metro.common.React.createElement(ActionSheetRow.Icon, { source: iconId })
+							: undefined,
 						onPress: action,
 					});
 

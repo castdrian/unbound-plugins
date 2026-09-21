@@ -31,7 +31,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getMediaManager(): MediaManager | null {
-	const manager = metro.findByProps('downloadMediaAsset', 'downloadMediaAssetWithContentType') as MediaManager | null;
+	const manager = metro.findByProps(
+		'downloadMediaAsset',
+		'downloadMediaAssetWithContentType',
+	) as MediaManager | null;
 	if (manager?.downloadMediaAsset || manager?.downloadMediaAssetWithContentType) return manager;
 	return metro.findByProps('downloadMediaAsset') as MediaManager | null;
 }
@@ -43,9 +46,13 @@ function getMediaTypes(): MediaTypes | null {
 	const props = metro.findByProps('GIF_RE_IOS', 'MediaType') as Record<string, unknown> | null;
 	if (isRecord(props?.MediaType)) return props.MediaType;
 
-	const module = metro.findByFilePath('modules/media/MediaTypes.tsx', { interop: false }) as Record<string, unknown> | null;
+	const module = metro.findByFilePath('modules/media/MediaTypes.tsx', { interop: false }) as Record<
+		string,
+		unknown
+	> | null;
 	if (isRecord(module?.MediaType)) return module.MediaType;
-	if (isRecord(module?.default) && isRecord(module.default.MediaType)) return module.default.MediaType;
+	if (isRecord(module?.default) && isRecord(module.default.MediaType))
+		return module.default.MediaType;
 
 	return null;
 }
@@ -54,7 +61,10 @@ function getGifMediaType(): unknown {
 	return getMediaTypes()?.GIF ?? 1;
 }
 
-function patchDownloadMethod(manager: MediaManager, method: 'downloadMediaAsset' | 'downloadMediaAssetWithContentType'): void {
+function patchDownloadMethod(
+	manager: MediaManager,
+	method: 'downloadMediaAsset' | 'downloadMediaAssetWithContentType',
+): void {
 	if (typeof manager[method] !== 'function') return;
 
 	const unpatch = PATCHER.instead(manager, method, ({ args, original, this: self }) => {
@@ -92,7 +102,10 @@ function patchGifDetection(manager: MediaManager): void {
 }
 
 function patchMediaShareActions(): void {
-	const found = metro.findByProps('useMediaShareActions', { all: true }) as MediaShareActions[] | MediaShareActions | null;
+	const found = metro.findByProps('useMediaShareActions', { all: true }) as
+		| MediaShareActions[]
+		| MediaShareActions
+		| null;
 	const modules = Array.isArray(found) ? found : found ? [found] : [];
 	const seen = new Set<MediaShareActions>();
 	for (const module of modules) {
@@ -124,7 +137,13 @@ function applyGifSource(source: Record<string, unknown>, gifUrl: string): void {
 }
 
 function patchMediaExtraction(manager: MediaManager): void {
-	for (const method of ['extractMediaSourcesFromMessage', 'extractMediaSourcesFromEmbed', 'extractMediaFromEmbed', 'extractMediaFromAttachment', 'getEmbedMedia'] as const) {
+	for (const method of [
+		'extractMediaSourcesFromMessage',
+		'extractMediaSourcesFromEmbed',
+		'extractMediaFromEmbed',
+		'extractMediaFromAttachment',
+		'getEmbedMedia',
+	] as const) {
 		if (typeof manager[method] !== 'function') continue;
 		const unpatch = PATCHER.after(manager, method, ({ args, result }) => {
 			void resolveKlipyGifUrl(args[0]);

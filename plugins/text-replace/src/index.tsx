@@ -17,7 +17,11 @@ function getRules(kind: 'stringRules' | 'regexRules'): TextReplaceRule[] {
 
 function findMessageArg(args: unknown[]): { content?: string } | null {
 	for (const arg of args) {
-		if (arg && typeof arg === 'object' && typeof (arg as { content?: unknown }).content === 'string') {
+		if (
+			arg &&
+			typeof arg === 'object' &&
+			typeof (arg as { content?: unknown }).content === 'string'
+		) {
 			return arg as { content?: string };
 		}
 	}

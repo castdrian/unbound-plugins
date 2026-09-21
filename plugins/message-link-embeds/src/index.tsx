@@ -2,7 +2,8 @@ import { metro, patcher } from '@unbound-app/api';
 
 const MESSAGE_ROW_TYPE = 1;
 const MAX_EMBEDS = 3;
-const MESSAGE_LINK_REGEX = /https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
+const MESSAGE_LINK_REGEX =
+	/https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
 
 type Author = {
 	globalName?: string | null;
@@ -46,7 +47,8 @@ type ChatManager = {
 let unpatchCreateRow: (() => void) | null = null;
 let unpatchRowManagerGenerate: (() => void) | null = null;
 let startupTimer: ReturnType<typeof setTimeout> | null = null;
-let messages: { getMessage?: (channelId: string, messageId: string) => Message | null } | null = null;
+let messages: { getMessage?: (channelId: string, messageId: string) => Message | null } | null =
+	null;
 let messageActions: MessageActions | null = null;
 let dispatcher: { dispatch?: (event: unknown) => void } | null = null;
 let rowManager: RowManager | null = null;
@@ -65,7 +67,8 @@ function linkedTargets(message: Message): LinkTarget[] {
 
 	const targets: LinkTarget[] = [];
 	for (const match of message.content.matchAll(MESSAGE_LINK_REGEX)) {
-		if (targets.some((target) => target.channelId === match[1] && target.messageId === match[2])) continue;
+		if (targets.some((target) => target.channelId === match[1] && target.messageId === match[2]))
+			continue;
 		targets.push({ channelId: match[1], messageId: match[2] });
 		if (targets.length === MAX_EMBEDS) break;
 	}
@@ -88,15 +91,20 @@ function fetchLinkedMessage(source: Message, target: LinkTarget): void {
 	if (pendingMessages.has(key)) return;
 	pendingMessages.add(key);
 
-	messageActions?.fetchMessage?.(target)
+	messageActions
+		?.fetchMessage?.(target)
 		.then((result) => {
-			const resolved = messages?.getMessage?.(target.channelId, target.messageId) ?? result ?? linkedMessage(target);
+			const resolved =
+				messages?.getMessage?.(target.channelId, target.messageId) ??
+				result ??
+				linkedMessage(target);
 			if (resolved) cachedMessages.set(key, resolved);
 		})
 		.catch(() => undefined)
 		.finally(() => {
 			pendingMessages.delete(key);
-			if (source.id) dispatcher?.dispatch?.({ type: 'MESSAGE_UPDATE', message: { ...source }, log_edit: false });
+			if (source.id)
+				dispatcher?.dispatch?.({ type: 'MESSAGE_UPDATE', message: { ...source }, log_edit: false });
 		});
 }
 
@@ -111,7 +119,14 @@ function rememberSource(message: Message): void {
 function sourceForRow(row: Record<string, unknown>): Message | null {
 	const rendered = row.message as Message | undefined;
 	if (!rendered?.id) return null;
-	return sourceMessages.get(rendered.id) ?? messages?.getMessage?.(rendered.channel_id ?? (rendered.channelId as string | undefined) ?? '', rendered.id) ?? null;
+	return (
+		sourceMessages.get(rendered.id) ??
+		messages?.getMessage?.(
+			rendered.channel_id ?? (rendered.channelId as string | undefined) ?? '',
+			rendered.id,
+		) ??
+		null
+	);
 }
 
 function syntheticId(source: Message, linked: Message): string | null {
@@ -126,7 +141,15 @@ function syntheticId(source: Message, linked: Message): string | null {
 
 function embeddedRow(source: Message, linked: Message): Record<string, unknown> | null {
 	const id = syntheticId(source, linked);
-	if (!id || !source.channel_id || !linked.id || !linked.channel_id || !rowManager || !messageRecordFactory) return null;
+	if (
+		!id ||
+		!source.channel_id ||
+		!linked.id ||
+		!linked.channel_id ||
+		!rowManager ||
+		!messageRecordFactory
+	)
+		return null;
 
 	try {
 		const message = messageRecordFactory.createMessageRecord({
@@ -178,7 +201,14 @@ function install(): void {
 	const ChatManager = metro.find((module) => module?.default?.name === 'ChatManager')?.default;
 	const RowManager = metro.find((module) => module?.default?.name === 'RowManager')?.default;
 
-	if (!foundMessages?.getMessage || !foundActions?.fetchMessage || !foundDispatcher?.dispatch || !foundMessageRecordFactory?.createMessageRecord || !ChatManager?.prototype?.createRow || !RowManager?.prototype?.generate) {
+	if (
+		!foundMessages?.getMessage ||
+		!foundActions?.fetchMessage ||
+		!foundDispatcher?.dispatch ||
+		!foundMessageRecordFactory?.createMessageRecord ||
+		!ChatManager?.prototype?.createRow ||
+		!RowManager?.prototype?.generate
+	) {
 		startupTimer = setTimeout(install, 250);
 		return;
 	}
@@ -205,8 +235,14 @@ function install(): void {
 			const embedded = embeddedRow(source, linked);
 			if (!embedded) continue;
 			embedded.index = context.this.rowIndex++;
-			const sourceIndex = context.this.rows.findIndex((candidate) => (candidate.message as Message | undefined)?.id === source.id);
-			context.this.rows.splice(sourceIndex < 0 ? context.this.rows.length : sourceIndex, 0, embedded);
+			const sourceIndex = context.this.rows.findIndex(
+				(candidate) => (candidate.message as Message | undefined)?.id === source.id,
+			);
+			context.this.rows.splice(
+				sourceIndex < 0 ? context.this.rows.length : sourceIndex,
+				0,
+				embedded,
+			);
 		}
 	});
 }

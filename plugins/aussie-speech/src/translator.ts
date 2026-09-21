@@ -1,9 +1,13 @@
 import { australianSpellings, mappings } from './lexicon';
 
-const protectedText = /(```[\s\S]*?```|`[^`]*`|<@!?\d+>|<@&\d+>|<#\d+>|<a?:[\w~]+:\d+>|https?:\/\/[^\s<]+)/g;
-const protectedPart = /^(```[\s\S]*?```|`[^`]*`|<@!?\d+>|<@&\d+>|<#\d+>|<a?:[\w~]+:\d+>|https?:\/\/[^\s<]+)$/;
+const protectedText =
+	/(```[\s\S]*?```|`[^`]*`|<@!?\d+>|<@&\d+>|<#\d+>|<a?:[\w~]+:\d+>|https?:\/\/[^\s<]+)/g;
+const protectedPart =
+	/^(```[\s\S]*?```|`[^`]*`|<@!?\d+>|<@&\d+>|<#\d+>|<a?:[\w~]+:\d+>|https?:\/\/[^\s<]+)$/;
 const words = new Map(mappings.filter(([source]) => !source.includes(' ')));
-const phrases = mappings.filter(([source]) => source.includes(' ')).sort(([left], [right]) => right.length - left.length);
+const phrases = mappings
+	.filter(([source]) => source.includes(' '))
+	.sort(([left], [right]) => right.length - left.length);
 const wordPattern = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
 
 function escapeRegExp(value: string): string {
@@ -22,11 +26,18 @@ function matchCase(source: string, replacement: string): string {
 	return replacement.replace(/[A-Za-z]/g, (letter) => {
 		const sourceLetter = sourceLetters[Math.min(letterIndex, sourceLetters.length - 1)];
 		letterIndex += 1;
-		return sourceLetter === sourceLetter.toUpperCase() ? letter.toUpperCase() : letter.toLowerCase();
+		return sourceLetter === sourceLetter.toUpperCase()
+			? letter.toUpperCase()
+			: letter.toLowerCase();
 	});
 }
 
-function replacePhrase(text: string, source: string, replacement: string, preserved: string[]): string {
+function replacePhrase(
+	text: string,
+	source: string,
+	replacement: string,
+	preserved: string[],
+): string {
 	const expression = new RegExp(`\\b${escapeRegExp(source).replace(/ /g, '\\s+')}\\b`, 'gi');
 	return text.replace(expression, (match) => {
 		preserved.push(matchCase(match, replacement));
@@ -68,7 +79,10 @@ function translateText(text: string): string {
 	for (const [source, replacement] of phrases) {
 		translated = replacePhrase(translated, source, replacement, preserved);
 	}
-	return replaceWords(translated).replace(/\uE000(\d+)\uE001/g, (_match, index: string) => preserved[Number(index)]);
+	return replaceWords(translated).replace(
+		/\uE000(\d+)\uE001/g,
+		(_match, index: string) => preserved[Number(index)],
+	);
 }
 
 export function translate(content: string): string {

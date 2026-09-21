@@ -11,7 +11,10 @@ export type LinkEmbed = {
 };
 
 type EmbedRequest = {
-	post?: (options: { url: string; body: { urls: string[] } }) => Promise<{ body?: { embeds?: unknown[] } }>;
+	post?: (options: {
+		url: string;
+		body: { urls: string[] };
+	}) => Promise<{ body?: { embeds?: unknown[] } }>;
 };
 
 const EMBED_KEYS = ['type', 'title', 'description'] as const;
@@ -39,7 +42,9 @@ function decodeHtml(value: string): string {
 		.replace(/&lt;/gi, '<')
 		.replace(/&gt;/gi, '>')
 		.replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
-		.replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+		.replace(/&#x([\da-f]+);/gi, (_match, code: string) =>
+			String.fromCodePoint(Number.parseInt(code, 16)),
+		);
 }
 
 function cleanValue(value: string | undefined): string | undefined {
@@ -77,8 +82,10 @@ function normalizeMedia(value: unknown): Record<string, unknown> | undefined {
 	const normalized: Record<string, unknown> = {};
 	if (typeof media.url === 'string') normalized.url = media.url;
 	if (typeof media.proxy_url === 'string') normalized.proxy_url = media.proxy_url;
-	if (typeof media.width === 'number' && Number.isFinite(media.width)) normalized.width = media.width;
-	if (typeof media.height === 'number' && Number.isFinite(media.height)) normalized.height = media.height;
+	if (typeof media.width === 'number' && Number.isFinite(media.width))
+		normalized.width = media.width;
+	if (typeof media.height === 'number' && Number.isFinite(media.height))
+		normalized.height = media.height;
 	return Object.keys(normalized).length ? normalized : undefined;
 }
 
@@ -90,7 +97,8 @@ export function extractUrls(content: string): string[] {
 		if (content[start - 1] === '<' && content[end] === '>') continue;
 
 		let url = match[0].replace(/[.,!;:?]+$/, '');
-		while (url.endsWith(')') && (url.match(/\(/g)?.length ?? 0) < (url.match(/\)/g)?.length ?? 0)) url = url.slice(0, -1);
+		while (url.endsWith(')') && (url.match(/\(/g)?.length ?? 0) < (url.match(/\)/g)?.length ?? 0))
+			url = url.slice(0, -1);
 		if (url) urls.add(url);
 	}
 	return [...urls];
@@ -141,7 +149,8 @@ export function parseOpenGraph(html: string, sourceUrl: string): LinkEmbed | nul
 	if (!title && !metadata.description && !image) return null;
 
 	const embed: LinkEmbed = {
-		type: metadata.type === 'image' && image && !title && !metadata.description ? 'image' : 'article',
+		type:
+			metadata.type === 'image' && image && !title && !metadata.description ? 'image' : 'article',
 		url: sourceUrl,
 	};
 	if (title) embed.title = title;
@@ -154,8 +163,18 @@ export function parseOpenGraph(html: string, sourceUrl: string): LinkEmbed | nul
 export function normalizeDiscordEmbed(value: unknown, url: string): LinkEmbed | null {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
 	const embed = value as Record<string, unknown>;
-	if (typeof embed.type !== 'string' && typeof embed.title !== 'string' && typeof embed.description !== 'string' && !embed.image && !embed.thumbnail && !embed.video) return null;
-	const normalized: Record<string, unknown> = { url: typeof embed.url === 'string' ? embed.url : url };
+	if (
+		typeof embed.type !== 'string' &&
+		typeof embed.title !== 'string' &&
+		typeof embed.description !== 'string' &&
+		!embed.image &&
+		!embed.thumbnail &&
+		!embed.video
+	)
+		return null;
+	const normalized: Record<string, unknown> = {
+		url: typeof embed.url === 'string' ? embed.url : url,
+	};
 	for (const key of EMBED_KEYS) {
 		if (!(key in embed) || key === 'image' || key === 'thumbnail' || key === 'video') continue;
 		normalized[key] = embed[key];
@@ -167,12 +186,15 @@ export function normalizeDiscordEmbed(value: unknown, url: string): LinkEmbed | 
 	return normalized as LinkEmbed;
 }
 
-export async function fetchLinkEmbed(url: string, request?: EmbedRequest | null): Promise<LinkEmbed | null> {
+export async function fetchLinkEmbed(
+	url: string,
+	request?: EmbedRequest | null,
+): Promise<LinkEmbed | null> {
 	if (typeof request?.post === 'function') {
 		try {
 			const result = await request.post({ url: '/unfurler/embed-urls', body: { urls: [url] } });
 			return normalizeDiscordEmbed(result?.body?.embeds?.[0], url);
-		} catch { }
+		} catch {}
 	}
 
 	try {

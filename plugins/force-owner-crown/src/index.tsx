@@ -23,7 +23,9 @@ function getCrownSource(): string | number | null {
 function isGuildOwner(guildId: string | undefined, userId: string | undefined): boolean {
 	if (!guildId || !userId) return false;
 
-	const guilds = metro.findStore('Guild') as { getGuild?: (id: string) => { ownerId?: string } | null };
+	const guilds = metro.findStore('Guild') as {
+		getGuild?: (id: string) => { ownerId?: string } | null;
+	};
 	return guilds?.getGuild?.(guildId)?.ownerId === userId;
 }
 
@@ -50,13 +52,13 @@ export default {
 		unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 			try {
 				applyCrown(ctx.result?.message);
-			} catch { }
+			} catch {}
 		});
 	},
 
 	stop() {
-	unpatch?.();
-	unpatch = null;
-	assetUriResolver = null;
+		unpatch?.();
+		unpatch = null;
+		assetUriResolver = null;
 	},
 };
