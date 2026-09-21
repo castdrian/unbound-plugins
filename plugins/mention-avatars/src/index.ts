@@ -42,8 +42,9 @@ let roles: {
 } | null = null;
 let objc: NativeObjCBridge | null = null;
 let originalTextKey: NativeValue | null = null;
+let messageTextKey: NativeValue | null = null;
 let hookTokens: NativeHookToken[] = [];
-let activeCells = new Set<NativeValue>();
+let activeCells = new Map<string, NativeValue>();
 const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
 
@@ -134,12 +135,21 @@ function messageIDForCell(cell: NativeValue): string | undefined {
 	if (id && objc.respondsTo(id, 'description')) return String(objc.call(id, 'description'));
 }
 
+function cellKey(cell: NativeValue): string | undefined {
+	if (!objc) return;
+	const className = objc.className(cell) ?? '';
+	if (objc.respondsTo(cell, 'hash')) return `${className}:${String(objc.call(cell, 'hash'))}`;
+	if (!objc.respondsTo(cell, 'description')) return;
+	const description = objc.call(cell, 'description');
+	return typeof description === 'string' ? `${className}:${description}` : undefined;
+}
+
 function range(location: number, length: number): NativeValue {
 	return objc?.struct('NSRange', { location, length });
 }
 
-function attribute(original: NativeValue, name: string, index: number): NativeValue {
-	return objc?.call(original, 'attribute:atIndex:effectiveRange:', name, index, null);
+function attributes(original: NativeValue, index: number): NativeValue {
+	return objc?.call(original, 'attributesAtIndex:effectiveRange:', index, null);
 }
 
 function imageForMention(metadata: Mention, color: NativeValue): NativeValue | null {
@@ -165,7 +175,7 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 		imageCache.set(metadata.avatarURL, { image: null, pending });
 		pending.then((image) => {
 			imageCache.set(metadata.avatarURL!, { image });
-			for (const cell of activeCells) renderCell(cell);
+			for (const cell of activeCells.values()) renderCell(cell);
 		});
 	}
 	return null;
@@ -196,6 +206,12 @@ function imageAttachment(image: NativeValue, metadata: Mention, attributes: Nati
 		objc.call(runDelegate, 'setValue:forKey:', ascent, 'ascent');
 		objc.call(runDelegate, 'setValue:forKey:', -descent, 'descent');
 		objc.call(runDelegate, 'setValue:forKey:', leading + size + trailing, 'width');
+		if (objc.respondsTo(runDelegate, 'CTRunDelegate')) {
+			const coreTextRunDelegate = objc.call(runDelegate, 'CTRunDelegate');
+			if (coreTextRunDelegate) {
+				objc.call(result, 'addAttribute:value:range:', 'CTRunDelegate', coreTextRunDelegate, range(0, 1));
+			}
+		}
 	}
 	return result;
 }
@@ -220,12 +236,13 @@ function attributedMention(text: string, metadata: Mention, attributes: NativeVa
 
 function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeValue {
 	if (!objc || mentions.length === 0) return original;
-	const string = objc.call(original, 'string');
-	if (typeof string !== 'string' || string.length === 0) return original;
 	const result = objc.call(original, 'mutableCopy');
+	if (!result) return original;
 	let searchIndex = 0;
 
 	for (const metadata of mentions) {
+		const string = objc.call(result, 'string');
+		if (typeof string !== 'string' || searchIndex >= string.length) continue;
 		let bestIndex = -1;
 		let bestText = '';
 		for (const label of metadata.labels) {
@@ -237,27 +254,24 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 			}
 		}
 		if (bestIndex === -1) continue;
-		const attributes = attribute(original, 'YYTextHighlight', bestIndex);
-		if (!attributes) {
+		const values = attributes(result, bestIndex);
+		if (!values || !values.YYTextHighlight) {
 			searchIndex = bestIndex + bestText.length;
 			continue;
 		}
-		const foreground = attribute(original, 'NSForegroundColor', bestIndex);
-		const font = attribute(original, 'NSFont', bestIndex);
-		const image = imageForMention(metadata, foreground);
+		const image = imageForMention(metadata, values.NSForegroundColor);
 		if (!image) {
 			searchIndex = bestIndex + bestText.length;
 			continue;
 		}
-		const values = { YYTextHighlight: attributes, NSForegroundColor: foreground, NSFont: font };
 		const text = STORE.get('showAtSymbol', true) ? bestText : bestText.slice(1);
 		const replacement = attributedMention(text, metadata, values, image);
-	objc.call(
-		result as NativeObjectHandle,
-		'replaceCharactersInRange:withAttributedString:',
-		range(bestIndex, bestText.length),
-		replacement,
-	);
+		objc.call(
+			result as NativeObjectHandle,
+			'replaceCharactersInRange:withAttributedString:',
+			range(bestIndex, bestText.length),
+			replacement,
+		);
 		searchIndex = bestIndex + asNumber(objc.call(replacement, 'length'));
 	}
 
@@ -276,19 +290,20 @@ function textViewsInView(view: NativeValue): NativeValue[] {
 }
 
 function restoreTextView(view: NativeValue): void {
-	if (!objc || !originalTextKey) return;
+	if (!objc || !originalTextKey || !messageTextKey) return;
 	const original = objc.getAssociatedObject(view, originalTextKey);
-	if (!original) return;
-	objc.call(view, 'setAttributedText:', original);
+	if (original) objc.call(view, 'setAttributedText:', original);
 	objc.setAssociatedObject(view, originalTextKey, null, 'retainNonatomic');
+	objc.setAssociatedObject(view, messageTextKey, null, 'retainNonatomic');
 }
 
-function updateTextView(view: NativeValue, mentions: Mention[]): void {
-	if (!objc || !originalTextKey) return;
-	if (mentions.length === 0) {
+function updateTextView(view: NativeValue, messageID: string | undefined, mentions: Mention[]): void {
+	if (!objc || !originalTextKey || !messageTextKey || !messageID || mentions.length === 0) {
 		restoreTextView(view);
 		return;
 	}
+	const storedMessageID = objc.getAssociatedObject(view, messageTextKey);
+	if (storedMessageID && storedMessageID !== messageID) restoreTextView(view);
 	let original = objc.getAssociatedObject(view, originalTextKey);
 	if (!original) {
 		original = objc.call(view, 'attributedText');
@@ -296,20 +311,25 @@ function updateTextView(view: NativeValue, mentions: Mention[]): void {
 		objc.setAssociatedObject(view, originalTextKey, original, 'retainNonatomic');
 	}
 	const updated = mentionAvatarText(original, mentions);
-	if (updated) objc.call(view, 'setAttributedText:', updated);
+	if (!updated) return;
+	objc.setAssociatedObject(view, messageTextKey, messageID, 'retainNonatomic');
+	const current = objc.call(view, 'attributedText');
+	if (!current || !objc.call(updated, 'isEqual:', current)) objc.call(view, 'setAttributedText:', updated);
 }
 
 function clearCell(cell: NativeValue): void {
 	for (const view of textViewsInView(cell)) restoreTextView(view);
-	activeCells.delete(cell);
+	const key = cellKey(cell);
+	if (key) activeCells.delete(key);
 }
 
 function renderCell(cell: NativeValue): void {
 	if (!objc) return;
-	activeCells.add(cell);
+	const key = cellKey(cell);
+	if (key) activeCells.set(key, cell);
 	const id = messageIDForCell(cell);
 	const mentions = id ? messageMentionIndex.get(id) ?? [] : [];
-	for (const view of textViewsInView(cell)) updateTextView(view, mentions);
+	for (const view of textViewsInView(cell)) updateTextView(view, id, mentions);
 }
 
 function installNativeHooks(): void {
@@ -323,6 +343,7 @@ function start(context?: PluginContext): void {
 	objc = context?.native.objc ?? null;
 	if (!objc) return;
 	originalTextKey = objc.createAssociationKey();
+	messageTextKey = objc.createAssociationKey();
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
 	channels = metro.findByProps('getChannel');
@@ -344,14 +365,15 @@ function stop(): void {
 	unpatch = null;
 	for (const token of hookTokens) token.remove();
 	hookTokens = [];
-	for (const cell of activeCells) clearCell(cell);
-	activeCells = new Set();
+	for (const cell of activeCells.values()) clearCell(cell);
+	activeCells.clear();
 	users = null;
 	members = null;
 	channels = null;
 	roles = null;
 	objc = null;
 	originalTextKey = null;
+	messageTextKey = null;
 	imageCache.clear();
 	messageMentionIndex.clear();
 }
