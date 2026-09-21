@@ -54,7 +54,7 @@ mock.module('@unbound-app/api', () => ({
 	},
 }));
 
-const plugin = await import('./index');
+const plugin = await import('@mention-avatars/index');
 
 afterEach(() => {
 	plugin.default.stop?.();
