@@ -11,6 +11,7 @@
 		"prepare": "git config core.hooksPath .githooks || true",
 		"dev": "ubd dev",
 		"build": "ubd build",
+		"check:native": "bun scripts/check-native-migration.ts",
 		"format": "biome format --write plugins",
 		"format:check": "biome format plugins",
 		"postbuild": "bun scripts/generate-plugins-readme.ts"
