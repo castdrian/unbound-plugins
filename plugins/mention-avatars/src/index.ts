@@ -374,9 +374,15 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 			for (const label of remaining[metadataIndex].metadata.labels) {
 				const mentionText = `@${label}`;
 				const index = highlighted.text.indexOf(mentionText);
-				if (index !== -1 && mentionText.length > bestText.length) {
+				const absoluteIndex = index === -1 ? -1 : highlighted.index + index;
+				if (
+					absoluteIndex !== -1 &&
+					(bestIndex === -1 ||
+						absoluteIndex < bestIndex ||
+						(absoluteIndex === bestIndex && mentionText.length > bestText.length))
+				) {
 					bestMetadataIndex = metadataIndex;
-					bestIndex = highlighted.index + index;
+					bestIndex = absoluteIndex;
 					bestText = mentionText;
 				}
 			}
