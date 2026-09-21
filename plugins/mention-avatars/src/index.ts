@@ -31,12 +31,18 @@ type User = {
 type ImageCacheEntry = {
 	image: NativeValue | null;
 	pending?: Promise<NativeValue | null>;
+	retryAt?: number;
 };
 
 type HighlightedRange = {
 	index: number;
 	length: number;
 	text: string;
+};
+
+type CollectedMentions = {
+	complete: boolean;
+	mentions: Mention[];
 };
 
 type TextViewState = {
@@ -66,8 +72,10 @@ const pendingCells = new Set<string>();
 const pendingCellRefs = new Map<string, NativeValue>();
 const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
+const unresolvedMessageIDs = new Set<string>();
 const textViewStates = new Map<string, TextViewState>();
 let hydratedMessageKey: string | null = null;
+let lifecycleToken = 0;
 
 function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
 	if (!objc) return null;
@@ -134,24 +142,33 @@ function guildIdForMessage(message: any): string | undefined {
 	return channel?.guild_id ?? channel?.guildId;
 }
 
-function collectMentions(message: any): Mention[] {
+function collectMentions(message: any): CollectedMentions {
 	const mentions: Mention[] = [];
+	let complete = true;
 	const guildId = guildIdForMessage(message);
 	const content = message?.content;
-	if (typeof content !== 'string') return mentions;
+	if (typeof content !== 'string') return { complete, mentions };
 
 	for (const match of content.matchAll(/<@!?([0-9]+)>|<@&([0-9]+)>/g)) {
 		const mention = match[1] ? userMention(match[1], guildId) : roleMention(match[2], guildId);
 		if (mention) mentions.push(mention);
+		else complete = false;
 	}
 
-	return mentions;
+	return { complete, mentions };
 }
 
 function addMentions(message: any): boolean {
 	const id = message?.id;
 	if (typeof id !== 'string') return false;
-	const mentions = collectMentions(message);
+	const { complete, mentions } = collectMentions(message);
+	if (!complete) {
+		unresolvedMessageIDs.add(id);
+		if (JSON.stringify(messageMentionIndex.get(id)) === JSON.stringify(mentions)) return false;
+		messageMentionIndex.set(id, mentions);
+		return true;
+	}
+	unresolvedMessageIDs.delete(id);
 	if (JSON.stringify(messageMentionIndex.get(id)) === JSON.stringify(mentions)) return false;
 	messageMentionIndex.set(id, mentions);
 	return true;
@@ -162,7 +179,7 @@ function hydrateMentions(): void {
 	const messages = metro.findStore('Message')?.getMessages?.(channelId)?._array;
 	if (!Array.isArray(messages)) return;
 	const messageKey = `${channelId}:${messages.length}:${messages[messages.length - 1]?.id ?? ''}`;
-	if (messageKey === hydratedMessageKey) return;
+	if (messageKey === hydratedMessageKey && unresolvedMessageIDs.size === 0) return;
 	hydratedMessageKey = messageKey;
 	for (const message of messages) addMentions(message);
 }
@@ -407,7 +424,9 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 
 	const cached = imageCache.get(metadata.avatarURL);
 	if (cached?.image) return cached.image;
+	if (cached?.pending || (cached?.retryAt && cached.retryAt > Date.now())) return null;
 	if (!cached?.pending) {
+		const token = lifecycleToken;
 		const pending = fetch(metadata.avatarURL)
 			.then((response) => (response.ok ? response.arrayBuffer() : null))
 			.then((bytes) => {
@@ -420,7 +439,11 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 			.catch(() => null);
 		imageCache.set(metadata.avatarURL, { image: null, pending });
 		pending.then((image) => {
-			imageCache.set(metadata.avatarURL!, { image, pending: Promise.resolve(image) });
+			if (token !== lifecycleToken || !objc) return;
+			imageCache.set(
+				metadata.avatarURL!,
+				image ? { image } : { image: null, retryAt: Date.now() + 5000 },
+			);
 			for (const cell of activeCells.values()) scheduleCellRender(cell);
 		});
 	}
@@ -682,6 +705,7 @@ function installNativeHooks(): void {
 }
 
 function start(context?: PluginContext): void {
+	lifecycleToken++;
 	objc = context?.native.objc ?? null;
 	if (!objc) return;
 	users = metro.findByProps('getCurrentUser', 'getUser');
@@ -705,6 +729,7 @@ function start(context?: PluginContext): void {
 }
 
 function stop(): void {
+	lifecycleToken++;
 	unpatch?.();
 	unpatch = null;
 	for (const token of hookTokens) token.remove();
@@ -721,6 +746,7 @@ function stop(): void {
 	pendingCells.clear();
 	imageCache.clear();
 	messageMentionIndex.clear();
+	unresolvedMessageIDs.clear();
 	hydratedMessageKey = null;
 }
 
