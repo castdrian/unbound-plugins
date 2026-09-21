@@ -48,6 +48,7 @@ type CollectedMentions = {
 type TextViewState = {
 	messageID: string;
 	original: NativeValue;
+	originalString: string;
 };
 
 let unpatch: (() => void) | null = null;
@@ -184,11 +185,13 @@ function hydrateMentions(): void {
 	for (const message of messages) addMentions(message);
 }
 
-function hydrateMessage(messageID: string | undefined): void {
-	if (!messageID) return;
+function hydrateMessage(messageID: string | undefined): boolean {
+	if (!messageID) return false;
 	const channelId = metro.findByProps('getChannelId')?.getChannelId?.();
 	const message = metro.findStore('Message')?.getMessage?.(channelId, messageID);
-	if (message) addMentions(message);
+	if (!message) return false;
+	addMentions(message);
+	return true;
 }
 
 function asNumber(value: NativeValue): number {
@@ -395,6 +398,18 @@ function attributes(original: NativeValue, index: number): NativeValue {
 	return objc ? nativeCall(original, 'attributesAtIndex:effectiveRange:', index, null) : null;
 }
 
+function attributedStringText(value: NativeValue): string | undefined {
+	if (!objc || !value) return;
+	const string = nativeCall(value, 'string');
+	return typeof string === 'string' ? string : undefined;
+}
+
+function containsMentionText(value: string, mentions: Mention[]): boolean {
+	return mentions.every((metadata) =>
+		metadata.labels.some((label) => value.includes(`@${label}`)),
+	);
+}
+
 function nextHighlightedRange(
 	value: NativeValue,
 	string: string,
@@ -413,6 +428,25 @@ function nextHighlightedRange(
 		return { index, length: end - index, text: string.slice(index, end) };
 	}
 	return null;
+}
+
+function nextMentionRange(
+	value: NativeValue,
+	string: string,
+	start: number,
+	labels: string[],
+): HighlightedRange | null {
+	let fallback: HighlightedRange | null = null;
+	let searchIndex = start;
+	while (searchIndex < string.length) {
+		const highlighted = nextHighlightedRange(value, string, searchIndex);
+		if (!highlighted) return fallback;
+		searchIndex = highlighted.index + highlighted.length;
+		if (!highlighted.text.includes('@')) continue;
+		fallback ??= highlighted;
+		if (labels.some((label) => highlighted.text.includes(`@${label}`))) return highlighted;
+	}
+	return fallback;
 }
 
 function imageForMention(metadata: Mention, color: NativeValue): NativeValue | null {
@@ -528,61 +562,62 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 	const result = nativeCall(original, 'mutableCopy');
 	if (!result) return original;
 	let searchIndex = 0;
-	const remaining = mentions.map((metadata, index) => ({ index, metadata }));
-
-	while (remaining.length > 0) {
+	for (const metadata of mentions) {
 		const string = nativeCall(result, 'string');
 		if (typeof string !== 'string' || searchIndex >= string.length) break;
-		const highlighted = nextHighlightedRange(result, string, searchIndex);
+		const highlighted = nextMentionRange(result, string, searchIndex, metadata.labels);
 		if (!highlighted) break;
-		if (!highlighted.text.includes('@')) {
-			searchIndex = highlighted.index + highlighted.length;
-			continue;
-		}
-		let bestMetadataIndex = -1;
-		let bestIndex = -1;
-		let bestText = '';
-		for (let metadataIndex = 0; metadataIndex < remaining.length; metadataIndex++) {
-			for (const label of remaining[metadataIndex].metadata.labels) {
-				const mentionText = `@${label}`;
-				const index = highlighted.text.indexOf(mentionText);
-				const absoluteIndex = index === -1 ? -1 : highlighted.index + index;
-				if (
-					absoluteIndex !== -1 &&
-					(bestIndex === -1 ||
-						absoluteIndex < bestIndex ||
-						(absoluteIndex === bestIndex && mentionText.length > bestText.length))
-				) {
-					bestMetadataIndex = metadataIndex;
-					bestIndex = absoluteIndex;
-					bestText = mentionText;
-				}
-			}
-		}
-		if (bestIndex === -1) {
-			searchIndex = highlighted.index + highlighted.length;
-			continue;
-		}
-		const [{ metadata }] = remaining.splice(bestMetadataIndex, 1);
-		const values = attributes(result, bestIndex);
+		const atOffset = highlighted.text.indexOf('@');
+		if (atOffset === -1) continue;
+		const matchedLabel = metadata.labels.find((label) =>
+			highlighted.text.includes(`@${label}`),
+		);
+		const fallbackText = highlighted.text.slice(atOffset);
+		const boundary = fallbackText.search(/[\u2068\u2069]/u);
+		const mentionText = matchedLabel
+			? `@${matchedLabel}`
+			: boundary === -1
+				? fallbackText
+				: fallbackText.slice(0, boundary);
+		const mentionIndex = highlighted.index + atOffset;
+		const values = attributes(result, mentionIndex);
 		if (!values?.YYTextHighlight) {
-			searchIndex = bestIndex + bestText.length;
+			searchIndex = mentionIndex + mentionText.length;
 			continue;
 		}
 		const image = imageForMention(metadata, values.NSColor);
 		if (!image) {
-			searchIndex = bestIndex + bestText.length;
+			searchIndex = mentionIndex + mentionText.length;
 			continue;
 		}
-		const text = STORE.get('showAtSymbol', true) ? bestText : bestText.slice(1);
+		const label = matchedLabel ?? metadata.labels[0] ?? mentionText.slice(1);
+		const text = STORE.get('showAtSymbol', true) ? `@${label}` : label;
+		let replacementIndex = mentionIndex;
+		let replacementLength = mentionText.length;
+		while (
+			replacementIndex > highlighted.index &&
+			string[replacementIndex - 1] === MENTION_PLACEHOLDER &&
+			attributes(result, replacementIndex - 1)?.YYTextAttachment
+		) {
+			replacementIndex--;
+			replacementLength++;
+		}
+		let replacementEnd = mentionIndex + mentionText.length;
+		while (
+			string[replacementEnd] === MENTION_PLACEHOLDER &&
+			attributes(result, replacementEnd)?.YYTextAttachment
+		) {
+			replacementEnd++;
+			replacementLength++;
+		}
 		const replacement = attributedMention(text, metadata, values, image);
 		nativeCall(
 			result as NativeObjectHandle,
 			'replaceCharactersInRange:withAttributedString:',
-			range(bestIndex, bestText.length),
+			range(replacementIndex, replacementLength),
 			replacement,
 		);
-		searchIndex = bestIndex + asNumber(nativeCall(replacement, 'length'));
+		searchIndex = replacementIndex + asNumber(nativeCall(replacement, 'length'));
 	}
 
 	return result;
@@ -610,7 +645,10 @@ function restoreTextView(view: NativeValue): void {
 	if (!key) return;
 	const state = textViewStates.get(key);
 	if (!state) return;
-	nativeCall(view, 'setAttributedText:', state.original);
+	const current = nativeCall(view, 'attributedText');
+	const currentString = attributedStringText(current);
+	if (currentString?.includes(MENTION_PLACEHOLDER))
+		nativeCall(view, 'setAttributedText:', state.original);
 	textViewStates.delete(key);
 }
 
@@ -619,23 +657,47 @@ function updateTextView(
 	messageID: string | undefined,
 	mentions: Mention[],
 ): boolean {
-	if (!objc || !messageID || mentions.length === 0) {
+	if (!objc || !messageID) {
 		restoreTextView(view);
 		return false;
 	}
 	const key = viewKey(view);
 	if (!key) return false;
+	const current = nativeCall(view, 'attributedText');
+	const currentString = attributedStringText(current);
+	if (!current || !currentString) return false;
 	const storedState = textViewStates.get(key);
-	if (storedState?.messageID && storedState.messageID !== messageID) restoreTextView(view);
-	let original = textViewStates.get(key)?.original;
+	if (storedState?.messageID && storedState.messageID !== messageID) {
+		textViewStates.delete(key);
+	}
+	if (mentions.length === 0) {
+		restoreTextView(view);
+		return false;
+	}
+	const currentState = textViewStates.get(key);
+	let original = currentState?.original;
+	let originalString = currentState?.originalString;
+	if (
+		currentState &&
+		!currentString.includes(MENTION_PLACEHOLDER) &&
+		(currentString !== currentState.originalString ||
+			!containsMentionText(currentState.originalString, mentions)) &&
+		containsMentionText(currentString, mentions)
+	) {
+		original = current;
+		originalString = currentString;
+	}
 	if (!original) {
-		original = nativeCall(view, 'attributedText');
-		if (!original || asNumber(nativeCall(original, 'length')) === 0) return false;
+		original = current;
+		originalString = currentString;
 	}
 	const updated = mentionAvatarText(original, mentions);
 	if (!updated) return false;
-	textViewStates.set(key, { messageID, original });
-	const current = nativeCall(view, 'attributedText');
+	textViewStates.set(key, {
+		messageID,
+		original,
+		originalString: originalString ?? currentString,
+	});
 	if (current && nativeCall(updated, 'isEqual:', current)) return false;
 	nativeCall(view, 'setAttributedText:', updated);
 	return true;
@@ -643,6 +705,14 @@ function updateTextView(
 
 function clearCell(cell: NativeValue): void {
 	for (const view of textViewsInView(cell)) restoreTextView(view);
+	resetCell(cell);
+}
+
+function resetCell(cell: NativeValue): void {
+	for (const view of textViewsInView(cell)) {
+		const key = viewKey(view);
+		if (key) textViewStates.delete(key);
+	}
 	const key = cellKey(cell);
 	if (key) {
 		activeCells.delete(key);
@@ -651,19 +721,25 @@ function clearCell(cell: NativeValue): void {
 	}
 }
 
-function renderCell(cell: NativeValue): void {
-	if (!objc) return;
+function renderCell(cell: NativeValue): boolean {
+	if (!objc) return false;
 	hydrateMentions();
 	const key = cellKey(cell);
 	if (key) activeCells.set(key, cell);
 	const id = messageIDForCell(cell);
-	hydrateMessage(id);
+	const messageHydrated = hydrateMessage(id);
 	const mentions = id ? (messageMentionIndex.get(id) ?? []) : [];
 	const views = textViewsInView(cell);
-	for (const view of views) updateTextView(view, id, mentions);
+	let changed = false;
+	for (const view of views) {
+		const viewChanged = updateTextView(view, id, mentions);
+		changed ||= viewChanged;
+	}
+	if (changed) nativeCall(cell, 'setNeedsLayout');
+	return Boolean(id && (!messageHydrated || unresolvedMessageIDs.has(id) || mentions.length > 0));
 }
 
-function scheduleCellRender(cell: NativeValue): void {
+function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {
 	if (!objc) return;
 	const key = cellKey(cell);
 	if (!key || pendingCells.has(key)) return;
@@ -675,7 +751,11 @@ function scheduleCellRender(cell: NativeValue): void {
 		const retainedCell = pendingCellRefs.get(key);
 		pendingCellRefs.delete(key);
 		if (objc !== bridge) return;
-		if (retainedCell) renderCell(retainedCell);
+		if (!retainedCell) return;
+		const retry = renderCell(retainedCell);
+		if (retry && attempt < 12) {
+			setTimeout(() => scheduleCellRender(retainedCell, attempt + 1), 100);
+		}
 	}, 0);
 }
 
@@ -699,7 +779,10 @@ function installNativeHooks(): void {
 		after: ({ self }) => scheduleCellRender(self),
 	});
 	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
-		after: ({ self }) => clearCell(self),
+		after: ({ self }) => {
+			resetCell(self);
+			scheduleCellRender(self);
+		},
 	});
 	hookTokens = [lifecycle, layout, reuse];
 }
