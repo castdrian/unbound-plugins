@@ -9,6 +9,38 @@ import { swc } from 'rollup-plugin-swc3';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
+function resolveMentionAvatarsModule(source) {
+	if (!source.startsWith('@mention-avatars/')) return null;
+
+	const candidate = resolve(pluginRoot, 'src', source.replace(/^@mention-avatars\//, ''));
+	const search = [
+		candidate,
+		`${candidate}.ts`,
+		`${candidate}.tsx`,
+		`${candidate}.js`,
+		`${candidate}.mjs`,
+		`${candidate}.json`,
+		resolve(candidate, 'index.ts'),
+		resolve(candidate, 'index.tsx'),
+		resolve(candidate, 'index.js'),
+	];
+
+	for (const file of search) {
+		if (existsSync(file)) return file;
+	}
+
+	return null;
+}
+
+function mentionAvatarsAlias() {
+	return {
+		name: 'mention-avatars-alias',
+		resolveId(source) {
+			return resolveMentionAvatarsModule(source);
+		},
+	};
+}
+
 function manifestToDist() {
 	return {
 		name: 'manifest-to-dist',
@@ -50,5 +82,13 @@ export default {
 		globals: { '@unbound-app/api': 'window.unbound' },
 	},
 	external: ['@unbound-app/api'],
-	plugins: [nodeResolve(), json(), swc({ jsc: { parser: { syntax: 'typescript' }, target: 'es2022' } }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
+	plugins: [
+		mentionAvatarsAlias(),
+		nodeResolve(),
+		json(),
+		swc({ jsc: { parser: { syntax: 'typescript' }, target: 'es2022' } }),
+		iife(),
+		hermesExpressionEntrypoint(),
+		manifestToDist(),
+	],
 };

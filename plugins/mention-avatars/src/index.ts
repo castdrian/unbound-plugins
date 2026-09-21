@@ -6,6 +6,7 @@ import type {
 } from '@unbound-app/api/native';
 import { metro, patcher, storage } from '@unbound-app/api';
 
+import type { ImageCacheEntry, Mention } from '@mention-avatars/logic';
 import {
 	cellRenderDecision,
 	containsMentionText,
@@ -14,8 +15,7 @@ import {
 	mentionImageMetrics,
 	roleImageSource,
 	selectMentionLabel,
-} from './logic';
-import type { ImageCacheEntry, Mention } from './logic';
+} from '@mention-avatars/logic';
 
 const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);

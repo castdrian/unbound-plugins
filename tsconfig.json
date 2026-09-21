@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@mention-avatars/*": [
+				"plugins/mention-avatars/src/*"
+			],
 			"@translate/*": [
 				"plugins/translate/src/*"
 			],
