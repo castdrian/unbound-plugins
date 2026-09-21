@@ -9,7 +9,7 @@ import { metro, patcher, storage } from '@unbound-app/api';
 const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);
 const MENTION_PLACEHOLDER = '\uFFFC';
-const ROLE_IMAGE_NAME = 'person.2';
+const ROLE_IMAGE_NAME = 'person.2.fill';
 
 type NativeValue = any;
 
@@ -32,6 +32,12 @@ type ImageCacheEntry = {
 	pending?: Promise<NativeValue | null>;
 };
 
+type HighlightedRange = {
+	index: number;
+	length: number;
+	text: string;
+};
+
 let unpatch: (() => void) | null = null;
 let users: { getUser?: (id: string) => User | undefined } | null = null;
 let members: { getMember?: (guildId: string, userId: string) => { nick?: string } | undefined } | null = null;
@@ -43,13 +49,17 @@ let roles: {
 let objc: NativeObjCBridge | null = null;
 let originalTextKey: NativeValue | null = null;
 let messageTextKey: NativeValue | null = null;
+let pendingRenderKey: NativeValue | null = null;
 let hookTokens: NativeHookToken[] = [];
 let activeCells = new Map<string, NativeValue>();
+const pendingCells = new Set<string>();
 const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
 
 function pngURL(url: string): string {
-	return url.replace(/\.webp(?=\?|$)/, '.png');
+	const png = url.replace(/\.webp(?=\?|$)/, '.png');
+	if (/[?&]size=\d+/.test(png)) return png.replace(/([?&]size=)\d+/, (_, prefix: string) => `${prefix}32`);
+	return `${png}${png.includes('?') ? '&' : '?'}size=32`;
 }
 
 function userAvatarURL(user: User, guildId?: string): string | undefined {
@@ -124,6 +134,97 @@ function asNumber(value: NativeValue): number {
 	return typeof value === 'number' ? value : Number(value) || 0;
 }
 
+function roleImage(color: NativeValue): NativeValue | null {
+	if (!objc) return null;
+	const imageClass = objc.getClass('UIImage');
+	const image = imageClass ? objc.call(imageClass, 'systemImageNamed:', ROLE_IMAGE_NAME) : null;
+	if (!image) return null;
+	const colorClass = objc.getClass('UIColor');
+	const tint = color ?? (colorClass ? objc.call(colorClass, 'labelColor') : null);
+	if (!tint || !objc.respondsTo(image, 'imageWithTintColor:')) return image;
+	const tinted = objc.call(image, 'imageWithTintColor:', tint) ?? image;
+	const ciImageClass = objc.getClass('CIImage');
+	const ciColorClass = objc.getClass('CIColor');
+	const contextClass = objc.getClass('CIContext');
+	const filterClass = objc.getClass('CIFilter');
+	const vectorClass = objc.getClass('CIVector');
+	const sourceCGImage = objc.call(image, 'CGImage');
+	const cgColor = objc.call(tint, 'CGColor');
+	if (!ciImageClass || !ciColorClass || !contextClass || !filterClass || !vectorClass || !sourceCGImage || !cgColor) {
+		return tinted;
+	}
+	const source = objc.call(ciImageClass, 'imageWithCGImage:', sourceCGImage);
+	const ciColor = objc.call(ciColorClass, 'colorWithCGColor:', cgColor);
+	const matrix = objc.call(filterClass, 'filterWithName:', 'CIColorMatrix');
+	if (!source || !ciColor || !matrix) return tinted;
+	const zero = objc.call(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 0);
+	const alpha = objc.call(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 1);
+	const bias = objc.call(
+		vectorClass,
+		'vectorWithX:Y:Z:W:',
+		asNumber(objc.call(ciColor, 'red')),
+		asNumber(objc.call(ciColor, 'green')),
+		asNumber(objc.call(ciColor, 'blue')),
+		0,
+	);
+	if (!zero || !alpha || !bias) return tinted;
+	objc.call(matrix, 'setValue:forKey:', source, 'inputImage');
+	objc.call(matrix, 'setValue:forKey:', zero, 'inputRVector');
+	objc.call(matrix, 'setValue:forKey:', zero, 'inputGVector');
+	objc.call(matrix, 'setValue:forKey:', zero, 'inputBVector');
+	objc.call(matrix, 'setValue:forKey:', alpha, 'inputAVector');
+	objc.call(matrix, 'setValue:forKey:', bias, 'inputBiasVector');
+	const output = objc.call(matrix, 'outputImage');
+	const context = objc.call(contextClass, 'contextWithOptions:', null);
+	const rect = objc.struct('CGRect', {
+		origin: { x: 0, y: 0 },
+		size: { width: 32, height: 32 },
+	});
+	const cgImage = output && context && objc.call(context, 'createCGImage:fromRect:', output, rect);
+	if (!cgImage) return tinted;
+	return objc.call(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, 0) ?? tinted;
+}
+
+function roundedImage(image: NativeValue): NativeValue | null {
+	if (!objc || !image) return image;
+	const imageClass = objc.getClass('UIImage');
+	const ciImageClass = objc.getClass('CIImage');
+	const contextClass = objc.getClass('CIContext');
+	const filterClass = objc.getClass('CIFilter');
+	const colorClass = objc.getClass('CIColor');
+	const vectorClass = objc.getClass('CIVector');
+	if (!imageClass || !ciImageClass || !contextClass || !filterClass || !colorClass || !vectorClass) return image;
+	const sourceCGImage = objc.call(image, 'CGImage');
+	if (!sourceCGImage) return image;
+	const source = objc.call(ciImageClass, 'imageWithCGImage:', sourceCGImage);
+	const mask = objc.call(filterClass, 'filterWithName:', 'CIRadialGradient');
+	if (!source || !mask) return image;
+	const white = objc.call(colorClass, 'colorWithRed:green:blue:alpha:', 1, 1, 1, 1);
+	const clear = objc.call(colorClass, 'colorWithRed:green:blue:alpha:', 0, 0, 0, 0);
+	const center = objc.call(vectorClass, 'vectorWithX:Y:', 16, 16);
+	if (!white || !clear || !center) return image;
+	objc.call(mask, 'setValue:forKey:', center, 'inputCenter');
+	objc.call(mask, 'setValue:forKey:', 15.5, 'inputRadius0');
+	objc.call(mask, 'setValue:forKey:', 16, 'inputRadius1');
+	objc.call(mask, 'setValue:forKey:', white, 'inputColor0');
+	objc.call(mask, 'setValue:forKey:', clear, 'inputColor1');
+	const maskImage = objc.call(mask, 'outputImage');
+	const blend = objc.call(filterClass, 'filterWithName:', 'CIBlendWithMask');
+	if (!maskImage || !blend) return image;
+	objc.call(blend, 'setValue:forKey:', source, 'inputImage');
+	objc.call(blend, 'setValue:forKey:', maskImage, 'inputMaskImage');
+	const output = objc.call(blend, 'outputImage');
+	if (!output) return image;
+	const rect = objc.struct('CGRect', {
+		origin: { x: 0, y: 0 },
+		size: { width: 32, height: 32 },
+	});
+	const context = objc.call(contextClass, 'contextWithOptions:', null);
+	const cgImage = context && objc.call(context, 'createCGImage:fromRect:', output, rect);
+	if (!cgImage) return image;
+	return objc.call(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, objc.call(image, 'imageOrientation') ?? 0) ?? image;
+}
+
 function messageIDForCell(cell: NativeValue): string | undefined {
 	if (!objc) return;
 	const viewModel = objc.getIvar(cell, 'viewModel');
@@ -152,12 +253,27 @@ function attributes(original: NativeValue, index: number): NativeValue {
 	return objc?.call(original, 'attributesAtIndex:effectiveRange:', index, null);
 }
 
+function nextHighlightedRange(value: NativeValue, string: string, start: number): HighlightedRange | null {
+	if (!objc) return null;
+	for (let index = start; index < string.length; index++) {
+		const values = attributes(value, index);
+		if (!values?.YYTextHighlight) continue;
+		let end = index + 1;
+		while (end < string.length) {
+			const nextValues = attributes(value, end);
+			if (!nextValues?.YYTextHighlight) break;
+			end++;
+		}
+		return { index, length: end - index, text: string.slice(index, end) };
+	}
+	return null;
+}
+
 function imageForMention(metadata: Mention, color: NativeValue): NativeValue | null {
 	if (!objc) return null;
 	if (!metadata.avatarURL) {
 		if (metadata.type !== 'role') return null;
-		const imageClass = objc.getClass('UIImage');
-		return imageClass ? objc.call(imageClass, 'systemImageNamed:', ROLE_IMAGE_NAME) : null;
+		return roleImage(color);
 	}
 
 	const cached = imageCache.get(metadata.avatarURL);
@@ -169,13 +285,14 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 				if (!bytes || !objc) return null;
 				const data = objc.data(bytes);
 				const imageClass = objc.getClass('UIImage');
-				return imageClass ? objc.call(imageClass, 'imageWithData:', data) : null;
+				const image = imageClass ? objc.call(imageClass, 'imageWithData:', data) : null;
+				return image ? roundedImage(image) : null;
 			})
 			.catch(() => null);
 		imageCache.set(metadata.avatarURL, { image: null, pending });
 		pending.then((image) => {
 			imageCache.set(metadata.avatarURL!, { image });
-			for (const cell of activeCells.values()) renderCell(cell);
+			for (const cell of activeCells.values()) scheduleCellRender(cell);
 		});
 	}
 	return null;
@@ -239,29 +356,44 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 	const result = objc.call(original, 'mutableCopy');
 	if (!result) return original;
 	let searchIndex = 0;
+	const remaining = mentions.map((metadata, index) => ({ index, metadata }));
 
-	for (const metadata of mentions) {
+	while (remaining.length > 0) {
 		const string = objc.call(result, 'string');
-		if (typeof string !== 'string' || searchIndex >= string.length) continue;
-		let bestIndex = -1;
-		let bestText = '';
-		for (const label of metadata.labels) {
-			const mentionText = `@${label}`;
-			const index = string.indexOf(mentionText, searchIndex);
-			if (index !== -1 && (bestIndex === -1 || index < bestIndex)) {
-				bestIndex = index;
-				bestText = mentionText;
-			}
-		}
-		if (bestIndex === -1) continue;
-		const values = attributes(result, bestIndex);
-		if (!values || !values.YYTextHighlight) {
-			searchIndex = bestIndex + bestText.length;
+		if (typeof string !== 'string' || searchIndex >= string.length) break;
+		const highlighted = nextHighlightedRange(result, string, searchIndex);
+		if (!highlighted) break;
+		if (!highlighted.text.includes('@')) {
+			searchIndex = highlighted.index + highlighted.length;
 			continue;
 		}
-		const image = imageForMention(metadata, values.NSForegroundColor);
+		let bestMetadataIndex = -1;
+		let bestIndex = -1;
+		let bestText = '';
+		for (let metadataIndex = 0; metadataIndex < remaining.length; metadataIndex++) {
+			for (const label of remaining[metadataIndex].metadata.labels) {
+				const mentionText = `@${label}`;
+				const index = highlighted.text.indexOf(mentionText);
+				if (index !== -1 && mentionText.length > bestText.length) {
+					bestMetadataIndex = metadataIndex;
+					bestIndex = highlighted.index + index;
+					bestText = mentionText;
+				}
+			}
+		}
+		if (bestIndex === -1) {
+			searchIndex = highlighted.index + highlighted.length;
+			continue;
+		}
+		const [{ metadata }] = remaining.splice(bestMetadataIndex, 1);
+		const values = attributes(result, bestIndex);
+		if (!values?.YYTextHighlight) {
+			searchIndex = highlighted.index + highlighted.length;
+			continue;
+		}
+		const image = imageForMention(metadata, values.NSColor);
 		if (!image) {
-			searchIndex = bestIndex + bestText.length;
+			searchIndex = highlighted.index + highlighted.length;
 			continue;
 		}
 		const text = STORE.get('showAtSymbol', true) ? bestText : bestText.slice(1);
@@ -297,30 +429,37 @@ function restoreTextView(view: NativeValue): void {
 	objc.setAssociatedObject(view, messageTextKey, null, 'retainNonatomic');
 }
 
-function updateTextView(view: NativeValue, messageID: string | undefined, mentions: Mention[]): void {
+function updateTextView(view: NativeValue, messageID: string | undefined, mentions: Mention[]): boolean {
 	if (!objc || !originalTextKey || !messageTextKey || !messageID || mentions.length === 0) {
 		restoreTextView(view);
-		return;
+		return false;
 	}
 	const storedMessageID = objc.getAssociatedObject(view, messageTextKey);
 	if (storedMessageID && storedMessageID !== messageID) restoreTextView(view);
 	let original = objc.getAssociatedObject(view, originalTextKey);
 	if (!original) {
 		original = objc.call(view, 'attributedText');
-		if (!original || asNumber(objc.call(original, 'length')) === 0) return;
+		if (!original || asNumber(objc.call(original, 'length')) === 0) return false;
 		objc.setAssociatedObject(view, originalTextKey, original, 'retainNonatomic');
 	}
 	const updated = mentionAvatarText(original, mentions);
-	if (!updated) return;
+	if (!updated) return false;
 	objc.setAssociatedObject(view, messageTextKey, messageID, 'retainNonatomic');
 	const current = objc.call(view, 'attributedText');
-	if (!current || !objc.call(updated, 'isEqual:', current)) objc.call(view, 'setAttributedText:', updated);
+	if (current && objc.call(updated, 'isEqual:', current)) return false;
+	objc.call(view, 'setAttributedText:', updated);
+	return true;
 }
 
 function clearCell(cell: NativeValue): void {
 	for (const view of textViewsInView(cell)) restoreTextView(view);
+	if (objc) objc.call(cell, 'setNeedsLayout');
 	const key = cellKey(cell);
-	if (key) activeCells.delete(key);
+	if (key) {
+		activeCells.delete(key);
+		pendingCells.delete(key);
+	}
+	if (objc && pendingRenderKey) objc.setAssociatedObject(cell, pendingRenderKey, null, 'retainNonatomic');
 }
 
 function renderCell(cell: NativeValue): void {
@@ -329,14 +468,38 @@ function renderCell(cell: NativeValue): void {
 	if (key) activeCells.set(key, cell);
 	const id = messageIDForCell(cell);
 	const mentions = id ? messageMentionIndex.get(id) ?? [] : [];
-	for (const view of textViewsInView(cell)) updateTextView(view, id, mentions);
+	let changed = false;
+	for (const view of textViewsInView(cell)) changed ||= updateTextView(view, id, mentions);
+	if (changed) objc.call(cell, 'setNeedsLayout');
+}
+
+function scheduleCellRender(cell: NativeValue): void {
+	if (!objc || !pendingRenderKey) return;
+	const key = cellKey(cell);
+	if (!key || pendingCells.has(key)) return;
+	const bridge = objc;
+	const associationKey = pendingRenderKey;
+	pendingCells.add(key);
+	bridge.setAssociatedObject(cell, associationKey, cell, 'retainNonatomic');
+	setTimeout(() => {
+		pendingCells.delete(key);
+		if (objc !== bridge) return;
+		const retainedCell = bridge.getAssociatedObject(cell, associationKey) ?? cell;
+		bridge.setAssociatedObject(cell, associationKey, null, 'retainNonatomic');
+		renderCell(retainedCell);
+	}, 0);
 }
 
 function installNativeHooks(): void {
 	if (!objc) return;
-	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', { after: ({ self }) => renderCell(self) });
+	const lifecycle = objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
+		after: ({ self }) => scheduleCellRender(self),
+	});
+	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
+		after: ({ self }) => scheduleCellRender(self),
+	});
 	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', { after: ({ self }) => clearCell(self) });
-	hookTokens = [layout, reuse];
+	hookTokens = [lifecycle, layout, reuse];
 }
 
 function start(context?: PluginContext): void {
@@ -344,6 +507,7 @@ function start(context?: PluginContext): void {
 	if (!objc) return;
 	originalTextKey = objc.createAssociationKey();
 	messageTextKey = objc.createAssociationKey();
+	pendingRenderKey = objc.createAssociationKey();
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
 	channels = metro.findByProps('getChannel');
@@ -374,6 +538,8 @@ function stop(): void {
 	objc = null;
 	originalTextKey = null;
 	messageTextKey = null;
+	pendingRenderKey = null;
+	pendingCells.clear();
 	imageCache.clear();
 	messageMentionIndex.clear();
 }
