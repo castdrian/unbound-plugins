@@ -8,7 +8,7 @@ import {
 	mentionImageMetrics,
 	roleImageSource,
 	selectMentionLabel,
-} from '@mention-avatars/logic';
+} from '@mention-avatars/index';
 
 describe('mention token matching', () => {
 	test('preserves message order for adjacent user and role mentions', () => {
