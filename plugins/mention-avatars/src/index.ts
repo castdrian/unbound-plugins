@@ -16,6 +16,7 @@ type NativeValue = any;
 type Mention = {
 	avatarURL?: string;
 	labels: string[];
+	roleColor?: number;
 	type: 'role' | 'user';
 };
 
@@ -38,34 +39,57 @@ type HighlightedRange = {
 	text: string;
 };
 
+type TextViewState = {
+	messageID: string;
+	original: NativeValue;
+};
+
 let unpatch: (() => void) | null = null;
 let users: { getUser?: (id: string) => User | undefined } | null = null;
-let members: { getMember?: (guildId: string, userId: string) => { nick?: string } | undefined } | null = null;
-let channels: { getChannel?: (channelId: string) => { guild_id?: string; guildId?: string } | undefined } | null = null;
+let members: {
+	getMember?: (guildId: string, userId: string) => { nick?: string } | undefined;
+} | null = null;
+let channels: {
+	getChannel?: (channelId: string) => { guild_id?: string; guildId?: string } | undefined;
+} | null = null;
 let roles: {
-	getRole?: (guildId: string, roleId: string) => { icon?: string | null; id: string; name?: string } | undefined;
+	getRole?: (
+		guildId: string,
+		roleId: string,
+	) => { color?: number; icon?: string | null; id: string; name?: string } | undefined;
 	getSortedRoles?: (guildId: string) => unknown[];
 } | null = null;
 let objc: NativeObjCBridge | null = null;
-let originalTextKey: NativeValue | null = null;
-let messageTextKey: NativeValue | null = null;
-let pendingRenderKey: NativeValue | null = null;
 let hookTokens: NativeHookToken[] = [];
 let activeCells = new Map<string, NativeValue>();
 const pendingCells = new Set<string>();
+const pendingCellRefs = new Map<string, NativeValue>();
 const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
+const textViewStates = new Map<string, TextViewState>();
+let hydratedMessageKey: string | null = null;
+
+function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
+	if (!objc) return null;
+	try {
+		return objc.invoke(handle, selector, args, { thread: 'main' });
+	} catch {
+		return null;
+	}
+}
 
 function pngURL(url: string): string {
 	const png = url.replace(/\.webp(?=\?|$)/, '.png');
-	if (/[?&]size=\d+/.test(png)) return png.replace(/([?&]size=)\d+/, (_, prefix: string) => `${prefix}32`);
+	if (/[?&]size=\d+/.test(png))
+		return png.replace(/([?&]size=)\d+/, (_, prefix: string) => `${prefix}32`);
 	return `${png}${png.includes('?') ? '&' : '?'}size=32`;
 }
 
 function userAvatarURL(user: User, guildId?: string): string | undefined {
 	const resolved = user.getAvatarURL?.(guildId ?? null, 32, false);
 	if (resolved) return pngURL(resolved);
-	if (user.avatar) return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`;
+	if (user.avatar)
+		return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`;
 	return undefined;
 }
 
@@ -73,22 +97,33 @@ function userMention(userId: string, guildId?: string): Mention | undefined {
 	const user = users?.getUser?.(userId);
 	if (!user) return;
 
-	const labels = [members?.getMember?.(guildId ?? '', userId)?.nick, user.globalName, user.username].filter(
-		(label): label is string => Boolean(label),
-	);
+	const labels = [
+		members?.getMember?.(guildId ?? '', userId)?.nick,
+		user.globalName,
+		user.username,
+	].filter((label): label is string => Boolean(label));
 	if (labels.length === 0) return;
 	return { avatarURL: userAvatarURL(user, guildId), labels: [...new Set(labels)], type: 'user' };
 }
 
 function roleMention(roleId: string, guildId?: string): Mention | undefined {
 	if (!guildId) return;
-	const role = roles?.getRole?.(guildId, roleId);
+	const role =
+		roles?.getRole?.(guildId, roleId) ??
+		(roles?.getSortedRoles?.(guildId)?.find((candidate: any) => candidate?.id === roleId) as
+			| { color?: number; icon?: string | null; id: string; name?: string }
+			| undefined);
 	if (!role?.name) return;
 
 	const avatarURL = role.icon
 		? `https://cdn.discordapp.com/role-icons/${role.id}/${role.icon}.png?size=32&quality=lossless`
 		: undefined;
-	return { avatarURL, labels: [role.name], type: 'role' };
+	return {
+		avatarURL,
+		labels: [role.name],
+		roleColor: typeof role.color === 'number' && role.color > 0 ? role.color : undefined,
+		type: 'role',
+	};
 }
 
 function guildIdForMessage(message: any): string | undefined {
@@ -126,7 +161,17 @@ function hydrateMentions(): void {
 	const channelId = metro.findByProps('getChannelId')?.getChannelId?.();
 	const messages = metro.findStore('Message')?.getMessages?.(channelId)?._array;
 	if (!Array.isArray(messages)) return;
+	const messageKey = `${channelId}:${messages.length}:${messages[messages.length - 1]?.id ?? ''}`;
+	if (messageKey === hydratedMessageKey) return;
+	hydratedMessageKey = messageKey;
 	for (const message of messages) addMentions(message);
+}
+
+function hydrateMessage(messageID: string | undefined): void {
+	if (!messageID) return;
+	const channelId = metro.findByProps('getChannelId')?.getChannelId?.();
+	const message = metro.findStore('Message')?.getMessage?.(channelId, messageID);
+	if (message) addMentions(message);
 }
 
 function asNumber(value: NativeValue): number {
@@ -134,55 +179,119 @@ function asNumber(value: NativeValue): number {
 	return typeof value === 'number' ? value : Number(value) || 0;
 }
 
-function roleImage(color: NativeValue): NativeValue | null {
+function roleColor(value: number | undefined): NativeValue | null {
+	if (!objc || value === undefined || value <= 0) return null;
+	const colorClass = objc.getClass('UIColor');
+	if (!colorClass) return null;
+	return nativeCall(
+		colorClass,
+		'colorWithRed:green:blue:alpha:',
+		((value >> 16) & 0xff) / 255,
+		((value >> 8) & 0xff) / 255,
+		(value & 0xff) / 255,
+		1,
+	);
+}
+
+function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 	if (!objc) return null;
 	const imageClass = objc.getClass('UIImage');
-	const image = imageClass ? objc.call(imageClass, 'systemImageNamed:', ROLE_IMAGE_NAME) : null;
+	const configurationClass = objc.getClass('UIImageSymbolConfiguration');
+	const configuration = configurationClass
+		? nativeCall(configurationClass, 'configurationWithPointSize:weight:scale:', 11, 0, 1)
+		: null;
+	const image = imageClass
+		? configuration && objc.respondsTo(imageClass, 'systemImageNamed:withConfiguration:')
+			? nativeCall(
+					imageClass,
+					'systemImageNamed:withConfiguration:',
+					ROLE_IMAGE_NAME,
+					configuration,
+				)
+			: nativeCall(imageClass, 'systemImageNamed:', ROLE_IMAGE_NAME)
+		: null;
 	if (!image) return null;
 	const colorClass = objc.getClass('UIColor');
-	const tint = color ?? (colorClass ? objc.call(colorClass, 'labelColor') : null);
+	const tint =
+		roleColor(metadata.roleColor) ??
+		color ??
+		(colorClass ? nativeCall(colorClass, 'labelColor') : null);
 	if (!tint || !objc.respondsTo(image, 'imageWithTintColor:')) return image;
-	const tinted = objc.call(image, 'imageWithTintColor:', tint) ?? image;
 	const ciImageClass = objc.getClass('CIImage');
 	const ciColorClass = objc.getClass('CIColor');
 	const contextClass = objc.getClass('CIContext');
 	const filterClass = objc.getClass('CIFilter');
 	const vectorClass = objc.getClass('CIVector');
-	const sourceCGImage = objc.call(image, 'CGImage');
-	const cgColor = objc.call(tint, 'CGColor');
-	if (!ciImageClass || !ciColorClass || !contextClass || !filterClass || !vectorClass || !sourceCGImage || !cgColor) {
-		return tinted;
+	const sourceCGImage = nativeCall(image, 'CGImage');
+	const cgColor = nativeCall(tint, 'CGColor');
+	if (
+		ciImageClass &&
+		ciColorClass &&
+		contextClass &&
+		filterClass &&
+		vectorClass &&
+		sourceCGImage &&
+		cgColor
+	) {
+		const source = nativeCall(ciImageClass, 'imageWithCGImage:', sourceCGImage);
+		const ciColor = nativeCall(ciColorClass, 'colorWithCGColor:', cgColor);
+		const matrix = nativeCall(filterClass, 'filterWithName:', 'CIColorMatrix');
+		if (source && ciColor && matrix) {
+			const zero = nativeCall(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 0);
+			const alpha = nativeCall(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 1);
+			const bias = nativeCall(
+				vectorClass,
+				'vectorWithX:Y:Z:W:',
+				asNumber(nativeCall(ciColor, 'red')),
+				asNumber(nativeCall(ciColor, 'green')),
+				asNumber(nativeCall(ciColor, 'blue')),
+				0,
+			);
+			if (zero && alpha && bias) {
+				nativeCall(matrix, 'setValue:forKey:', source, 'inputImage');
+				nativeCall(matrix, 'setValue:forKey:', zero, 'inputRVector');
+				nativeCall(matrix, 'setValue:forKey:', zero, 'inputGVector');
+				nativeCall(matrix, 'setValue:forKey:', zero, 'inputBVector');
+				nativeCall(matrix, 'setValue:forKey:', alpha, 'inputAVector');
+				nativeCall(matrix, 'setValue:forKey:', bias, 'inputBiasVector');
+				const output = nativeCall(matrix, 'outputImage');
+				const transform = objc.struct('CGAffineTransform', {
+					a: 1,
+					b: 0,
+					c: 0,
+					d: 1,
+					tx: 9,
+					ty: 10.75,
+				});
+				const centered = output
+					? nativeCall(output, 'imageByApplyingTransform:', transform)
+					: null;
+				const context = nativeCall(contextClass, 'contextWithOptions:', null);
+				const rect = objc.struct('CGRect', {
+					origin: { x: 0, y: 0 },
+					size: { width: 32, height: 32 },
+				});
+				const cgImage =
+					centered &&
+					context &&
+					nativeCall(context, 'createCGImage:fromRect:', centered, rect);
+				if (cgImage)
+					return (
+						nativeCall(
+							imageClass,
+							'imageWithCGImage:scale:orientation:',
+							cgImage,
+							2,
+							0,
+						) ?? image
+					);
+			}
+		}
 	}
-	const source = objc.call(ciImageClass, 'imageWithCGImage:', sourceCGImage);
-	const ciColor = objc.call(ciColorClass, 'colorWithCGColor:', cgColor);
-	const matrix = objc.call(filterClass, 'filterWithName:', 'CIColorMatrix');
-	if (!source || !ciColor || !matrix) return tinted;
-	const zero = objc.call(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 0);
-	const alpha = objc.call(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 1);
-	const bias = objc.call(
-		vectorClass,
-		'vectorWithX:Y:Z:W:',
-		asNumber(objc.call(ciColor, 'red')),
-		asNumber(objc.call(ciColor, 'green')),
-		asNumber(objc.call(ciColor, 'blue')),
-		0,
-	);
-	if (!zero || !alpha || !bias) return tinted;
-	objc.call(matrix, 'setValue:forKey:', source, 'inputImage');
-	objc.call(matrix, 'setValue:forKey:', zero, 'inputRVector');
-	objc.call(matrix, 'setValue:forKey:', zero, 'inputGVector');
-	objc.call(matrix, 'setValue:forKey:', zero, 'inputBVector');
-	objc.call(matrix, 'setValue:forKey:', alpha, 'inputAVector');
-	objc.call(matrix, 'setValue:forKey:', bias, 'inputBiasVector');
-	const output = objc.call(matrix, 'outputImage');
-	const context = objc.call(contextClass, 'contextWithOptions:', null);
-	const rect = objc.struct('CGRect', {
-		origin: { x: 0, y: 0 },
-		size: { width: 32, height: 32 },
-	});
-	const cgImage = output && context && objc.call(context, 'createCGImage:fromRect:', output, rect);
-	if (!cgImage) return tinted;
-	return objc.call(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, 0) ?? tinted;
+	if (objc.respondsTo(image, 'imageWithTintColor:renderingMode:')) {
+		return nativeCall(image, 'imageWithTintColor:renderingMode:', tint, 1) ?? image;
+	}
+	return nativeCall(image, 'imageWithTintColor:', tint) ?? image;
 }
 
 function roundedImage(image: NativeValue): NativeValue | null {
@@ -193,55 +302,71 @@ function roundedImage(image: NativeValue): NativeValue | null {
 	const filterClass = objc.getClass('CIFilter');
 	const colorClass = objc.getClass('CIColor');
 	const vectorClass = objc.getClass('CIVector');
-	if (!imageClass || !ciImageClass || !contextClass || !filterClass || !colorClass || !vectorClass) return image;
-	const sourceCGImage = objc.call(image, 'CGImage');
+	if (
+		!imageClass ||
+		!ciImageClass ||
+		!contextClass ||
+		!filterClass ||
+		!colorClass ||
+		!vectorClass
+	)
+		return image;
+	const sourceCGImage = nativeCall(image, 'CGImage');
 	if (!sourceCGImage) return image;
-	const source = objc.call(ciImageClass, 'imageWithCGImage:', sourceCGImage);
-	const mask = objc.call(filterClass, 'filterWithName:', 'CIRadialGradient');
+	const source = nativeCall(ciImageClass, 'imageWithCGImage:', sourceCGImage);
+	const mask = nativeCall(filterClass, 'filterWithName:', 'CIRadialGradient');
 	if (!source || !mask) return image;
-	const white = objc.call(colorClass, 'colorWithRed:green:blue:alpha:', 1, 1, 1, 1);
-	const clear = objc.call(colorClass, 'colorWithRed:green:blue:alpha:', 0, 0, 0, 0);
-	const center = objc.call(vectorClass, 'vectorWithX:Y:', 16, 16);
+	const white = nativeCall(colorClass, 'colorWithRed:green:blue:alpha:', 1, 1, 1, 1);
+	const clear = nativeCall(colorClass, 'colorWithRed:green:blue:alpha:', 0, 0, 0, 0);
+	const center = nativeCall(vectorClass, 'vectorWithX:Y:', 16, 16);
 	if (!white || !clear || !center) return image;
-	objc.call(mask, 'setValue:forKey:', center, 'inputCenter');
-	objc.call(mask, 'setValue:forKey:', 15.5, 'inputRadius0');
-	objc.call(mask, 'setValue:forKey:', 16, 'inputRadius1');
-	objc.call(mask, 'setValue:forKey:', white, 'inputColor0');
-	objc.call(mask, 'setValue:forKey:', clear, 'inputColor1');
-	const maskImage = objc.call(mask, 'outputImage');
-	const blend = objc.call(filterClass, 'filterWithName:', 'CIBlendWithMask');
+	nativeCall(mask, 'setValue:forKey:', center, 'inputCenter');
+	nativeCall(mask, 'setValue:forKey:', 15.5, 'inputRadius0');
+	nativeCall(mask, 'setValue:forKey:', 16, 'inputRadius1');
+	nativeCall(mask, 'setValue:forKey:', white, 'inputColor0');
+	nativeCall(mask, 'setValue:forKey:', clear, 'inputColor1');
+	const maskImage = nativeCall(mask, 'outputImage');
+	const blend = nativeCall(filterClass, 'filterWithName:', 'CIBlendWithMask');
 	if (!maskImage || !blend) return image;
-	objc.call(blend, 'setValue:forKey:', source, 'inputImage');
-	objc.call(blend, 'setValue:forKey:', maskImage, 'inputMaskImage');
-	const output = objc.call(blend, 'outputImage');
+	nativeCall(blend, 'setValue:forKey:', source, 'inputImage');
+	nativeCall(blend, 'setValue:forKey:', maskImage, 'inputMaskImage');
+	const output = nativeCall(blend, 'outputImage');
 	if (!output) return image;
 	const rect = objc.struct('CGRect', {
 		origin: { x: 0, y: 0 },
 		size: { width: 32, height: 32 },
 	});
-	const context = objc.call(contextClass, 'contextWithOptions:', null);
-	const cgImage = context && objc.call(context, 'createCGImage:fromRect:', output, rect);
+	const context = nativeCall(contextClass, 'contextWithOptions:', null);
+	const cgImage = context && nativeCall(context, 'createCGImage:fromRect:', output, rect);
 	if (!cgImage) return image;
-	return objc.call(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, objc.call(image, 'imageOrientation') ?? 0) ?? image;
+	return (
+		nativeCall(
+			imageClass,
+			'imageWithCGImage:scale:orientation:',
+			cgImage,
+			2,
+			nativeCall(image, 'imageOrientation') ?? 0,
+		) ?? image
+	);
 }
 
 function messageIDForCell(cell: NativeValue): string | undefined {
 	if (!objc) return;
 	const viewModel = objc.getIvar(cell, 'viewModel');
 	if (!viewModel || !objc.respondsTo(viewModel, 'message')) return;
-	const message = objc.call(viewModel, 'message');
+	const message = nativeCall(viewModel, 'message');
 	if (!message || !objc.respondsTo(message, 'id')) return;
-	const id = objc.call(message, 'id');
+	const id = nativeCall(message, 'id');
 	if (typeof id === 'string') return id;
-	if (id && objc.respondsTo(id, 'description')) return String(objc.call(id, 'description'));
+	if (id && objc.respondsTo(id, 'description')) return String(nativeCall(id, 'description'));
 }
 
 function cellKey(cell: NativeValue): string | undefined {
 	if (!objc) return;
 	const className = objc.className(cell) ?? '';
-	if (objc.respondsTo(cell, 'hash')) return `${className}:${String(objc.call(cell, 'hash'))}`;
+	if (objc.respondsTo(cell, 'hash')) return `${className}:${String(nativeCall(cell, 'hash'))}`;
 	if (!objc.respondsTo(cell, 'description')) return;
-	const description = objc.call(cell, 'description');
+	const description = nativeCall(cell, 'description');
 	return typeof description === 'string' ? `${className}:${description}` : undefined;
 }
 
@@ -250,10 +375,14 @@ function range(location: number, length: number): NativeValue {
 }
 
 function attributes(original: NativeValue, index: number): NativeValue {
-	return objc?.call(original, 'attributesAtIndex:effectiveRange:', index, null);
+	return objc ? nativeCall(original, 'attributesAtIndex:effectiveRange:', index, null) : null;
 }
 
-function nextHighlightedRange(value: NativeValue, string: string, start: number): HighlightedRange | null {
+function nextHighlightedRange(
+	value: NativeValue,
+	string: string,
+	start: number,
+): HighlightedRange | null {
 	if (!objc) return null;
 	for (let index = start; index < string.length; index++) {
 		const values = attributes(value, index);
@@ -273,7 +402,7 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 	if (!objc) return null;
 	if (!metadata.avatarURL) {
 		if (metadata.type !== 'role') return null;
-		return roleImage(color);
+		return roleImage(metadata, color);
 	}
 
 	const cached = imageCache.get(metadata.avatarURL);
@@ -285,20 +414,24 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 				if (!bytes || !objc) return null;
 				const data = objc.data(bytes);
 				const imageClass = objc.getClass('UIImage');
-				const image = imageClass ? objc.call(imageClass, 'imageWithData:', data) : null;
-				return image ? roundedImage(image) : null;
+				const image = imageClass ? nativeCall(imageClass, 'imageWithData:', data) : null;
+				return image ? (metadata.type === 'user' ? roundedImage(image) : image) : null;
 			})
 			.catch(() => null);
 		imageCache.set(metadata.avatarURL, { image: null, pending });
 		pending.then((image) => {
-			imageCache.set(metadata.avatarURL!, { image });
+			imageCache.set(metadata.avatarURL!, { image, pending: Promise.resolve(image) });
 			for (const cell of activeCells.values()) scheduleCellRender(cell);
 		});
 	}
 	return null;
 }
 
-function imageAttachment(image: NativeValue, metadata: Mention, attributes: NativeValue): NativeValue | null {
+function imageAttachment(
+	image: NativeValue,
+	metadata: Mention,
+	attributes: NativeValue,
+): NativeValue | null {
 	if (!objc) return null;
 	const attachmentClass = objc.getClass('YYTextAttachment');
 	if (!attachmentClass) return null;
@@ -306,60 +439,76 @@ function imageAttachment(image: NativeValue, metadata: Mention, attributes: Nati
 	const size = 16;
 	const leading = metadata.type === 'role' ? 4 : 2;
 	const trailing = metadata.type === 'role' ? 2 : 4;
-	const insets = objc.struct('UIEdgeInsets', { top: 0, left: leading, bottom: 0, right: trailing });
-	objc.call(attachment, 'setValue:forKey:', image, 'content');
-	objc.call(attachment, 'setValue:forKey:', 1, 'contentMode');
-	objc.call(attachment, 'setValue:forKey:', insets, 'contentInsets');
+	const insets = objc.struct('UIEdgeInsets', {
+		top: 0,
+		left: leading,
+		bottom: 0,
+		right: trailing,
+	});
+	nativeCall(attachment, 'setValue:forKey:', image, 'content');
+	nativeCall(attachment, 'setValue:forKey:', 1, 'contentMode');
+	nativeCall(attachment, 'setValue:forKey:', insets, 'contentInsets');
 
 	const result = objc.alloc('NSMutableAttributedString');
-	objc.call(result, 'initWithString:attributes:', MENTION_PLACEHOLDER, attributes);
-	objc.call(result, 'addAttribute:value:range:', 'YYTextAttachment', attachment, range(0, 1));
+	nativeCall(result, 'initWithString:attributes:', MENTION_PLACEHOLDER, attributes);
+	nativeCall(result, 'addAttribute:value:range:', 'YYTextAttachment', attachment, range(0, 1));
 	const runDelegateClass = objc.getClass('YYTextRunDelegate');
 	const font = attributes?.NSFont;
 	if (runDelegateClass && font) {
 		const runDelegate = objc.alloc(runDelegateClass);
-		const ascent = asNumber(objc.call(font, 'ascender'));
-		const descent = asNumber(objc.call(font, 'descender'));
-		objc.call(runDelegate, 'setValue:forKey:', ascent, 'ascent');
-		objc.call(runDelegate, 'setValue:forKey:', -descent, 'descent');
-		objc.call(runDelegate, 'setValue:forKey:', leading + size + trailing, 'width');
+		const ascent = asNumber(nativeCall(font, 'ascender'));
+		const descent = asNumber(nativeCall(font, 'descender'));
+		nativeCall(runDelegate, 'setValue:forKey:', ascent, 'ascent');
+		nativeCall(runDelegate, 'setValue:forKey:', -descent, 'descent');
+		nativeCall(runDelegate, 'setValue:forKey:', leading + size + trailing, 'width');
 		if (objc.respondsTo(runDelegate, 'CTRunDelegate')) {
-			const coreTextRunDelegate = objc.call(runDelegate, 'CTRunDelegate');
+			const coreTextRunDelegate = nativeCall(runDelegate, 'CTRunDelegate');
 			if (coreTextRunDelegate) {
-				objc.call(result, 'addAttribute:value:range:', 'CTRunDelegate', coreTextRunDelegate, range(0, 1));
+				nativeCall(
+					result,
+					'addAttribute:value:range:',
+					'CTRunDelegate',
+					coreTextRunDelegate,
+					range(0, 1),
+				);
 			}
 		}
 	}
 	return result;
 }
 
-function attributedMention(text: string, metadata: Mention, attributes: NativeValue, image: NativeValue): NativeValue {
+function attributedMention(
+	text: string,
+	metadata: Mention,
+	attributes: NativeValue,
+	image: NativeValue,
+): NativeValue {
 	if (!objc) return null;
 	const mentionClass = objc.alloc('NSAttributedString');
-	objc.call(mentionClass, 'initWithString:attributes:', text, attributes);
+	nativeCall(mentionClass, 'initWithString:attributes:', text, attributes);
 	const avatar = imageAttachment(image, metadata, attributes);
 	if (!avatar) return mentionClass;
 	const replacement = objc.alloc('NSMutableAttributedString');
-	objc.call(replacement, 'init');
+	nativeCall(replacement, 'init');
 	if (metadata.type === 'role') {
-		objc.call(replacement, 'appendAttributedString:', mentionClass);
-		objc.call(replacement, 'appendAttributedString:', avatar);
+		nativeCall(replacement, 'appendAttributedString:', mentionClass);
+		nativeCall(replacement, 'appendAttributedString:', avatar);
 	} else {
-		objc.call(replacement, 'appendAttributedString:', avatar);
-		objc.call(replacement, 'appendAttributedString:', mentionClass);
+		nativeCall(replacement, 'appendAttributedString:', avatar);
+		nativeCall(replacement, 'appendAttributedString:', mentionClass);
 	}
 	return replacement;
 }
 
 function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeValue {
 	if (!objc || mentions.length === 0) return original;
-	const result = objc.call(original, 'mutableCopy');
+	const result = nativeCall(original, 'mutableCopy');
 	if (!result) return original;
 	let searchIndex = 0;
 	const remaining = mentions.map((metadata, index) => ({ index, metadata }));
 
 	while (remaining.length > 0) {
-		const string = objc.call(result, 'string');
+		const string = nativeCall(result, 'string');
 		if (typeof string !== 'string' || searchIndex >= string.length) break;
 		const highlighted = nextHighlightedRange(result, string, searchIndex);
 		if (!highlighted) break;
@@ -394,23 +543,23 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 		const [{ metadata }] = remaining.splice(bestMetadataIndex, 1);
 		const values = attributes(result, bestIndex);
 		if (!values?.YYTextHighlight) {
-			searchIndex = highlighted.index + highlighted.length;
+			searchIndex = bestIndex + bestText.length;
 			continue;
 		}
 		const image = imageForMention(metadata, values.NSColor);
 		if (!image) {
-			searchIndex = highlighted.index + highlighted.length;
+			searchIndex = bestIndex + bestText.length;
 			continue;
 		}
 		const text = STORE.get('showAtSymbol', true) ? bestText : bestText.slice(1);
 		const replacement = attributedMention(text, metadata, values, image);
-		objc.call(
+		nativeCall(
 			result as NativeObjectHandle,
 			'replaceCharactersInRange:withAttributedString:',
 			range(bestIndex, bestText.length),
 			replacement,
 		);
-		searchIndex = bestIndex + asNumber(objc.call(replacement, 'length'));
+		searchIndex = bestIndex + asNumber(nativeCall(replacement, 'length'));
 	}
 
 	return result;
@@ -419,81 +568,103 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 function textViewsInView(view: NativeValue): NativeValue[] {
 	if (!objc) return [];
 	const views: NativeValue[] = [];
-	if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText')) views.push(view);
+	if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText'))
+		views.push(view);
 	if (!objc.respondsTo(view, 'subviews')) return views;
-	const children = objc.call(view, 'subviews');
+	const children = nativeCall(view, 'subviews');
 	if (!Array.isArray(children)) return views;
 	for (const child of children) views.push(...textViewsInView(child));
 	return views;
 }
 
-function restoreTextView(view: NativeValue): void {
-	if (!objc || !originalTextKey || !messageTextKey) return;
-	const original = objc.getAssociatedObject(view, originalTextKey);
-	if (original) objc.call(view, 'setAttributedText:', original);
-	objc.setAssociatedObject(view, originalTextKey, null, 'retainNonatomic');
-	objc.setAssociatedObject(view, messageTextKey, null, 'retainNonatomic');
+function viewKey(view: NativeValue): string | undefined {
+	return cellKey(view);
 }
 
-function updateTextView(view: NativeValue, messageID: string | undefined, mentions: Mention[]): boolean {
-	if (!objc || !originalTextKey || !messageTextKey || !messageID || mentions.length === 0) {
+function restoreTextView(view: NativeValue): void {
+	if (!objc) return;
+	const key = viewKey(view);
+	if (!key) return;
+	const state = textViewStates.get(key);
+	if (!state) return;
+	nativeCall(view, 'setAttributedText:', state.original);
+	textViewStates.delete(key);
+}
+
+function updateTextView(
+	view: NativeValue,
+	messageID: string | undefined,
+	mentions: Mention[],
+): boolean {
+	if (!objc || !messageID || mentions.length === 0) {
 		restoreTextView(view);
 		return false;
 	}
-	const storedMessageID = objc.getAssociatedObject(view, messageTextKey);
-	if (storedMessageID && storedMessageID !== messageID) restoreTextView(view);
-	let original = objc.getAssociatedObject(view, originalTextKey);
+	const key = viewKey(view);
+	if (!key) return false;
+	const storedState = textViewStates.get(key);
+	if (storedState?.messageID && storedState.messageID !== messageID) restoreTextView(view);
+	let original = textViewStates.get(key)?.original;
 	if (!original) {
-		original = objc.call(view, 'attributedText');
-		if (!original || asNumber(objc.call(original, 'length')) === 0) return false;
-		objc.setAssociatedObject(view, originalTextKey, original, 'retainNonatomic');
+		original = nativeCall(view, 'attributedText');
+		if (!original || asNumber(nativeCall(original, 'length')) === 0) return false;
 	}
 	const updated = mentionAvatarText(original, mentions);
 	if (!updated) return false;
-	objc.setAssociatedObject(view, messageTextKey, messageID, 'retainNonatomic');
-	const current = objc.call(view, 'attributedText');
-	if (current && objc.call(updated, 'isEqual:', current)) return false;
-	objc.call(view, 'setAttributedText:', updated);
+	textViewStates.set(key, { messageID, original });
+	const current = nativeCall(view, 'attributedText');
+	if (current && nativeCall(updated, 'isEqual:', current)) return false;
+	nativeCall(view, 'setAttributedText:', updated);
 	return true;
 }
 
 function clearCell(cell: NativeValue): void {
 	for (const view of textViewsInView(cell)) restoreTextView(view);
-	if (objc) objc.call(cell, 'setNeedsLayout');
 	const key = cellKey(cell);
 	if (key) {
 		activeCells.delete(key);
 		pendingCells.delete(key);
+		pendingCellRefs.delete(key);
 	}
-	if (objc && pendingRenderKey) objc.setAssociatedObject(cell, pendingRenderKey, null, 'retainNonatomic');
 }
 
 function renderCell(cell: NativeValue): void {
 	if (!objc) return;
+	hydrateMentions();
 	const key = cellKey(cell);
 	if (key) activeCells.set(key, cell);
 	const id = messageIDForCell(cell);
-	const mentions = id ? messageMentionIndex.get(id) ?? [] : [];
-	let changed = false;
-	for (const view of textViewsInView(cell)) changed ||= updateTextView(view, id, mentions);
-	if (changed) objc.call(cell, 'setNeedsLayout');
+	hydrateMessage(id);
+	const mentions = id ? (messageMentionIndex.get(id) ?? []) : [];
+	const views = textViewsInView(cell);
+	for (const view of views) updateTextView(view, id, mentions);
 }
 
 function scheduleCellRender(cell: NativeValue): void {
-	if (!objc || !pendingRenderKey) return;
+	if (!objc) return;
 	const key = cellKey(cell);
 	if (!key || pendingCells.has(key)) return;
 	const bridge = objc;
-	const associationKey = pendingRenderKey;
 	pendingCells.add(key);
-	bridge.setAssociatedObject(cell, associationKey, cell, 'retainNonatomic');
+	pendingCellRefs.set(key, cell);
 	setTimeout(() => {
 		pendingCells.delete(key);
+		const retainedCell = pendingCellRefs.get(key);
+		pendingCellRefs.delete(key);
 		if (objc !== bridge) return;
-		const retainedCell = bridge.getAssociatedObject(cell, associationKey) ?? cell;
-		bridge.setAssociatedObject(cell, associationKey, null, 'retainNonatomic');
-		renderCell(retainedCell);
+		if (retainedCell) renderCell(retainedCell);
 	}, 0);
+}
+
+function scheduleVisibleCells(view: NativeValue): void {
+	if (!objc) return;
+	if (objc.className(view) === 'DCDMessageTableViewCell') {
+		scheduleCellRender(view);
+	}
+	if (!objc.respondsTo(view, 'subviews')) return;
+	const children = nativeCall(view, 'subviews');
+	if (!Array.isArray(children)) return;
+	for (const child of children) scheduleVisibleCells(child);
 }
 
 function installNativeHooks(): void {
@@ -504,21 +675,21 @@ function installNativeHooks(): void {
 	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
 		after: ({ self }) => scheduleCellRender(self),
 	});
-	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', { after: ({ self }) => clearCell(self) });
+	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
+		after: ({ self }) => clearCell(self),
+	});
 	hookTokens = [lifecycle, layout, reuse];
 }
 
 function start(context?: PluginContext): void {
 	objc = context?.native.objc ?? null;
 	if (!objc) return;
-	originalTextKey = objc.createAssociationKey();
-	messageTextKey = objc.createAssociationKey();
-	pendingRenderKey = objc.createAssociationKey();
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
 	channels = metro.findByProps('getChannel');
 	roles = metro.find(
-		(module) => typeof module?.getRole === 'function' && typeof module?.getSortedRoles === 'function',
+		(module) =>
+			typeof module?.getRole === 'function' && typeof module?.getSortedRoles === 'function',
 	);
 
 	const target = metro.findByProps('generateMessageRowData');
@@ -528,6 +699,9 @@ function start(context?: PluginContext): void {
 	});
 	hydrateMentions();
 	installNativeHooks();
+	const windowClass = objc.getClass('UIWindow');
+	const keyWindow = windowClass ? nativeCall(windowClass, 'keyWindow') : null;
+	if (keyWindow) scheduleVisibleCells(keyWindow);
 }
 
 function stop(): void {
@@ -537,17 +711,17 @@ function stop(): void {
 	hookTokens = [];
 	for (const cell of activeCells.values()) clearCell(cell);
 	activeCells.clear();
+	pendingCellRefs.clear();
+	textViewStates.clear();
 	users = null;
 	members = null;
 	channels = null;
 	roles = null;
 	objc = null;
-	originalTextKey = null;
-	messageTextKey = null;
-	pendingRenderKey = null;
 	pendingCells.clear();
 	imageCache.clear();
 	messageMentionIndex.clear();
+	hydratedMessageKey = null;
 }
 
 export default { start, stop };
