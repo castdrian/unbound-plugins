@@ -261,7 +261,7 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 					c: 0,
 					d: 1,
 					tx: 9,
-					ty: 10.75,
+					ty: 5.375,
 				});
 				const centered = output
 					? nativeCall(output, 'imageByApplyingTransform:', transform)
