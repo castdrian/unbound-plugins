@@ -218,7 +218,7 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 	const imageClass = objc.getClass('UIImage');
 	const configurationClass = objc.getClass('UIImageSymbolConfiguration');
 	const configuration = configurationClass
-		? nativeCall(configurationClass, 'configurationWithPointSize:weight:scale:', 11, 0, 1)
+		? nativeCall(configurationClass, 'configurationWithPointSize:weight:scale:', 14, 0, 1)
 		: null;
 	const image = imageClass
 		? configuration && objc.respondsTo(imageClass, 'systemImageNamed:withConfiguration:')
@@ -280,30 +280,20 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 					b: 0,
 					c: 0,
 					d: 1,
-					tx: 9,
+					tx: 4,
 					ty: 5.375,
 				});
-				const centered = output
-					? nativeCall(output, 'imageByApplyingTransform:', transform)
-					: null;
+				const centered = output ? nativeCall(output, 'imageByApplyingTransform:', transform) : null;
 				const context = nativeCall(contextClass, 'contextWithOptions:', null);
 				const rect = objc.struct('CGRect', {
 					origin: { x: 0, y: 0 },
 					size: { width: 32, height: 32 },
 				});
 				const cgImage =
-					centered &&
-					context &&
-					nativeCall(context, 'createCGImage:fromRect:', centered, rect);
+					centered && context && nativeCall(context, 'createCGImage:fromRect:', centered, rect);
 				if (cgImage)
 					return (
-						nativeCall(
-							imageClass,
-							'imageWithCGImage:scale:orientation:',
-							cgImage,
-							2,
-							0,
-						) ?? image
+						nativeCall(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, 0) ?? image
 					);
 			}
 		}
@@ -322,14 +312,7 @@ function roundedImage(image: NativeValue): NativeValue | null {
 	const filterClass = objc.getClass('CIFilter');
 	const colorClass = objc.getClass('CIColor');
 	const vectorClass = objc.getClass('CIVector');
-	if (
-		!imageClass ||
-		!ciImageClass ||
-		!contextClass ||
-		!filterClass ||
-		!colorClass ||
-		!vectorClass
-	)
+	if (!imageClass || !ciImageClass || !contextClass || !filterClass || !colorClass || !vectorClass)
 		return image;
 	const sourceCGImage = nativeCall(image, 'CGImage');
 	if (!sourceCGImage) return image;
@@ -405,9 +388,7 @@ function attributedStringText(value: NativeValue): string | undefined {
 }
 
 function containsMentionText(value: string, mentions: Mention[]): boolean {
-	return mentions.every((metadata) =>
-		metadata.labels.some((label) => value.includes(`@${label}`)),
-	);
+	return mentions.every((metadata) => metadata.labels.some((label) => value.includes(`@${label}`)));
 }
 
 function nextHighlightedRange(
@@ -569,9 +550,7 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 		if (!highlighted) break;
 		const atOffset = highlighted.text.indexOf('@');
 		if (atOffset === -1) continue;
-		const matchedLabel = metadata.labels.find((label) =>
-			highlighted.text.includes(`@${label}`),
-		);
+		const matchedLabel = metadata.labels.find((label) => highlighted.text.includes(`@${label}`));
 		const fallbackText = highlighted.text.slice(atOffset);
 		const boundary = fallbackText.search(/[\u2068\u2069]/u);
 		const mentionText = matchedLabel
