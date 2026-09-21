@@ -6,6 +6,17 @@ import type {
 } from '@unbound-app/api/native';
 import { metro, patcher, storage } from '@unbound-app/api';
 
+import {
+	cellRenderDecision,
+	containsMentionText,
+	extractMentionTokens,
+	imageCacheAction,
+	mentionImageMetrics,
+	roleImageSource,
+	selectMentionLabel,
+} from './logic';
+import type { ImageCacheEntry, Mention } from './logic';
+
 const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);
 const MENTION_PLACEHOLDER = '\uFFFC';
@@ -13,25 +24,12 @@ const ROLE_IMAGE_NAME = 'person.2.fill';
 
 type NativeValue = any;
 
-type Mention = {
-	avatarURL?: string;
-	labels: string[];
-	roleColor?: number;
-	type: 'role' | 'user';
-};
-
 type User = {
 	avatar?: string | null;
 	getAvatarURL?: (guildId?: string | null, size?: number, animated?: boolean) => string;
 	globalName?: string | null;
 	id: string;
 	username?: string;
-};
-
-type ImageCacheEntry = {
-	image: NativeValue | null;
-	pending?: Promise<NativeValue | null>;
-	retryAt?: number;
 };
 
 type HighlightedRange = {
@@ -124,13 +122,11 @@ function roleMention(roleId: string, guildId?: string): Mention | undefined {
 			| undefined);
 	if (!role?.name) return;
 
-	const avatarURL = role.icon
-		? `https://cdn.discordapp.com/role-icons/${role.id}/${role.icon}.png?size=32&quality=lossless`
-		: undefined;
+	const image = roleImageSource(role);
 	return {
-		avatarURL,
+		avatarURL: image.avatarURL,
 		labels: [role.name],
-		roleColor: typeof role.color === 'number' && role.color > 0 ? role.color : undefined,
+		roleColor: image.roleColor,
 		type: 'role',
 	};
 }
@@ -150,8 +146,9 @@ function collectMentions(message: any): CollectedMentions {
 	const content = message?.content;
 	if (typeof content !== 'string') return { complete, mentions };
 
-	for (const match of content.matchAll(/<@!?([0-9]+)>|<@&([0-9]+)>/g)) {
-		const mention = match[1] ? userMention(match[1], guildId) : roleMention(match[2], guildId);
+	for (const token of extractMentionTokens(content)) {
+		const mention =
+			token.type === 'user' ? userMention(token.id, guildId) : roleMention(token.id, guildId);
 		if (mention) mentions.push(mention);
 		else complete = false;
 	}
@@ -387,10 +384,6 @@ function attributedStringText(value: NativeValue): string | undefined {
 	return typeof string === 'string' ? string : undefined;
 }
 
-function containsMentionText(value: string, mentions: Mention[]): boolean {
-	return mentions.every((metadata) => metadata.labels.some((label) => value.includes(`@${label}`)));
-}
-
 function nextHighlightedRange(
 	value: NativeValue,
 	string: string,
@@ -438,9 +431,10 @@ function imageForMention(metadata: Mention, color: NativeValue): NativeValue | n
 	}
 
 	const cached = imageCache.get(metadata.avatarURL);
-	if (cached?.image) return cached.image;
-	if (cached?.pending || (cached?.retryAt && cached.retryAt > Date.now())) return null;
-	if (!cached?.pending) {
+	const action = imageCacheAction(cached);
+	if (action === 'cached') return cached?.image ?? null;
+	if (action === 'pending' || action === 'retry') return null;
+	if (action === 'load') {
 		const token = lifecycleToken;
 		const pending = fetch(metadata.avatarURL)
 			.then((response) => (response.ok ? response.arrayBuffer() : null))
@@ -474,9 +468,7 @@ function imageAttachment(
 	const attachmentClass = objc.getClass('YYTextAttachment');
 	if (!attachmentClass) return null;
 	const attachment = objc.alloc(attachmentClass);
-	const size = 16;
-	const leading = metadata.type === 'role' ? 4 : 2;
-	const trailing = metadata.type === 'role' ? 2 : 4;
+	const { leading, size, trailing } = mentionImageMetrics(metadata.type);
 	const insets = objc.struct('UIEdgeInsets', {
 		top: 0,
 		left: leading,
@@ -550,7 +542,7 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 		if (!highlighted) break;
 		const atOffset = highlighted.text.indexOf('@');
 		if (atOffset === -1) continue;
-		const matchedLabel = metadata.labels.find((label) => highlighted.text.includes(`@${label}`));
+		const matchedLabel = selectMentionLabel(highlighted.text, metadata.labels);
 		const fallbackText = highlighted.text.slice(atOffset);
 		const boundary = fallbackText.search(/[\u2068\u2069]/u);
 		const mentionText = matchedLabel
@@ -715,7 +707,7 @@ function renderCell(cell: NativeValue): boolean {
 		changed ||= viewChanged;
 	}
 	if (changed) nativeCall(cell, 'setNeedsLayout');
-	return Boolean(id && (!messageHydrated || unresolvedMessageIDs.has(id) || mentions.length > 0));
+	return cellRenderDecision(id, messageHydrated, unresolvedMessageIDs.has(id), mentions) !== 'idle';
 }
 
 function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {

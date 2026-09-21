@@ -14,7 +14,6 @@
 		"native.objc.classes",
 		"native.objc.invoke",
 		"native.objc.ivars",
-		"native.objc.associations",
 		"native.objc.hooks"
 	],
 	"minNativePluginApi": "1.0.0",
