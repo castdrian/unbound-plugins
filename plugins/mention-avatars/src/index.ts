@@ -94,6 +94,17 @@ export function roleImageSource(role: {
 	};
 }
 
+export type RoleIconColorSource = 'foreground' | 'label' | 'role';
+
+export function roleIconColorSource(
+	foregroundColor: unknown,
+	roleColorValue: number | undefined,
+): RoleIconColorSource {
+	if (foregroundColor) return 'foreground';
+	if (roleColorValue !== undefined && roleColorValue > 0) return 'role';
+	return 'label';
+}
+
 export function cellRenderDecision(
 	messageID: string | undefined,
 	messageHydrated: boolean,
@@ -334,10 +345,15 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 		: null;
 	if (!image) return null;
 	const colorClass = objc.getClass('UIColor');
+	const tintSource = roleIconColorSource(color, metadata.roleColor);
 	const tint =
-		roleColor(metadata.roleColor) ??
-		color ??
-		(colorClass ? nativeCall(colorClass, 'labelColor') : null);
+		tintSource === 'foreground'
+			? color
+			: tintSource === 'role'
+				? roleColor(metadata.roleColor)
+				: colorClass
+					? nativeCall(colorClass, 'labelColor')
+					: null;
 	if (!tint || !objc.respondsTo(image, 'imageWithTintColor:')) return image;
 	const ciImageClass = objc.getClass('CIImage');
 	const ciColorClass = objc.getClass('CIColor');

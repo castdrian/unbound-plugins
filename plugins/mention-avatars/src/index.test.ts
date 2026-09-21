@@ -61,6 +61,7 @@ const {
 	extractMentionTokens,
 	imageCacheAction,
 	mentionImageMetrics,
+	roleIconColorSource,
 	roleImageSource,
 	selectMentionLabel,
 } = await import('@mention-avatars/index');
@@ -109,6 +110,12 @@ describe('mention image decisions', () => {
 			avatarURL: undefined,
 			roleColor: 0x336699,
 		});
+	});
+
+	test('prefers the attributed foreground color for role icons', () => {
+		expect(roleIconColorSource({}, 0x336699)).toBe('foreground');
+		expect(roleIconColorSource(null, 0x336699)).toBe('role');
+		expect(roleIconColorSource(null, undefined)).toBe('label');
 	});
 
 	test('does not start duplicate image requests while pending or in retry delay', () => {
