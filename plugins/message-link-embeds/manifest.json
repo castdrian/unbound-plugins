@@ -10,5 +10,12 @@
 	],
 	"version": "1.0.0",
 	"icon": "LinkIcon",
+	"capabilities": [
+		"native.objc.classes",
+		"native.objc.invoke",
+		"native.objc.ivars",
+		"native.objc.hooks"
+	],
+	"minNativePluginApi": "1.0.0",
 	"main": "index.tsx"
 }
