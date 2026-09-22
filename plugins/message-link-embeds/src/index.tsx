@@ -413,7 +413,6 @@ function embeddedMessage(source: Message, target: Message): EmbeddedMessage | nu
 			messageSnapshots: [],
 		});
 		const row = generator.generate({ rowType: MESSAGE_ROW_TYPE, message: renderRecord });
-		row.type = 24;
 		row.message = {
 			...((row.message ?? targetRowMessage) as AnyRecord),
 			id: target.id,
@@ -607,7 +606,6 @@ function patchRowManager(): void {
 		if (!synthetic || !context.result) return context.result;
 
 		const row = context.result as Row;
-		row.type = 24;
 		row.message = {
 			...((row.message ?? {}) as AnyRecord),
 			id: synthetic.message.id,
