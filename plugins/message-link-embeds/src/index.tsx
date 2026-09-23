@@ -11,7 +11,6 @@ import type {
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE = 'UnboundMessageLinkSurface';
-const MESSAGE_ROW_TYPE = 1;
 const ESTIMATED_HEIGHT = 168;
 const MAX_HEIGHT = 480;
 const MESSAGE_LINK_REGEX =
@@ -24,6 +23,8 @@ type Message = AnyRecord & {
 	channel_id?: string;
 	channelId?: string;
 	content?: unknown;
+	guild_id?: string;
+	guildId?: string;
 	id?: string;
 	timestamp?: Date | string;
 };
@@ -48,8 +49,18 @@ type SelectedChannel = {
 
 type MessageRecordConstructor = new (message: AnyRecord) => Message;
 
+type RowInput = {
+	message: Message;
+	rowType: number;
+	changeType?: number;
+	isFirst?: boolean;
+	canAddNewReactions?: boolean;
+	canShowImages?: boolean;
+	renderContentOnly?: boolean;
+};
+
 type RowGenerator = {
-	generate: (input: { message: Message; rowType: number }) => unknown;
+	generate: (input: RowInput) => AnyRecord | undefined;
 };
 
 type RowManagerConstructor = new () => RowGenerator;
@@ -66,7 +77,8 @@ type SurfaceState = {
 	container: NativeObjectHandle;
 	generator: RowGenerator;
 	height: number;
-	originY: number;
+	hostY: number;
+	parent: NativeObjectHandle;
 	record: Message;
 	source: Message;
 	surface: NativeFabricSurface;
@@ -122,6 +134,7 @@ function nativeChildren(handle: NativeObjectHandle): NativeObjectHandle[] {
 	if (!objc) return [];
 	const subviews = nativeCall(handle, 'subviews');
 	if (!subviews || typeof subviews !== 'object') return [];
+	if (Array.isArray(subviews)) return subviews as NativeObjectHandle[];
 	try {
 		return objc.array(subviews as NativeObjectHandle) as NativeObjectHandle[];
 	} catch {
@@ -259,6 +272,25 @@ function messageForCell(cell: NativeObjectHandle): Message | undefined {
 	return messages?.getMessage?.(channelId, messageId) ?? direct;
 }
 
+function messagePayload(message: Message): Message {
+	const record = message as AnyRecord;
+	for (const key of ['message', 'message_snapshot', 'messageSnapshot']) {
+		const nested = messageFromValue(record[key]);
+		if (nested && nested.id !== message.id) return nested;
+	}
+
+	for (const key of ['message_snapshots', 'messageSnapshots']) {
+		const snapshots = record[key];
+		if (!Array.isArray(snapshots)) continue;
+		for (const snapshot of snapshots) {
+			const nested = messageFromValue(snapshot);
+			if (nested && nested.id !== message.id) return nested;
+		}
+	}
+
+	return message;
+}
+
 function cellKey(cell: NativeObjectHandle): string | undefined {
 	const hash = nativeCall(cell, 'hash');
 	if (hash !== null && hash !== undefined) return String(hash);
@@ -272,6 +304,53 @@ function measure(view: NativeObjectHandle): NativeFabricFrame {
 		return fabric.measure(view);
 	} catch {
 		return { x: 0, y: 0, width: 0, height: 0 };
+	}
+}
+
+function setNativeFrame(view: NativeObjectHandle, frame: NativeFabricFrame): void {
+	if (!objc) return;
+	try {
+		const rect = objc.struct('CGRect', {
+			origin: { x: frame.x, y: frame.y },
+			size: { width: frame.width, height: frame.height },
+		});
+		nativeCall(view, 'setFrame:', rect);
+	} catch {}
+}
+
+function createSurfaceHost(
+	cell: NativeObjectHandle,
+	content: NativeObjectHandle,
+): {
+	container: NativeObjectHandle;
+	hostY: number;
+	parent: NativeObjectHandle;
+	width: number;
+} | null {
+	if (!objc) return null;
+	try {
+		const parent = (nativeCall(cell, 'contentView') ?? cell) as NativeObjectHandle;
+		const parentFrame = measure(parent);
+		const contentFrame = measure(content);
+		const hostY = Math.max(parentFrame.height, contentFrame.y + containerOriginY(content)) + 6;
+		const width = contentFrame.width || parentFrame.width || measure(cell).width || 320;
+		const rect = objc.struct('CGRect', {
+			origin: { x: contentFrame.x, y: hostY },
+			size: { width, height: 1 },
+		});
+		const allocated = objc.alloc('UIView');
+		const initialized = nativeCall(allocated, 'initWithFrame:', rect) as NativeObjectHandle | null;
+		const container = initialized ?? allocated;
+		nativeCall(parent, 'addSubview:', container);
+		setNativeFrame(container, { x: contentFrame.x, y: hostY, width, height: 1 });
+		setNativeFrame(parent, { ...parentFrame, height: hostY + 1 });
+		setNativeFrame(cell, { ...measure(cell), height: hostY + 1 });
+		nativeCall(parent, 'setClipsToBounds:', false);
+		nativeCall(cell, 'setClipsToBounds:', false);
+		nativeCall(container, 'setClipsToBounds:', false);
+		return { container, hostY, parent, width };
+	} catch {
+		return null;
 	}
 }
 
@@ -334,13 +413,34 @@ function containerOriginY(container: NativeObjectHandle): number {
 function buildRecord(target: Message, channelId: string): Message {
 	const Constructor = messageRecord;
 	if (!Constructor) throw new Error('MessageRecord is unavailable');
-	if (target instanceof Constructor) return target;
+	const payload = messagePayload(target);
 	const timestamp =
-		target.timestamp instanceof Date ? target.timestamp : new Date(target.timestamp ?? Date.now());
+		payload.timestamp instanceof Date
+			? payload.timestamp
+			: new Date(payload.timestamp ?? Date.now());
+	const content = contentText(payload.content);
 	return new Constructor({
-		...target,
+		id: payload.id,
+		type: 0,
 		channel_id: channelId,
+		content,
+		author: payload.author,
+		attachments: payload.attachments ?? [],
+		embeds: payload.embeds ?? [],
+		mentions: payload.mentions ?? [],
+		mention_roles: payload.mention_roles ?? [],
 		timestamp,
+		edited_timestamp: payload.edited_timestamp ?? null,
+		pinned: Boolean(payload.pinned),
+		mention_everyone: Boolean(payload.mention_everyone),
+		tts: Boolean(payload.tts),
+		flags: payload.flags ?? 0,
+		components: [],
+		reactions: payload.reactions ?? [],
+		sticker_items: payload.sticker_items ?? [],
+		stickers: payload.stickers ?? payload.sticker_items ?? [],
+		state: payload.state ?? 'SENT',
+		nonce: payload.nonce ?? null,
 	});
 }
 
@@ -354,7 +454,17 @@ function buildSurfaceContent(
 	try {
 		const record = buildRecord(target, channelId);
 		const generator = new rowManager();
-		generator.generate({ rowType: MESSAGE_ROW_TYPE, message: record });
+		const row = generator.generate({
+			rowType: 1,
+			changeType: 0,
+			isFirst: false,
+			canAddNewReactions: false,
+			canShowImages: true,
+			message: record,
+		});
+		if (row) {
+			row.separatorBefore = false;
+		}
 		return { generator, record };
 	} catch {
 		return undefined;
@@ -364,13 +474,23 @@ function buildSurfaceContent(
 function surfaceFrame(state: SurfaceState, height: number): void {
 	if (!fabric) return;
 	const containerFrame = measure(state.container);
+	const parentFrame = measure(state.parent);
 	const nextHeight = Math.min(Math.max(height, 1), MAX_HEIGHT);
+	const requiredHeight = state.hostY + nextHeight;
+	if (parentFrame.height < requiredHeight) {
+		setNativeFrame(state.parent, { ...parentFrame, height: requiredHeight });
+		setNativeFrame(state.cell, { ...measure(state.cell), height: requiredHeight });
+		nativeCall(state.parent, 'setClipsToBounds:', false);
+		nativeCall(state.cell, 'setClipsToBounds:', false);
+	}
+	if (containerFrame.height < nextHeight)
+		setNativeFrame(state.container, { ...containerFrame, height: nextHeight });
 	state.width = containerFrame.width || state.width;
 	state.height = nextHeight;
 	try {
 		fabric.setFrame(state.surface, {
 			x: 0,
-			y: state.originY,
+			y: 0,
 			width: state.width,
 			height: nextHeight,
 		});
@@ -390,7 +510,15 @@ function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 		ReactNative.View,
 		{
 			onLayout,
-			style: { minHeight: 1, width: '100%' },
+			style: {
+				backgroundColor: 'rgba(4, 4, 5, 0.24)',
+				borderRadius: 8,
+				minHeight: 1,
+				overflow: 'hidden',
+				position: 'absolute',
+				top: state.hostY,
+				width: '100%',
+			},
 		},
 		React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
 	);
@@ -419,6 +547,7 @@ function removeCellSurface(key: string): void {
 		try {
 			fabric.unmount(surface.surface);
 		} catch {}
+		nativeCall(surface.container, 'removeFromSuperview');
 		surfaces.delete(state.surfaceId);
 	}
 	cellStates.delete(key);
@@ -459,26 +588,28 @@ function renderCell(cell: NativeObjectHandle): boolean {
 		removeCellSurface(key);
 	}
 
-	const content = buildSurfaceContent(source, target);
-	if (!content) return false;
-	const container = contentContainer(cell);
-	const containerFrame = measure(container);
+	const surfaceContent = buildSurfaceContent(source, target);
+	if (!surfaceContent) return false;
+	const content = contentContainer(cell);
+	const host = createSurfaceHost(cell, content);
+	if (!host) return false;
 	const surfaceId = `message-link-${key}-${target.id}`;
 	const state = {
 		cell,
-		container,
-		generator: content.generator,
+		container: host.container,
+		generator: surfaceContent.generator,
 		height: ESTIMATED_HEIGHT,
-		originY: containerOriginY(container),
-		record: content.record,
+		hostY: host.hostY,
+		parent: host.parent,
+		record: surfaceContent.record,
 		source,
 		surface: null as unknown as NativeFabricSurface,
 		target,
-		width: containerFrame.width || measure(cell).width || 320,
+		width: host.width,
 	};
 	surfaces.set(surfaceId, state);
 	try {
-		state.surface = fabric.mount(container, SURFACE_MODULE, {
+		state.surface = fabric.mount(host.container, SURFACE_MODULE, {
 			surfaceId,
 			targetMessageId: target.id,
 		});
@@ -504,8 +635,10 @@ function scheduleCell(cell: NativeObjectHandle, attempt: number = 0): void {
 	setTimeout(() => {
 		pendingCells.delete(key);
 		if (token !== lifecycle) return;
-		const retry = renderCell(cell);
-		if (retry && attempt < 10) setTimeout(() => scheduleCell(cell, attempt + 1), 120);
+		try {
+			const retry = renderCell(cell);
+			if (retry && attempt < 10) setTimeout(() => scheduleCell(cell, attempt + 1), 120);
+		} catch {}
 	}, 0);
 }
 
@@ -513,6 +646,15 @@ function scheduleVisibleCells(view: NativeObjectHandle, depth: number = 0): void
 	if (depth > 16 || !objc) return;
 	if ((objc.className(view) ?? '') === 'DCDMessageTableViewCell') scheduleCell(view);
 	for (const child of nativeChildren(view)) scheduleVisibleCells(child, depth + 1);
+}
+
+function scheduleWindowCells(): void {
+	if (!objc || !native) return;
+	const windowClass = objc.getClass('UIWindow');
+	const keyWindow = windowClass
+		? (nativeCall(windowClass, 'keyWindow') as NativeObjectHandle)
+		: null;
+	if (keyWindow) scheduleVisibleCells(keyWindow);
 }
 
 function installHooks(): void {
@@ -555,13 +697,14 @@ function install(context: PluginContext): void {
 	const module = metro.findByFilePath(CHAT_ITEM_PATH, { interop: false });
 	chatItem = typeof module?.default === 'function' ? module.default : null;
 
-	if (
-		!messages?.getMessage ||
-		!messageActions?.fetchMessage ||
-		!messageRecord ||
-		!rowManager ||
-		!chatItem
-	) {
+	if (!messages?.getMessage || !messageActions?.fetchMessage || !messageRecord || !rowManager) {
+		retryTimer = setTimeout(() => {
+			retryTimer = null;
+			if (native) install(context);
+		}, 250);
+		return;
+	}
+	if (!chatItem) {
 		retryTimer = setTimeout(() => {
 			retryTimer = null;
 			if (native) install(context);
@@ -576,11 +719,9 @@ function install(context: PluginContext): void {
 		return;
 	}
 	installHooks();
-	const windowClass = objc.getClass('UIWindow');
-	const keyWindow = windowClass
-		? (nativeCall(windowClass, 'keyWindow') as NativeObjectHandle)
-		: null;
-	if (keyWindow) scheduleVisibleCells(keyWindow);
+	scheduleWindowCells();
+	setTimeout(scheduleWindowCells, 1000);
+	setTimeout(scheduleWindowCells, 3000);
 }
 
 function stop(): void {
@@ -594,6 +735,7 @@ function stop(): void {
 		try {
 			fabric?.unmount(surface.surface);
 		} catch {}
+		nativeCall(surface.container, 'removeFromSuperview');
 	}
 	surfaces.clear();
 	cellStates.clear();
