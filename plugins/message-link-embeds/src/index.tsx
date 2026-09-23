@@ -398,7 +398,9 @@ function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 
 function registerSurface(): boolean {
 	if (surfaceRegistered) return true;
-	const registry = (metro.common.ReactNative as AnyRecord).AppRegistry;
+	const registry =
+		(metro.common.ReactNative as AnyRecord).AppRegistry ??
+		metro.findByProps('registerComponent', 'runApplication');
 	if (!registry || typeof registry.registerComponent !== 'function') return false;
 	try {
 		registry.registerComponent(SURFACE_MODULE, () => MessageSurface);
