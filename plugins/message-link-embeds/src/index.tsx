@@ -12,7 +12,7 @@ import type {
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE = 'MessageLinkSurface';
 const ESTIMATED_HEIGHT = 168;
-const EMBED_HEIGHT = 96;
+const EMBED_HEIGHT = 62;
 const MAX_HEIGHT = 480;
 const MESSAGE_LINK_REGEX =
 	/https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
@@ -87,17 +87,12 @@ type SurfaceState = {
 	surface: NativeFabricSurface;
 	target: Message;
 	width: number;
-	hiddenChildren: HiddenChild[];
+	contentHeight: number;
 	cellFrame: NativeFabricFrame;
 };
 
 type LayoutNode = {
 	frame: NativeFabricFrame;
-	view: NativeObjectHandle;
-};
-
-type HiddenChild = {
-	hidden: boolean;
 	view: NativeObjectHandle;
 };
 
@@ -164,15 +159,6 @@ function nativeChildren(handle: NativeObjectHandle): NativeObjectHandle[] {
 	}
 }
 
-function nativeDescendants(handle: NativeObjectHandle, depth: number = 0): NativeObjectHandle[] {
-	if (depth > 16) return [];
-	const descendants: NativeObjectHandle[] = [];
-	for (const child of nativeChildren(handle)) {
-		descendants.push(child, ...nativeDescendants(child, depth + 1));
-	}
-	return descendants;
-}
-
 function messageChannelId(message: Message): string | undefined {
 	return message.channel_id ?? message.channelId;
 }
@@ -188,14 +174,6 @@ function contentText(value: unknown): string {
 
 	const record = value as AnyRecord;
 	return `${contentText(record.content)}${typeof record.originalLink === 'string' ? record.originalLink : ''}${typeof record.text === 'string' ? record.text : ''}`;
-}
-
-function sourcePrefix(message: Message): string {
-	const text = contentText(message.content);
-	MESSAGE_LINK_REGEX.lastIndex = 0;
-	const match = MESSAGE_LINK_REGEX.exec(text);
-	MESSAGE_LINK_REGEX.lastIndex = 0;
-	return match ? text.slice(0, match.index).trim() : '';
 }
 
 function linkedTargets(message: Message): LinkTarget[] {
@@ -348,6 +326,14 @@ function measure(view: NativeObjectHandle): NativeFabricFrame {
 
 function setNativeFrame(view: NativeObjectHandle, frame: NativeFabricFrame): void {
 	if (!objc) return;
+	const current = measure(view);
+	if (
+		Math.abs(current.x - frame.x) <= 0.25 &&
+		Math.abs(current.y - frame.y) <= 0.25 &&
+		Math.abs(current.width - frame.width) <= 0.25 &&
+		Math.abs(current.height - frame.height) <= 0.25
+	)
+		return;
 	try {
 		const rect = objc.struct('CGRect', {
 			origin: { x: frame.x, y: frame.y },
@@ -362,7 +348,7 @@ function createSurfaceHost(
 	content: NativeObjectHandle,
 ): {
 	cellFrame: NativeFabricFrame;
-	hiddenChildren: HiddenChild[];
+	contentHeight: number;
 	hostX: number;
 	hostY: number;
 	layoutPath: LayoutNode[];
@@ -375,17 +361,13 @@ function createSurfaceHost(
 		const children = nativeChildren(content);
 		const parent = children[1] ?? content;
 		const parentFrame = measure(parent);
-		const hiddenChildren = nativeDescendants(parent).map((view) => ({
-			hidden: Boolean(nativeCall(view, 'isHidden')),
-			view,
-		}));
 		const layoutPath = createLayoutPath(parent);
 		const hostX = 0;
-		const hostY = 0;
-		for (const child of hiddenChildren) nativeCall(child.view, 'setHidden:', true);
+		const contentHeight = parentFrame.height;
+		const hostY = contentHeight + 8;
 		return {
 			cellFrame,
-			hiddenChildren,
+			contentHeight,
 			hostX,
 			hostY,
 			layoutPath,
@@ -424,12 +406,13 @@ function linkedCellHeight(cell: NativeObjectHandle): number | null {
 	const parent = children[1] ?? content;
 	const layoutPath = createLayoutPath(parent);
 	if (layoutPath.length === 0) return null;
-	let childHeight = EMBED_HEIGHT;
+	const embeddedHeight = layoutPath[0].frame.height + 8 + EMBED_HEIGHT;
+	let childHeight = embeddedHeight;
 	for (let index = 0; index < layoutPath.length; index++) {
 		const frame = layoutPath[index].frame;
 		childHeight =
 			index === 0
-				? EMBED_HEIGHT
+				? embeddedHeight
 				: Math.max(frame.height, layoutPath[index - 1].frame.y + childHeight);
 	}
 	const top = layoutPath[layoutPath.length - 1];
@@ -465,7 +448,7 @@ function shiftTableRows(table: NativeObjectHandle): void {
 	for (const row of rows) {
 		const key = cellKey(row);
 		if (!key) continue;
-		const state = [...states].find((item) => cellKey(item.cell) === key);
+		const state = states.find((item) => cellKey(item.cell) === key);
 		const currentFrame = measure(row);
 		const baseFrame = rowBaseFrames.get(key) ?? state?.cellFrame ?? currentFrame;
 		rowBaseFrames.set(key, baseFrame);
@@ -615,16 +598,25 @@ function buildSurfaceContent(
 function surfaceFrame(state: SurfaceState, height: number): void {
 	if (!fabric || state.layoutPath.length === 0) return;
 	const nextHeight = Math.min(Math.max(height, EMBED_HEIGHT), MAX_HEIGHT);
+	const previousRowHeight = state.rowHeight;
+	const currentCellFrame = measure(state.cell);
+	state.cellFrame = {
+		...state.cellFrame,
+		x: currentCellFrame.x,
+		y: currentCellFrame.y,
+		width: currentCellFrame.width,
+	};
 	let childHeight = nextHeight;
 	for (let index = 0; index < state.layoutPath.length; index++) {
 		const node = state.layoutPath[index];
-		const frame = node.frame;
+		const frame = measure(node);
+		const baseFrame = node.frame;
 		const nextFrame = {
 			...frame,
 			height:
 				index === 0
-					? nextHeight
-					: Math.max(frame.height, state.layoutPath[index - 1].frame.y + childHeight),
+					? state.contentHeight + 8 + nextHeight
+					: Math.max(baseFrame.height, baseFrame.y + childHeight),
 		};
 		setNativeFrame(node.view, nextFrame);
 		nativeCall(node.view, 'setClipsToBounds:', false);
@@ -632,10 +624,7 @@ function surfaceFrame(state: SurfaceState, height: number): void {
 	}
 	const top = state.layoutPath[state.layoutPath.length - 1];
 	state.rowHeight = Math.max(state.cellFrame.height, top.frame.y + childHeight);
-	setNativeFrame(state.cell, {
-		...state.cellFrame,
-		height: state.rowHeight,
-	});
+	setNativeFrame(state.cell, { ...currentCellFrame, height: state.rowHeight });
 	nativeCall(state.cell, 'setClipsToBounds:', false);
 	state.height = nextHeight;
 	try {
@@ -647,7 +636,7 @@ function surfaceFrame(state: SurfaceState, height: number): void {
 		});
 	} catch {}
 	const table = tableForCell(state.cell);
-	if (table) shiftTableRows(table);
+	if (table && Math.abs(previousRowHeight - state.rowHeight) > 0.25) shiftTableRows(table);
 }
 
 function clearSurfaceFrameTimers(surfaceId: string): void {
@@ -660,7 +649,7 @@ function clearSurfaceFrameTimers(surfaceId: string): void {
 function scheduleSurfaceFrame(surfaceId: string, state: SurfaceState): void {
 	clearSurfaceFrameTimers(surfaceId);
 	const timers: ReturnType<typeof setTimeout>[] = [];
-	for (const delay of [0, 16, 64, 160, 320, 640, 1000, 1600, 2400]) {
+	for (const delay of [0, 48, 160, 320]) {
 		timers.push(
 			setTimeout(() => {
 				if (surfaces.get(surfaceId) !== state) return;
@@ -675,8 +664,6 @@ function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 	const state = surfaces.get(surfaceId);
 	const { React, ReactNative } = metro.common;
 	if (!state || !chatItem) return React.createElement(ReactNative.View, { style: { height: 1 } });
-	const prefix = sourcePrefix(state.source);
-
 	const onLayout = (event: AnyRecord) => {
 		const height = Number(event?.nativeEvent?.layout?.height) || state.height;
 		surfaceFrame(state, height);
@@ -687,32 +674,15 @@ function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 			onLayout,
 			style: {
 				backgroundColor: '#2b2d31',
-				borderLeftColor: '#5865f2',
-				borderLeftWidth: 3,
 				borderRadius: 8,
 				minHeight: EMBED_HEIGHT,
 				overflow: 'hidden',
 				paddingLeft: 8,
-				paddingTop: prefix ? 8 : 12,
+				paddingTop: 8,
 				width: state.width,
 			},
 		},
-		prefix
-			? React.createElement(
-					React.Fragment,
-					null,
-					React.createElement(
-						ReactNative.Text,
-						{ style: { color: '#dbdee1', fontSize: 15, lineHeight: 20, marginLeft: 4 } },
-						prefix,
-					),
-					React.createElement(
-						ReactNative.View,
-						{ style: { marginTop: 16 } },
-						React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
-					),
-				)
-			: React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
+		React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
 	);
 }
 
@@ -741,7 +711,6 @@ function removeCellSurface(key: string, clearRowBase: boolean = false): void {
 	const surface = surfaces.get(state.surfaceId);
 	if (surface) {
 		clearSurfaceFrameTimers(state.surfaceId);
-		for (const child of surface.hiddenChildren) nativeCall(child.view, 'setHidden:', child.hidden);
 		for (const node of surface.layoutPath) setNativeFrame(node.view, node.frame);
 		setNativeFrame(surface.cell, surface.cellFrame);
 		try {
@@ -781,10 +750,6 @@ function renderCell(cell: NativeObjectHandle): boolean {
 		const surface = surfaces.get(current.surfaceId);
 		if (surface?.target.id === target.id) {
 			surface.source = source;
-			try {
-				fabric.update(surface.surface, { targetMessageId: target.id });
-			} catch {}
-			scheduleSurfaceFrame(current.surfaceId, surface);
 			return false;
 		}
 		removeCellSurface(key);
@@ -808,7 +773,7 @@ function renderCell(cell: NativeObjectHandle): boolean {
 		surface: null as unknown as NativeFabricSurface,
 		target,
 		width: host.width,
-		hiddenChildren: host.hiddenChildren,
+		contentHeight: host.contentHeight,
 		cellFrame: host.cellFrame,
 		layoutPath: host.layoutPath,
 	};
@@ -828,7 +793,6 @@ function renderCell(cell: NativeObjectHandle): boolean {
 		scheduleSurfaceFrame(surfaceId, state);
 		return false;
 	} catch {
-		for (const child of host.hiddenChildren) nativeCall(child.view, 'setHidden:', child.hidden);
 		for (const node of host.layoutPath) setNativeFrame(node.view, node.frame);
 		setNativeFrame(cell, host.cellFrame);
 		surfaces.delete(surfaceId);
@@ -914,15 +878,6 @@ function installHooks(): void {
 			);
 		} catch {}
 	}
-	try {
-		hookTokens.push(
-			objc.hook('DCDTableView', 'layoutSubviews', {
-				after: ({ self }) => {
-					setTimeout(() => shiftTableRows(self), 0);
-				},
-			}),
-		);
-	} catch {}
 }
 
 function install(context: PluginContext): void {
