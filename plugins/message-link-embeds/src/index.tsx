@@ -41,6 +41,11 @@ type MessageActions = {
 	fetchMessage?: (target: LinkTarget) => Promise<Message | null>;
 };
 
+type SelectedChannel = {
+	getChannelId?: () => string | undefined;
+	getLastSelectedChannelId?: () => string | undefined;
+};
+
 type MessageRecordConstructor = new (message: AnyRecord) => Message;
 
 type RowGenerator = {
@@ -79,6 +84,7 @@ let objc: NativeObjCBridge | null = null;
 let fabric: NativeFabricBridge | null = null;
 let messages: MessageStore | null = null;
 let messageActions: MessageActions | null = null;
+let selectedChannel: SelectedChannel | null = null;
 let messageRecord: MessageRecordConstructor | null = null;
 let rowManager: RowManagerConstructor | null = null;
 let chatItem: ChatItemComponent | null = null;
@@ -168,6 +174,16 @@ function linkedMessage(target: LinkTarget): Message | null {
 	return message;
 }
 
+function stringFromNative(value: unknown, selector: string): string | undefined {
+	if (!value || typeof value !== 'object') return undefined;
+	const result = nativeCall(value as NativeObjectHandle, selector);
+	return typeof result === 'string' ? result : undefined;
+}
+
+function currentChannelId(): string | undefined {
+	return selectedChannel?.getChannelId?.() ?? selectedChannel?.getLastSelectedChannelId?.();
+}
+
 function refreshCells(): void {
 	for (const cell of activeCells.values()) scheduleCell(cell);
 }
@@ -226,7 +242,21 @@ function messageFromValue(value: unknown, depth: number = 0): Message | undefine
 
 function messageForCell(cell: NativeObjectHandle): Message | undefined {
 	const viewModel = nativeIvar(cell, 'viewModel') ?? nativeCall(cell, 'viewModel');
-	return messageFromValue(viewModel) ?? messageFromValue(nativeIvar(cell, 'message'));
+	const direct = messageFromValue(viewModel) ?? messageFromValue(nativeIvar(cell, 'message'));
+	if (direct?.id && direct.content !== undefined) return direct;
+
+	const nativeMessage =
+		(viewModel && typeof viewModel === 'object'
+			? (nativeIvar(viewModel as NativeObjectHandle, 'message') ??
+				nativeCall(viewModel as NativeObjectHandle, 'message'))
+			: null) ?? nativeIvar(cell, 'message');
+	const messageId = stringFromNative(nativeMessage, 'id') ?? direct?.id;
+	const channelId =
+		stringFromNative(nativeMessage, 'channelId') ??
+		stringFromNative(nativeMessage, 'channel_id') ??
+		currentChannelId();
+	if (!messageId || !channelId) return direct;
+	return messages?.getMessage?.(channelId, messageId) ?? direct;
 }
 
 function cellKey(cell: NativeObjectHandle): string | undefined {
@@ -442,7 +472,7 @@ function renderCell(cell: NativeObjectHandle): boolean {
 		source,
 		surface: null as unknown as NativeFabricSurface,
 		target,
-		width: containerFrame.width,
+		width: containerFrame.width || measure(cell).width || 320,
 	};
 	surfaces.set(surfaceId, state);
 	try {
@@ -492,7 +522,10 @@ function installHooks(): void {
 		after: ({ self }) => {
 			if (!nativeCall(self, 'window')) {
 				const key = cellKey(self);
-				if (key) removeCellSurface(key);
+				if (key) {
+					activeCells.delete(key);
+					removeCellSurface(key);
+				}
 				return;
 			}
 			scheduleCell(self);
@@ -514,6 +547,7 @@ function install(context: PluginContext): void {
 	fabric = native.fabric;
 	messages = metro.findStore('MessageStore', { short: false }) ?? metro.findStore('Message');
 	messageActions = metro.findByProps('fetchMessage');
+	selectedChannel = metro.findByProps('getLastSelectedChannelId', 'getChannelId');
 	messageRecord = metro.findByName('MessageRecord');
 	rowManager = metro.findByName('RowManager');
 	const module = metro.findByFilePath(CHAT_ITEM_PATH, { interop: false });
@@ -570,6 +604,7 @@ function stop(): void {
 	fabric = null;
 	messages = null;
 	messageActions = null;
+	selectedChannel = null;
 	messageRecord = null;
 	rowManager = null;
 	chatItem = null;
