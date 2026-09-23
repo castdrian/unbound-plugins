@@ -17,6 +17,6 @@
 		"native.objc.hooks",
 		"native.fabric.mount"
 	],
-	"minNativePluginApi": "1.1.0",
+	"minNativePluginApi": "1.0.0",
 	"main": "index.tsx"
 }
