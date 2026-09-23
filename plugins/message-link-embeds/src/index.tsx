@@ -10,13 +10,15 @@ import type {
 } from '@unbound-app/api/native';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
-const SURFACE_MODULE = 'UnboundMessageLinkSurface';
+const SURFACE_MODULE = 'MessageLinkSurface';
 const ESTIMATED_HEIGHT = 168;
+const EMBED_HEIGHT = 96;
 const MAX_HEIGHT = 480;
 const MESSAGE_LINK_REGEX =
 	/https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
 
 type AnyRecord = Record<string, any>;
+type NativeOriginal = (...args: unknown[]) => unknown;
 
 type Message = AnyRecord & {
 	author?: AnyRecord;
@@ -74,16 +76,29 @@ type SurfaceProps = {
 
 type SurfaceState = {
 	cell: NativeObjectHandle;
-	container: NativeObjectHandle;
 	generator: RowGenerator;
 	height: number;
+	hostX: number;
 	hostY: number;
-	parent: NativeObjectHandle;
+	layoutPath: LayoutNode[];
 	record: Message;
+	rowHeight: number;
 	source: Message;
 	surface: NativeFabricSurface;
 	target: Message;
 	width: number;
+	hiddenChildren: HiddenChild[];
+	cellFrame: NativeFabricFrame;
+};
+
+type LayoutNode = {
+	frame: NativeFabricFrame;
+	view: NativeObjectHandle;
+};
+
+type HiddenChild = {
+	hidden: boolean;
+	view: NativeObjectHandle;
 };
 
 type CellState = {
@@ -110,6 +125,9 @@ const pendingMessages = new Set<string>();
 const cellStates = new Map<string, CellState>();
 const activeCells = new Map<string, NativeObjectHandle>();
 const surfaces = new Map<string, SurfaceState>();
+const surfaceFrameTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+const sizeOverrides = new Map<string, number>();
+const rowBaseFrames = new Map<string, NativeFabricFrame>();
 const pendingCells = new Set<string>();
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
@@ -135,11 +153,24 @@ function nativeChildren(handle: NativeObjectHandle): NativeObjectHandle[] {
 	const subviews = nativeCall(handle, 'subviews');
 	if (!subviews || typeof subviews !== 'object') return [];
 	if (Array.isArray(subviews)) return subviews as NativeObjectHandle[];
+	if ('length' in subviews)
+		return Array.from(subviews as ArrayLike<NativeObjectHandle | null | undefined>).filter(
+			(value): value is NativeObjectHandle => Boolean(value),
+		);
 	try {
 		return objc.array(subviews as NativeObjectHandle) as NativeObjectHandle[];
 	} catch {
 		return [];
 	}
+}
+
+function nativeDescendants(handle: NativeObjectHandle, depth: number = 0): NativeObjectHandle[] {
+	if (depth > 16) return [];
+	const descendants: NativeObjectHandle[] = [];
+	for (const child of nativeChildren(handle)) {
+		descendants.push(child, ...nativeDescendants(child, depth + 1));
+	}
+	return descendants;
 }
 
 function messageChannelId(message: Message): string | undefined {
@@ -157,6 +188,14 @@ function contentText(value: unknown): string {
 
 	const record = value as AnyRecord;
 	return `${contentText(record.content)}${typeof record.originalLink === 'string' ? record.originalLink : ''}${typeof record.text === 'string' ? record.text : ''}`;
+}
+
+function sourcePrefix(message: Message): string {
+	const text = contentText(message.content);
+	MESSAGE_LINK_REGEX.lastIndex = 0;
+	const match = MESSAGE_LINK_REGEX.exec(text);
+	MESSAGE_LINK_REGEX.lastIndex = 0;
+	return match ? text.slice(0, match.index).trim() : '';
 }
 
 function linkedTargets(message: Message): LinkTarget[] {
@@ -322,35 +361,129 @@ function createSurfaceHost(
 	cell: NativeObjectHandle,
 	content: NativeObjectHandle,
 ): {
-	container: NativeObjectHandle;
+	cellFrame: NativeFabricFrame;
+	hiddenChildren: HiddenChild[];
+	hostX: number;
 	hostY: number;
+	layoutPath: LayoutNode[];
 	parent: NativeObjectHandle;
 	width: number;
 } | null {
 	if (!objc) return null;
 	try {
-		const parent = (nativeCall(cell, 'contentView') ?? cell) as NativeObjectHandle;
+		const cellFrame = measure(cell);
+		const children = nativeChildren(content);
+		const parent = children[1] ?? content;
 		const parentFrame = measure(parent);
-		const contentFrame = measure(content);
-		const hostY = Math.max(parentFrame.height, contentFrame.y + containerOriginY(content)) + 6;
-		const width = contentFrame.width || parentFrame.width || measure(cell).width || 320;
-		const rect = objc.struct('CGRect', {
-			origin: { x: contentFrame.x, y: hostY },
-			size: { width, height: 1 },
-		});
-		const allocated = objc.alloc('UIView');
-		const initialized = nativeCall(allocated, 'initWithFrame:', rect) as NativeObjectHandle | null;
-		const container = initialized ?? allocated;
-		nativeCall(parent, 'addSubview:', container);
-		setNativeFrame(container, { x: contentFrame.x, y: hostY, width, height: 1 });
-		setNativeFrame(parent, { ...parentFrame, height: hostY + 1 });
-		setNativeFrame(cell, { ...measure(cell), height: hostY + 1 });
-		nativeCall(parent, 'setClipsToBounds:', false);
-		nativeCall(cell, 'setClipsToBounds:', false);
-		nativeCall(container, 'setClipsToBounds:', false);
-		return { container, hostY, parent, width };
+		const hiddenChildren = nativeDescendants(parent).map((view) => ({
+			hidden: Boolean(nativeCall(view, 'isHidden')),
+			view,
+		}));
+		const layoutPath = createLayoutPath(parent);
+		const hostX = 0;
+		const hostY = 0;
+		for (const child of hiddenChildren) nativeCall(child.view, 'setHidden:', true);
+		return {
+			cellFrame,
+			hiddenChildren,
+			hostX,
+			hostY,
+			layoutPath,
+			parent,
+			width: parentFrame.width || cellFrame.width || 320,
+		};
 	} catch {
 		return null;
+	}
+}
+
+function createLayoutPath(parent: NativeObjectHandle): LayoutNode[] {
+	if (!objc) return [];
+	const layoutPath: LayoutNode[] = [];
+	let current: NativeObjectHandle | null = parent;
+	for (let depth = 0; depth < 12 && current; depth++) {
+		if ((objc.className(current) ?? '') === 'DCDMessageTableViewCell') break;
+		layoutPath.push({ frame: measure(current), view: current });
+		current = nativeCall(current, 'superview') as NativeObjectHandle | null;
+	}
+	return layoutPath;
+}
+
+function linkedCellHeight(cell: NativeObjectHandle): number | null {
+	const key = cellKey(cell);
+	if (!key) return null;
+	const source = messageForCell(cell);
+	if (!source?.id || linkedTargets(source).length === 0) {
+		sizeOverrides.delete(key);
+		return null;
+	}
+	const cached = sizeOverrides.get(key);
+	if (cached !== undefined) return cached;
+	const content = contentContainer(cell);
+	const children = nativeChildren(content);
+	const parent = children[1] ?? content;
+	const layoutPath = createLayoutPath(parent);
+	if (layoutPath.length === 0) return null;
+	let childHeight = EMBED_HEIGHT;
+	for (let index = 0; index < layoutPath.length; index++) {
+		const frame = layoutPath[index].frame;
+		childHeight =
+			index === 0
+				? EMBED_HEIGHT
+				: Math.max(frame.height, layoutPath[index - 1].frame.y + childHeight);
+	}
+	const top = layoutPath[layoutPath.length - 1];
+	const height = Math.max(measure(cell).height, top.frame.y + childHeight);
+	sizeOverrides.set(key, height);
+	return height;
+}
+
+function tableRows(table: NativeObjectHandle): NativeObjectHandle[] {
+	if (!objc) return [];
+	return nativeChildren(table).filter((child) => {
+		const className = objc?.className(child) ?? '';
+		return (
+			className.includes('MessageTableViewCell') || className.includes('SeparatorTableViewCell')
+		);
+	});
+}
+
+function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
+	let current: NativeObjectHandle | null = cell;
+	for (let depth = 0; depth < 12 && current; depth++) {
+		const className = objc?.className(current) ?? '';
+		if (className === 'DCDTableView' || className === 'NSKVONotifying_DCDTableView') return current;
+		current = nativeCall(current, 'superview') as NativeObjectHandle | null;
+	}
+	return null;
+}
+
+function shiftTableRows(table: NativeObjectHandle): void {
+	const rows = tableRows(table);
+	if (rows.length === 0) return;
+	const states = [...surfaces.values()];
+	for (const row of rows) {
+		const key = cellKey(row);
+		if (!key) continue;
+		const state = [...states].find((item) => cellKey(item.cell) === key);
+		const currentFrame = measure(row);
+		const baseFrame = rowBaseFrames.get(key) ?? state?.cellFrame ?? currentFrame;
+		rowBaseFrames.set(key, baseFrame);
+		let offset = 0;
+		for (const other of states) {
+			if (other.cellFrame.y < baseFrame.y - 0.5)
+				offset += Math.max(0, other.rowHeight - other.cellFrame.height);
+		}
+		const nextFrame = {
+			...baseFrame,
+			y: baseFrame.y + offset,
+			height: state?.rowHeight ?? baseFrame.height,
+		};
+		if (
+			Math.abs(currentFrame.y - nextFrame.y) > 0.5 ||
+			Math.abs(currentFrame.height - nextFrame.height) > 0.5
+		)
+			setNativeFrame(row, nextFrame);
 	}
 }
 
@@ -399,17 +532,6 @@ function contentContainer(cell: NativeObjectHandle): NativeObjectHandle {
 	return fallback;
 }
 
-function containerOriginY(container: NativeObjectHandle): number {
-	const children = nativeChildren(container);
-	if (children.length === 0) return 0;
-	let bottom = 0;
-	for (const child of children) {
-		const frame = measure(child);
-		bottom = Math.max(bottom, frame.y + frame.height);
-	}
-	return bottom + 6;
-}
-
 function buildRecord(target: Message, channelId: string): Message {
 	const Constructor = messageRecord;
 	if (!Constructor) throw new Error('MessageRecord is unavailable');
@@ -419,29 +541,41 @@ function buildRecord(target: Message, channelId: string): Message {
 			? payload.timestamp
 			: new Date(payload.timestamp ?? Date.now());
 	const content = contentText(payload.content);
-	return new Constructor({
+	const record = new Constructor({
+		...payload,
 		id: payload.id,
 		type: 0,
 		channel_id: channelId,
+		channelId,
+		guild_id: payload.guild_id ?? payload.guildId ?? null,
+		guildId: payload.guildId ?? payload.guild_id ?? null,
 		content,
 		author: payload.author,
 		attachments: payload.attachments ?? [],
 		embeds: payload.embeds ?? [],
 		mentions: payload.mentions ?? [],
 		mention_roles: payload.mention_roles ?? [],
+		mentionRoles: payload.mentionRoles ?? payload.mention_roles ?? [],
 		timestamp,
 		edited_timestamp: payload.edited_timestamp ?? null,
+		editedTimestamp: payload.editedTimestamp ?? payload.edited_timestamp ?? null,
 		pinned: Boolean(payload.pinned),
 		mention_everyone: Boolean(payload.mention_everyone),
+		mentionEveryone: Boolean(payload.mentionEveryone ?? payload.mention_everyone),
 		tts: Boolean(payload.tts),
 		flags: payload.flags ?? 0,
-		components: [],
+		components: payload.components ?? [],
 		reactions: payload.reactions ?? [],
-		sticker_items: payload.sticker_items ?? [],
+		sticker_items: payload.sticker_items ?? payload.stickerItems ?? [],
 		stickers: payload.stickers ?? payload.sticker_items ?? [],
+		message_reference: payload.message_reference ?? payload.messageReference ?? null,
+		messageReference: payload.messageReference ?? payload.message_reference ?? null,
+		message_snapshots: payload.message_snapshots ?? payload.messageSnapshots ?? [],
+		messageSnapshots: payload.messageSnapshots ?? payload.message_snapshots ?? [],
 		state: payload.state ?? 'SENT',
 		nonce: payload.nonce ?? null,
 	});
+	return record;
 }
 
 function buildSurfaceContent(
@@ -463,8 +597,15 @@ function buildSurfaceContent(
 			message: record,
 		});
 		if (row) {
+			row.renderContentOnly = false;
 			row.separatorBefore = false;
+			const renderedMessage = row.message as AnyRecord | undefined;
+			if (renderedMessage) {
+				renderedMessage.type = 0;
+				renderedMessage.renderContentOnly = false;
+			}
 		}
+		if (!row) return undefined;
 		return { generator, record };
 	} catch {
 		return undefined;
@@ -472,35 +613,69 @@ function buildSurfaceContent(
 }
 
 function surfaceFrame(state: SurfaceState, height: number): void {
-	if (!fabric) return;
-	const containerFrame = measure(state.container);
-	const parentFrame = measure(state.parent);
-	const nextHeight = Math.min(Math.max(height, 1), MAX_HEIGHT);
-	const requiredHeight = state.hostY + nextHeight;
-	if (parentFrame.height < requiredHeight) {
-		setNativeFrame(state.parent, { ...parentFrame, height: requiredHeight });
-		setNativeFrame(state.cell, { ...measure(state.cell), height: requiredHeight });
-		nativeCall(state.parent, 'setClipsToBounds:', false);
-		nativeCall(state.cell, 'setClipsToBounds:', false);
+	if (!fabric || state.layoutPath.length === 0) return;
+	const nextHeight = Math.min(Math.max(height, EMBED_HEIGHT), MAX_HEIGHT);
+	let childHeight = nextHeight;
+	for (let index = 0; index < state.layoutPath.length; index++) {
+		const node = state.layoutPath[index];
+		const frame = node.frame;
+		const nextFrame = {
+			...frame,
+			height:
+				index === 0
+					? nextHeight
+					: Math.max(frame.height, state.layoutPath[index - 1].frame.y + childHeight),
+		};
+		setNativeFrame(node.view, nextFrame);
+		nativeCall(node.view, 'setClipsToBounds:', false);
+		childHeight = nextFrame.height;
 	}
-	if (containerFrame.height < nextHeight)
-		setNativeFrame(state.container, { ...containerFrame, height: nextHeight });
-	state.width = containerFrame.width || state.width;
+	const top = state.layoutPath[state.layoutPath.length - 1];
+	state.rowHeight = Math.max(state.cellFrame.height, top.frame.y + childHeight);
+	setNativeFrame(state.cell, {
+		...state.cellFrame,
+		height: state.rowHeight,
+	});
+	nativeCall(state.cell, 'setClipsToBounds:', false);
 	state.height = nextHeight;
 	try {
 		fabric.setFrame(state.surface, {
-			x: 0,
-			y: 0,
+			x: state.hostX,
+			y: state.hostY,
 			width: state.width,
 			height: nextHeight,
 		});
 	} catch {}
+	const table = tableForCell(state.cell);
+	if (table) shiftTableRows(table);
+}
+
+function clearSurfaceFrameTimers(surfaceId: string): void {
+	const timers = surfaceFrameTimers.get(surfaceId);
+	if (!timers) return;
+	for (const timer of timers) clearTimeout(timer);
+	surfaceFrameTimers.delete(surfaceId);
+}
+
+function scheduleSurfaceFrame(surfaceId: string, state: SurfaceState): void {
+	clearSurfaceFrameTimers(surfaceId);
+	const timers: ReturnType<typeof setTimeout>[] = [];
+	for (const delay of [0, 16, 64, 160, 320, 640, 1000, 1600, 2400]) {
+		timers.push(
+			setTimeout(() => {
+				if (surfaces.get(surfaceId) !== state) return;
+				surfaceFrame(state, state.height);
+			}, delay),
+		);
+	}
+	surfaceFrameTimers.set(surfaceId, timers);
 }
 
 function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 	const state = surfaces.get(surfaceId);
 	const { React, ReactNative } = metro.common;
 	if (!state || !chatItem) return React.createElement(ReactNative.View, { style: { height: 1 } });
+	const prefix = sourcePrefix(state.source);
 
 	const onLayout = (event: AnyRecord) => {
 		const height = Number(event?.nativeEvent?.layout?.height) || state.height;
@@ -511,16 +686,33 @@ function MessageSurface({ surfaceId }: SurfaceProps): unknown {
 		{
 			onLayout,
 			style: {
-				backgroundColor: 'rgba(4, 4, 5, 0.24)',
+				backgroundColor: '#2b2d31',
+				borderLeftColor: '#5865f2',
+				borderLeftWidth: 3,
 				borderRadius: 8,
-				minHeight: 1,
+				minHeight: EMBED_HEIGHT,
 				overflow: 'hidden',
-				position: 'absolute',
-				top: state.hostY,
-				width: '100%',
+				paddingLeft: 8,
+				paddingTop: prefix ? 8 : 12,
+				width: state.width,
 			},
 		},
-		React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
+		prefix
+			? React.createElement(
+					React.Fragment,
+					null,
+					React.createElement(
+						ReactNative.Text,
+						{ style: { color: '#dbdee1', fontSize: 15, lineHeight: 20, marginLeft: 4 } },
+						prefix,
+					),
+					React.createElement(
+						ReactNative.View,
+						{ style: { marginTop: 16 } },
+						React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
+					),
+				)
+			: React.createElement(chatItem, { message: state.record, rowGenerator: state.generator }),
 	);
 }
 
@@ -539,18 +731,26 @@ function registerSurface(): boolean {
 	}
 }
 
-function removeCellSurface(key: string): void {
+function removeCellSurface(key: string, clearRowBase: boolean = false): void {
 	const state = cellStates.get(key);
-	if (!state || !fabric) return;
+	if (!state || !fabric) {
+		cellStates.delete(key);
+		if (clearRowBase) rowBaseFrames.delete(key);
+		return;
+	}
 	const surface = surfaces.get(state.surfaceId);
 	if (surface) {
+		clearSurfaceFrameTimers(state.surfaceId);
+		for (const child of surface.hiddenChildren) nativeCall(child.view, 'setHidden:', child.hidden);
+		for (const node of surface.layoutPath) setNativeFrame(node.view, node.frame);
+		setNativeFrame(surface.cell, surface.cellFrame);
 		try {
 			fabric.unmount(surface.surface);
 		} catch {}
-		nativeCall(surface.container, 'removeFromSuperview');
 		surfaces.delete(state.surfaceId);
 	}
 	cellStates.delete(key);
+	if (clearRowBase) rowBaseFrames.delete(key);
 }
 
 function renderCell(cell: NativeObjectHandle): boolean {
@@ -565,6 +765,7 @@ function renderCell(cell: NativeObjectHandle): boolean {
 
 	const targets = linkedTargets(source);
 	if (targets.length === 0) {
+		sizeOverrides.delete(key);
 		removeCellSurface(key);
 		return false;
 	}
@@ -583,6 +784,7 @@ function renderCell(cell: NativeObjectHandle): boolean {
 			try {
 				fabric.update(surface.surface, { targetMessageId: target.id });
 			} catch {}
+			scheduleSurfaceFrame(current.surfaceId, surface);
 			return false;
 		}
 		removeCellSurface(key);
@@ -596,32 +798,39 @@ function renderCell(cell: NativeObjectHandle): boolean {
 	const surfaceId = `message-link-${key}-${target.id}`;
 	const state = {
 		cell,
-		container: host.container,
 		generator: surfaceContent.generator,
 		height: ESTIMATED_HEIGHT,
+		hostX: host.hostX,
 		hostY: host.hostY,
-		parent: host.parent,
 		record: surfaceContent.record,
+		rowHeight: host.cellFrame.height,
 		source,
 		surface: null as unknown as NativeFabricSurface,
 		target,
 		width: host.width,
+		hiddenChildren: host.hiddenChildren,
+		cellFrame: host.cellFrame,
+		layoutPath: host.layoutPath,
 	};
 	surfaces.set(surfaceId, state);
 	try {
-		state.surface = fabric.mount(host.container, SURFACE_MODULE, {
+		state.surface = fabric.mount(host.parent, SURFACE_MODULE, {
 			surfaceId,
 			targetMessageId: target.id,
 		});
 		fabric.setSize(
 			state.surface,
-			{ width: state.width, height: 1 },
+			{ width: state.width, height: EMBED_HEIGHT },
 			{ width: state.width, height: MAX_HEIGHT },
 		);
-		surfaceFrame(state, ESTIMATED_HEIGHT);
+		surfaceFrame(state, EMBED_HEIGHT);
 		cellStates.set(key, { cell, surfaceId });
+		scheduleSurfaceFrame(surfaceId, state);
 		return false;
 	} catch {
+		for (const child of host.hiddenChildren) nativeCall(child.view, 'setHidden:', child.hidden);
+		for (const node of host.layoutPath) setNativeFrame(node.view, node.frame);
+		setNativeFrame(cell, host.cellFrame);
 		surfaces.delete(surfaceId);
 		return false;
 	}
@@ -643,8 +852,10 @@ function scheduleCell(cell: NativeObjectHandle, attempt: number = 0): void {
 }
 
 function scheduleVisibleCells(view: NativeObjectHandle, depth: number = 0): void {
-	if (depth > 16 || !objc) return;
-	if ((objc.className(view) ?? '') === 'DCDMessageTableViewCell') scheduleCell(view);
+	if (depth > 48 || !objc) return;
+	if ((objc.className(view) ?? '') === 'DCDMessageTableViewCell') {
+		scheduleCell(view);
+	}
 	for (const child of nativeChildren(view)) scheduleVisibleCells(child, depth + 1);
 }
 
@@ -659,6 +870,11 @@ function scheduleWindowCells(): void {
 
 function installHooks(): void {
 	if (!objc || hookTokens.length > 0) return;
+	const replaceSize = ({ self, original, args }: AnyRecord): unknown => {
+		const height = linkedCellHeight(self as NativeObjectHandle);
+		if (height === null || !objc) return (original as NativeOriginal)(...(args as unknown[]));
+		return objc.struct('CGSize', { width: measure(self as NativeObjectHandle).width, height });
+	};
 	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
 		after: ({ self }) => scheduleCell(self),
 	});
@@ -668,7 +884,7 @@ function installHooks(): void {
 				const key = cellKey(self);
 				if (key) {
 					activeCells.delete(key);
-					removeCellSurface(key);
+					removeCellSurface(key, true);
 				}
 				return;
 			}
@@ -678,10 +894,35 @@ function installHooks(): void {
 	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
 		after: ({ self }) => {
 			const key = cellKey(self);
-			if (key) removeCellSurface(key);
+			if (key) {
+				sizeOverrides.delete(key);
+				removeCellSurface(key, true);
+			}
 		},
 	});
 	hookTokens.push(layout, lifecycleHook, reuse);
+	for (const selector of [
+		'systemLayoutSizeFittingSize:',
+		'systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority:',
+		'sizeThatFits:',
+	]) {
+		try {
+			hookTokens.push(
+				objc.hook('DCDMessageTableViewCell', selector, {
+					replace: replaceSize,
+				}),
+			);
+		} catch {}
+	}
+	try {
+		hookTokens.push(
+			objc.hook('DCDTableView', 'layoutSubviews', {
+				after: ({ self }) => {
+					setTimeout(() => shiftTableRows(self), 0);
+				},
+			}),
+		);
+	} catch {}
 }
 
 function install(context: PluginContext): void {
@@ -735,9 +976,11 @@ function stop(): void {
 		try {
 			fabric?.unmount(surface.surface);
 		} catch {}
-		nativeCall(surface.container, 'removeFromSuperview');
 	}
+	for (const surfaceId of surfaceFrameTimers.keys()) clearSurfaceFrameTimers(surfaceId);
 	surfaces.clear();
+	sizeOverrides.clear();
+	rowBaseFrames.clear();
 	cellStates.clear();
 	activeCells.clear();
 	pendingCells.clear();
