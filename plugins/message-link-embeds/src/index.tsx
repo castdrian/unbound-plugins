@@ -17,7 +17,7 @@ const MAX_HEIGHT = 480;
 const MESSAGE_LINK_REGEX =
 	/https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(?:\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
 
-type AnyRecord = Record<string, any>;
+type AnyRecord = Record<string, unknown>;
 type NativeOriginal = (...args: unknown[]) => unknown;
 
 type Message = AnyRecord & {
