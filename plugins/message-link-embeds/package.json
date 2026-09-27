@@ -4,8 +4,12 @@
 	"description": "Embeds previews of messages that link to other Discord messages.",
 	"private": true,
 	"type": "module",
+	"imports": {
+		"#link-targets": "./src/link-targets.ts"
+	},
 	"scripts": {
-		"build": "rollup -c"
+		"build": "rollup -c",
+		"test": "bun test src/link-targets.test.ts"
 	},
 	"devDependencies": {
 		"@unbound-app/api": "latest",
