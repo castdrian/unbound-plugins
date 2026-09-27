@@ -16,12 +16,15 @@ import {
 	linkedTargets,
 	nativeUsernameColor,
 } from '#link-targets';
+import { enableAnimatedEmojiSources } from '#animated-emoji';
+import { reactionSnapshot } from '#reaction-state';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE_PREFIX = 'MessageLinkEmbedSurface';
 const MIN_SURFACE_HEIGHT = 72;
 const INITIAL_SURFACE_HEIGHT = MIN_SURFACE_HEIGHT;
 const MAX_SURFACE_HEIGHT = 520;
+const SURFACE_LAYOUT_SETTLE_DELAY = 80;
 const SURFACE_BOTTOM_TRIM = 5;
 const EMBED_BACKGROUND = '#2b2d31';
 const MAX_NATIVE_VIEW_DEPTH = 10;
@@ -42,7 +45,9 @@ type Message = AnyRecord & {
 	timestamp?: Date | string;
 };
 type MessageStore = {
+	addChangeListener?: (listener: () => void) => void;
 	getMessage?: (channelId: string, messageId: string) => Message | null;
+	removeChangeListener?: (listener: () => void) => void;
 };
 type MessageActions = {
 	fetchMessage?: (target: LinkTarget) => Promise<Message | null>;
@@ -72,6 +77,7 @@ type RowInput = {
 };
 type RowGenerator = {
 	generate: (input: RowInput) => AnyRecord | undefined;
+	setOptions?: (options: AnyRecord) => void;
 };
 type RowManagerConstructor = (...args: never[]) => unknown;
 type ChatItemProps = {
@@ -98,6 +104,9 @@ type EmbeddedSurfaceState = {
 	label: NativeObjectHandle;
 	labelHook: NativeHookToken | null;
 	messageId: string;
+	sourceChannelId: string;
+	sourceReactionSnapshot: string;
+	targetReactionSnapshot: string;
 	original: NativeObjectHandle;
 	range: { location: number; length: number };
 	record: Message;
@@ -110,9 +119,15 @@ type EmbeddedSurfaceState = {
 	height: number;
 	lastInvalidatedHeight: number;
 	applying: boolean;
+	layoutTimer: ReturnType<typeof setTimeout> | null;
+	pendingHeight: number | null;
+	repairTimer: ReturnType<typeof setTimeout> | null;
+	rowRefreshTimer: ReturnType<typeof setTimeout> | null;
+	renderRevision: number;
 };
 type SurfaceProps = {
 	surfaceId: string;
+	renderRevision: number;
 };
 type CellUpdateStatus = 'done' | 'retry' | 'waiting';
 
@@ -126,6 +141,8 @@ let messageRecord: MessageRecordConstructor | null = null;
 let rowManager: RowManagerConstructor | null = null;
 let chatItem: ChatItemComponent | null = null;
 let moduleListenerCleanup: (() => boolean) | null = null;
+let messageStoreListener: (() => void) | null = null;
+let messageSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let hooks: NativeHookToken[] = [];
 let lifecycle = 0;
 let surfaceModuleName = '';
@@ -149,6 +166,75 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 	} catch {
 		return null;
 	}
+}
+
+function syncMessageReactions(): void {
+	messageSyncTimer = null;
+	if (!messages || !fabric) return;
+
+	for (const state of cellStates.values()) {
+		const source = messages.getMessage?.(state.sourceChannelId, state.messageId);
+		const sourceReactionSnapshot = reactionSnapshot(source?.reactions);
+		if (source && sourceReactionSnapshot !== state.sourceReactionSnapshot) {
+			state.sourceReactionSnapshot = sourceReactionSnapshot;
+			scheduleRowRefresh(state);
+		}
+
+		const message = messages.getMessage?.(
+			state.selectedTarget.channelId,
+			state.selectedTarget.messageId,
+		);
+		if (!message) continue;
+		const targetReactionSnapshot = reactionSnapshot(message.reactions);
+		if (targetReactionSnapshot === state.targetReactionSnapshot) continue;
+		const content = buildEmbeddedContent(message, state.selectedTarget.channelId);
+		if (!content) continue;
+
+		state.targetReactionSnapshot = targetReactionSnapshot;
+		state.record = content.record;
+		state.generator = content.generator;
+		state.renderRevision++;
+		try {
+			if (state.surface) {
+				fabric.update(state.surface, {
+					renderRevision: state.renderRevision,
+					surfaceId: state.surfaceId,
+				});
+			}
+		} catch {
+			continue;
+		}
+	}
+}
+
+function scheduleMessageSync(): void {
+	if (messageSyncTimer) return;
+	const token = lifecycle;
+	messageSyncTimer = setTimeout(() => {
+		messageSyncTimer = null;
+		if (token === lifecycle) syncMessageReactions();
+	}, 0);
+}
+
+function installMessageStoreListener(): void {
+	if (messageStoreListener || !messages?.addChangeListener) return;
+	messageStoreListener = scheduleMessageSync;
+	messages.addChangeListener(messageStoreListener);
+}
+
+function removeMessageStoreListener(): void {
+	if (messageStoreListener) messages?.removeChangeListener?.(messageStoreListener);
+	messageStoreListener = null;
+	if (messageSyncTimer) clearTimeout(messageSyncTimer);
+	messageSyncTimer = null;
+}
+
+function scheduleRowRefresh(state: EmbeddedSurfaceState): void {
+	if (state.rowRefreshTimer) clearTimeout(state.rowRefreshTimer);
+	state.rowRefreshTimer = setTimeout(() => {
+		state.rowRefreshTimer = null;
+		if (cellStates.get(state.cellKey) === state) refreshRowSize(state, true);
+	}, 48);
 }
 
 function nativeRange(location: number, length: number): unknown {
@@ -350,11 +436,15 @@ function buildEmbeddedContent(target: Message, channelId: string): EmbeddedConte
 	if (!messageRecord || !rowManager) return;
 	try {
 		const record = buildRecord(target, channelId);
+		record.animateEmoji = true;
 		const usernameColor = nativeUsernameColor(record.colorString);
 		if (usernameColor !== undefined) record.usernameColor = usernameColor;
-		record.animateEmoji = true;
-		record.gifAutoPlay = true;
 		const generator = Reflect.construct(rowManager, []) as RowGenerator;
+		generator.setOptions?.({
+			animateEmoji: true,
+			animatingStickerMessageId: record.id,
+			gifAutoPlay: true,
+		});
 		const generate = generator.generate.bind(generator);
 		generator.generate = (input) => {
 			const row = generate(input);
@@ -364,6 +454,7 @@ function buildEmbeddedContent(target: Message, channelId: string): EmbeddedConte
 				renderedMessage.renderContentOnly = false;
 				renderedMessage.animateEmoji = true;
 				renderedMessage.gifAutoPlay = true;
+				enableAnimatedEmojiSources(renderedMessage.content);
 				if (usernameColor !== undefined) {
 					renderedMessage.colorString = usernameColor;
 					renderedMessage.usernameColor = usernameColor;
@@ -660,23 +751,60 @@ function repairSurface(state: EmbeddedSurfaceState): void {
 	const attributes = linkAttributes(attributedText, range);
 	state.font = attributes.font;
 	state.highlight = attributes.highlight;
-	applyAttachment(state);
+	applyAttachment(state, true);
+}
+
+function scheduleSurfaceRepair(state: EmbeddedSurfaceState): void {
+	if (state.applying || state.repairTimer) return;
+	state.repairTimer = setTimeout(() => {
+		state.repairTimer = null;
+		repairSurface(state);
+	}, 0);
+}
+
+function clearSurfaceTimers(state: EmbeddedSurfaceState): void {
+	if (state.layoutTimer) clearTimeout(state.layoutTimer);
+	if (state.repairTimer) clearTimeout(state.repairTimer);
+	if (state.rowRefreshTimer) clearTimeout(state.rowRefreshTimer);
+	state.layoutTimer = null;
+	state.repairTimer = null;
+	state.rowRefreshTimer = null;
+	state.pendingHeight = null;
 }
 
 function reportSurfaceLayout(surfaceId: string, height: number): void {
 	const state = surfaces.get(surfaceId);
 	if (!state || !Number.isFinite(height) || height <= 0 || height > MAX_SURFACE_HEIGHT) return;
 	const fittedHeight = Math.max(MIN_SURFACE_HEIGHT, height - SURFACE_BOTTOM_TRIM);
-	if (Math.abs(state.height - fittedHeight) < 2) return;
-	state.height = fittedHeight;
-	nativeCall(state.host, 'setFrame:', nativeFrame(state.width, fittedHeight));
-	applyAttachment(state, true);
+	const currentHeight = state.pendingHeight ?? state.height;
+	if (Math.abs(currentHeight - fittedHeight) < 2) return;
+	state.pendingHeight = fittedHeight;
+	if (state.layoutTimer) clearTimeout(state.layoutTimer);
+	state.layoutTimer = setTimeout(() => {
+		state.layoutTimer = null;
+		const settledHeight = state.pendingHeight;
+		state.pendingHeight = null;
+		if (
+			settledHeight === null ||
+			surfaces.get(state.surfaceId) !== state ||
+			Math.abs(state.height - settledHeight) < 2
+		)
+			return;
+		state.height = settledHeight;
+		nativeCall(state.host, 'setFrame:', nativeFrame(state.width, settledHeight));
+		applyAttachment(state, true);
+	}, SURFACE_LAYOUT_SETTLE_DELAY);
 }
 
 function MessageSurface({ surfaceId }: SurfaceProps): ReactNode {
 	const state = surfaces.get(surfaceId);
 	const { React, ReactNative } = metro.common;
 	if (!state || !chatItem) return React.createElement(ReactNative.View, { style: { height: 1 } });
+	const embeddedMessage = React.createElement(chatItem, {
+		key: surfaceId,
+		message: state.record,
+		rowGenerator: state.generator,
+	});
 	const onLayout = (event: AnyRecord) => {
 		const height = Number(event?.nativeEvent?.layout?.height);
 		if (height > 0) reportSurfaceLayout(surfaceId, height);
@@ -698,10 +826,7 @@ function MessageSurface({ surfaceId }: SurfaceProps): ReactNode {
 				width: state.width,
 			},
 		},
-		React.createElement(chatItem, {
-			message: state.record,
-			rowGenerator: state.generator,
-		}),
+		embeddedMessage,
 	);
 }
 
@@ -740,6 +865,7 @@ function createSurfaceState(
 	cell: NativeObjectHandle,
 	key: string,
 	info: NativeMessageInfo,
+	sourceChannelId: string,
 	target: LinkTarget,
 	channelName: string,
 	label: NativeObjectHandle,
@@ -765,6 +891,11 @@ function createSurfaceState(
 		label,
 		labelHook: null,
 		messageId: info.messageId,
+		sourceChannelId,
+		sourceReactionSnapshot: reactionSnapshot(
+			messages?.getMessage?.(sourceChannelId, info.messageId)?.reactions,
+		),
+		targetReactionSnapshot: reactionSnapshot(content.record.reactions),
 		original: attributedText,
 		range,
 		record: content.record,
@@ -777,16 +908,24 @@ function createSurfaceState(
 		height: INITIAL_SURFACE_HEIGHT,
 		lastInvalidatedHeight: -1,
 		applying: false,
+		layoutTimer: null,
+		pendingHeight: null,
+		repairTimer: null,
+		rowRefreshTimer: null,
+		renderRevision: 0,
 	};
 	surfaces.set(surfaceId, state);
 	try {
 		state.labelHook = objc.hook(
 			'DCDReusableYYLabel',
 			'setAttributedText:',
-			{ after: () => repairSurface(state) },
+			{ after: () => scheduleSurfaceRepair(state) },
 			{ instance: label },
 		);
-		state.surface = fabric.mount(host, surfaceModuleName, { surfaceId });
+		state.surface = fabric.mount(host, surfaceModuleName, {
+			renderRevision: state.renderRevision,
+			surfaceId,
+		});
 		fabric.setSize(
 			state.surface,
 			{ width, height: MIN_SURFACE_HEIGHT },
@@ -798,6 +937,7 @@ function createSurfaceState(
 		return state;
 	} catch {
 		cellStates.delete(key);
+		clearSurfaceTimers(state);
 		state.labelHook?.remove();
 		try {
 			if (state.surface) fabric.unmount(state.surface);
@@ -812,6 +952,7 @@ function createSurfaceState(
 function teardownSurface(key: string, restore: boolean): void {
 	const state = cellStates.get(key);
 	if (!state) return;
+	clearSurfaceTimers(state);
 	state.labelHook?.remove();
 	if (restore && objc && state.rendered && state.renderedText !== null) {
 		const current = nativeCall(state.label, 'attributedText') as NativeObjectHandle | null;
@@ -850,7 +991,7 @@ function updateExistingSurface(
 	const attributes = linkAttributes(attributedText, range);
 	state.font = attributes.font;
 	state.highlight = attributes.highlight;
-	applyAttachment(state);
+	applyAttachment(state, true);
 }
 
 function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
@@ -906,6 +1047,7 @@ function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
 			cell,
 			key,
 			info,
+			channelId,
 			target,
 			channelName,
 			label,
@@ -1048,7 +1190,11 @@ function installNativeHooks(): void {
 
 function dependenciesReady(): boolean {
 	return Boolean(
-		messages?.getMessage && messageActions?.fetchMessage && messageRecord && rowManager && chatItem,
+		messages?.getMessage &&
+		messageActions?.fetchMessage &&
+		messageRecord &&
+		rowManager &&
+		chatItem,
 	);
 }
 
@@ -1077,6 +1223,7 @@ function captureDependency(candidate: unknown): void {
 function activate(): void {
 	if (!dependenciesReady() || !registerSurface()) return;
 	clearModuleListener();
+	installMessageStoreListener();
 	installNativeHooks();
 }
 
@@ -1136,6 +1283,7 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycle++;
+	removeMessageStoreListener();
 	for (const token of hooks) token.remove();
 	hooks = [];
 	clearModuleListener();
