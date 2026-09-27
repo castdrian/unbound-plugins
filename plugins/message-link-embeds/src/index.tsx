@@ -2,6 +2,7 @@ import { metro } from '@unbound-app/api';
 import type {
 	NativeFabricBridge,
 	NativeFabricSurface,
+	NativeHookContext,
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
@@ -28,8 +29,10 @@ const SURFACE_LAYOUT_SETTLE_DELAY = 80;
 const SURFACE_BOTTOM_TRIM = 5;
 const EMBED_BACKGROUND = '#2b2d31';
 const MAX_NATIVE_VIEW_DEPTH = 10;
+const CELL_LAYOUT_CHECK_INTERVAL = 500;
 
 type AnyRecord = Record<string, unknown>;
+type NativeInvoker = (handle: NativeObjectHandle, selector: string, ...args: unknown[]) => unknown;
 type MetroModule = {
 	isInitialized?: boolean;
 	publicModule?: { exports?: unknown };
@@ -103,9 +106,9 @@ type EmbeddedSurfaceState = {
 	host: NativeObjectHandle;
 	label: NativeObjectHandle;
 	labelHook: NativeHookToken | null;
+	cellLayoutHook: NativeHookToken | null;
+	pressOverlay: NativeObjectHandle | null;
 	messageId: string;
-	sourceChannelId: string;
-	sourceReactionSnapshot: string;
 	targetReactionSnapshot: string;
 	original: NativeObjectHandle;
 	range: { location: number; length: number };
@@ -118,11 +121,10 @@ type EmbeddedSurfaceState = {
 	width: number;
 	height: number;
 	lastInvalidatedHeight: number;
+	lastLayoutCheck: number;
 	applying: boolean;
 	layoutTimer: ReturnType<typeof setTimeout> | null;
 	pendingHeight: number | null;
-	repairTimer: ReturnType<typeof setTimeout> | null;
-	rowRefreshTimer: ReturnType<typeof setTimeout> | null;
 	renderRevision: number;
 };
 type SurfaceProps = {
@@ -158,6 +160,7 @@ const waitingCells = new Map<string, string>();
 const cellStates = new Map<string, EmbeddedSurfaceState>();
 const surfaces = new Map<string, EmbeddedSurfaceState>();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
+const surfaceRebindTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
 	if (!objc) return null;
@@ -168,18 +171,26 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 	}
 }
 
+function nativeCallCurrent(
+	handle: NativeObjectHandle,
+	selector: string,
+	...args: unknown[]
+): unknown {
+	if (!objc) return null;
+	try {
+		return objc.invoke(handle, selector, args, { thread: 'current' });
+	} catch {
+		return null;
+	}
+}
+
 function syncMessageReactions(): void {
 	messageSyncTimer = null;
 	if (!messages || !fabric) return;
 
 	for (const state of cellStates.values()) {
-		const source = messages.getMessage?.(state.sourceChannelId, state.messageId);
-		const sourceReactionSnapshot = reactionSnapshot(source?.reactions);
-		if (source && sourceReactionSnapshot !== state.sourceReactionSnapshot) {
-			state.sourceReactionSnapshot = sourceReactionSnapshot;
-			scheduleRowRefresh(state);
-		}
-
+		reconcileSurfaceText(state);
+		if (cellStates.get(state.cellKey) !== state) continue;
 		const message = messages.getMessage?.(
 			state.selectedTarget.channelId,
 			state.selectedTarget.messageId,
@@ -207,6 +218,15 @@ function syncMessageReactions(): void {
 	}
 }
 
+function reconcileSurfaceText(state: EmbeddedSurfaceState): void {
+	if (!messages || !objc) return;
+	const attributedText = currentAttributedText(state.label);
+	const text = attributedText ? textForView(state.label) : undefined;
+	if (!attributedText || text === undefined || text === state.renderedText) return;
+	const range = findRenderedLinkRange(text, state.channelName);
+	if (range) updateExistingSurface(state, attributedText, range, false);
+}
+
 function scheduleMessageSync(): void {
 	if (messageSyncTimer) return;
 	const token = lifecycle;
@@ -227,14 +247,6 @@ function removeMessageStoreListener(): void {
 	messageStoreListener = null;
 	if (messageSyncTimer) clearTimeout(messageSyncTimer);
 	messageSyncTimer = null;
-}
-
-function scheduleRowRefresh(state: EmbeddedSurfaceState): void {
-	if (state.rowRefreshTimer) clearTimeout(state.rowRefreshTimer);
-	state.rowRefreshTimer = setTimeout(() => {
-		state.rowRefreshTimer = null;
-		if (cellStates.get(state.cellKey) === state) refreshRowSize(state, true);
-	}, 48);
 }
 
 function nativeRange(location: number, length: number): unknown {
@@ -352,13 +364,14 @@ function channelNameFor(target: LinkTarget, targetMessage: Message): string | un
 function linkAttributes(
 	attributedText: NativeObjectHandle,
 	range: { location: number; length: number },
+	invoke: NativeInvoker = nativeCall,
 ): { font: NativeObjectHandle | null; highlight: NativeObjectHandle | null } {
 	if (!objc) return { font: null, highlight: null };
-	const text = stringFromNative(nativeCall(attributedText, 'string')) ?? '';
+	const text = stringFromNative(invoke(attributedText, 'string')) ?? '';
 	const end = range.location + range.length;
 	for (let index = range.location; index < end; index++) {
 		if (text[index] !== '\uFFFC') continue;
-		const values = nativeCall(attributedText, 'attributesAtIndex:effectiveRange:', index, null);
+		const values = invoke(attributedText, 'attributesAtIndex:effectiveRange:', index, null);
 		if (!values || typeof values !== 'object') continue;
 		const attributes = values as AnyRecord;
 		if (!attributes.YYTextAttachment) continue;
@@ -581,19 +594,22 @@ function createHost(width: number, height: number): NativeObjectHandle | null {
 	}
 }
 
-function attributedAttachment(state: EmbeddedSurfaceState): NativeObjectHandle | null {
+function attributedAttachment(
+	state: EmbeddedSurfaceState,
+	invoke: NativeInvoker = nativeCall,
+): NativeObjectHandle | null {
 	if (!objc) return null;
 	const attachmentClass = objc.getClass('YYTextAttachment');
 	if (!attachmentClass) return null;
 	const attachment = objc.alloc(attachmentClass);
-	nativeCall(attachment, 'setValue:forKey:', state.host, 'content');
-	nativeCall(attachment, 'setValue:forKey:', 1, 'contentMode');
+	invoke(attachment, 'setValue:forKey:', state.host, 'content');
+	invoke(attachment, 'setValue:forKey:', 1, 'contentMode');
 	const attributes: AnyRecord = {};
 	if (state.font) attributes.NSFont = state.font;
 	if (state.highlight) attributes.YYTextHighlight = state.highlight;
 	const replacement = objc.alloc('NSMutableAttributedString');
-	nativeCall(replacement, 'initWithString:attributes:', '\uFFFC', attributes);
-	nativeCall(
+	invoke(replacement, 'initWithString:attributes:', '\uFFFC', attributes);
+	invoke(
 		replacement,
 		'addAttribute:value:range:',
 		'YYTextAttachment',
@@ -603,12 +619,12 @@ function attributedAttachment(state: EmbeddedSurfaceState): NativeObjectHandle |
 	const delegateClass = objc.getClass('YYTextRunDelegate');
 	if (delegateClass) {
 		const delegate = objc.alloc(delegateClass);
-		nativeCall(delegate, 'setValue:forKey:', state.height, 'ascent');
-		nativeCall(delegate, 'setValue:forKey:', 0, 'descent');
-		nativeCall(delegate, 'setValue:forKey:', state.width, 'width');
-		const coreDelegate = nativeCall(delegate, 'CTRunDelegate');
+		invoke(delegate, 'setValue:forKey:', state.height, 'ascent');
+		invoke(delegate, 'setValue:forKey:', 0, 'descent');
+		invoke(delegate, 'setValue:forKey:', state.width, 'width');
+		const coreDelegate = invoke(delegate, 'CTRunDelegate');
 		if (coreDelegate) {
-			nativeCall(
+			invoke(
 				replacement,
 				'addAttribute:value:range:',
 				'CTRunDelegate',
@@ -624,6 +640,88 @@ function structFields(value: unknown): AnyRecord {
 	if (!value || typeof value !== 'object') return {};
 	const fields = (value as AnyRecord).value;
 	return fields && typeof fields === 'object' ? (fields as AnyRecord) : {};
+}
+
+function setPressOverlay(state: EmbeddedSurfaceState, pressed: boolean): void {
+	if (!state.pressOverlay) return;
+	if (pressed) resizePressOverlay(state);
+	nativeCall(state.pressOverlay, 'setHidden:', !pressed);
+}
+
+function resizePressOverlay(
+	state: EmbeddedSurfaceState,
+	height: number = state.pendingHeight ?? state.height,
+): void {
+	if (!state.pressOverlay) return;
+	nativeCall(state.pressOverlay, 'setFrame:', nativeFrame(state.width, height));
+}
+
+function replaceSurfaceText(state: EmbeddedSurfaceState, context: NativeHookContext): void {
+	const { args } = context;
+	if (state.applying) return;
+	const incoming = args[0] as NativeObjectHandle | undefined;
+	if (!incoming || typeof incoming !== 'object') return;
+	const text = nativeCallCurrent(incoming, 'string');
+	if (typeof text !== 'string') return;
+	const range = findRenderedLinkRange(text, state.channelName);
+	if (!range) return;
+	const attributes = linkAttributes(incoming, range, nativeCallCurrent);
+	const previousFont = state.font;
+	const previousHighlight = state.highlight;
+	state.font = attributes.font;
+	state.highlight = attributes.highlight;
+	const attachment = attributedAttachment(state, nativeCallCurrent);
+	const updated = attachment
+		? (nativeCallCurrent(incoming, 'mutableCopy') as NativeObjectHandle | null)
+		: null;
+	if (!updated) {
+		state.font = previousFont;
+		state.highlight = previousHighlight;
+		return;
+	}
+	nativeCallCurrent(
+		updated,
+		'replaceCharactersInRange:withAttributedString:',
+		nativeRange(range.location, range.length),
+		attachment,
+	);
+	const renderedText = nativeCallCurrent(updated, 'string');
+	if (typeof renderedText !== 'string') {
+		state.font = previousFont;
+		state.highlight = previousHighlight;
+		return;
+	}
+	state.original = incoming;
+	state.range = range;
+	state.rendered = updated;
+	state.renderedText = renderedText;
+	context.replaceObjectArgument(0, updated);
+}
+
+function createPressOverlay(state: EmbeddedSurfaceState): NativeObjectHandle | null {
+	if (!objc) return null;
+	try {
+		const overlay = objc.alloc('UIView');
+		const color = nativeCall(
+			objc.getClass('UIColor') as NativeObjectHandle,
+			'colorWithWhite:alpha:',
+			1,
+			0.1,
+		);
+		nativeCall(overlay, 'setFrame:', nativeFrame(state.width, state.height));
+		nativeCall(overlay, 'setAutoresizingMask:', 18);
+		nativeCall(overlay, 'setUserInteractionEnabled:', false);
+		nativeCall(overlay, 'setOpaque:', false);
+		nativeCall(overlay, 'setClipsToBounds:', true);
+		nativeCall(overlay, 'setBackgroundColor:', color);
+		nativeCall(overlay, 'setHidden:', true);
+		const layer = nativeCall(overlay, 'layer') as NativeObjectHandle | null;
+		if (layer) nativeCall(layer, 'setCornerRadius:', 8);
+		nativeCall(state.host, 'addSubview:', overlay);
+		return overlay;
+	} catch {
+		return null;
+	}
 }
 
 function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
@@ -734,41 +832,9 @@ function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = fa
 	}
 }
 
-function repairSurface(state: EmbeddedSurfaceState): void {
-	if (!objc || cellStates.get(state.cellKey) !== state || state.applying) return;
-	const info = messageInfoForCell(state.cell);
-	if (info?.messageId && info.messageId !== state.messageId) {
-		teardownSurface(state.cellKey, true);
-		return;
-	}
-	const attributedText = currentAttributedText(state.label);
-	const text = attributedText ? textForView(state.label) : undefined;
-	if (!attributedText || text === undefined || text === state.renderedText) return;
-	const range = findRenderedLinkRange(text, state.channelName);
-	if (!range) return;
-	state.original = attributedText;
-	state.range = range;
-	const attributes = linkAttributes(attributedText, range);
-	state.font = attributes.font;
-	state.highlight = attributes.highlight;
-	applyAttachment(state, true);
-}
-
-function scheduleSurfaceRepair(state: EmbeddedSurfaceState): void {
-	if (state.applying || state.repairTimer) return;
-	state.repairTimer = setTimeout(() => {
-		state.repairTimer = null;
-		repairSurface(state);
-	}, 0);
-}
-
 function clearSurfaceTimers(state: EmbeddedSurfaceState): void {
 	if (state.layoutTimer) clearTimeout(state.layoutTimer);
-	if (state.repairTimer) clearTimeout(state.repairTimer);
-	if (state.rowRefreshTimer) clearTimeout(state.rowRefreshTimer);
 	state.layoutTimer = null;
-	state.repairTimer = null;
-	state.rowRefreshTimer = null;
 	state.pendingHeight = null;
 }
 
@@ -776,6 +842,7 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 	const state = surfaces.get(surfaceId);
 	if (!state || !Number.isFinite(height) || height <= 0 || height > MAX_SURFACE_HEIGHT) return;
 	const fittedHeight = Math.max(MIN_SURFACE_HEIGHT, height - SURFACE_BOTTOM_TRIM);
+	resizePressOverlay(state, fittedHeight);
 	const currentHeight = state.pendingHeight ?? state.height;
 	if (Math.abs(currentHeight - fittedHeight) < 2) return;
 	state.pendingHeight = fittedHeight;
@@ -792,6 +859,7 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 			return;
 		state.height = settledHeight;
 		nativeCall(state.host, 'setFrame:', nativeFrame(state.width, settledHeight));
+		resizePressOverlay(state);
 		applyAttachment(state, true);
 	}, SURFACE_LAYOUT_SETTLE_DELAY);
 }
@@ -813,9 +881,12 @@ function MessageSurface({ surfaceId }: SurfaceProps): ReactNode {
 		ReactNative.Pressable,
 		{
 			accessibilityLabel: 'Open linked message',
-			accessibilityRole: 'button',
-			onLayout,
+			accessibilityRole: 'link',
+			onAccessibilityTap: () => jumpToMessage(state.selectedTarget),
 			onPress: () => jumpToMessage(state.selectedTarget),
+			onPressIn: () => setPressOverlay(state, true),
+			onPressOut: () => setPressOverlay(state, false),
+			onLayout,
 			style: {
 				backgroundColor: EMBED_BACKGROUND,
 				borderRadius: 8,
@@ -865,7 +936,6 @@ function createSurfaceState(
 	cell: NativeObjectHandle,
 	key: string,
 	info: NativeMessageInfo,
-	sourceChannelId: string,
 	target: LinkTarget,
 	channelName: string,
 	label: NativeObjectHandle,
@@ -890,11 +960,9 @@ function createSurfaceState(
 		host,
 		label,
 		labelHook: null,
+		cellLayoutHook: null,
+		pressOverlay: null,
 		messageId: info.messageId,
-		sourceChannelId,
-		sourceReactionSnapshot: reactionSnapshot(
-			messages?.getMessage?.(sourceChannelId, info.messageId)?.reactions,
-		),
 		targetReactionSnapshot: reactionSnapshot(content.record.reactions),
 		original: attributedText,
 		range,
@@ -907,11 +975,10 @@ function createSurfaceState(
 		width,
 		height: INITIAL_SURFACE_HEIGHT,
 		lastInvalidatedHeight: -1,
+		lastLayoutCheck: 0,
 		applying: false,
 		layoutTimer: null,
 		pendingHeight: null,
-		repairTimer: null,
-		rowRefreshTimer: null,
 		renderRevision: 0,
 	};
 	surfaces.set(surfaceId, state);
@@ -919,8 +986,26 @@ function createSurfaceState(
 		state.labelHook = objc.hook(
 			'DCDReusableYYLabel',
 			'setAttributedText:',
-			{ after: () => scheduleSurfaceRepair(state) },
+			{ before: (context) => replaceSurfaceText(state, context) },
 			{ instance: label },
+		);
+		state.cellLayoutHook = objc.hook(
+			'DCDMessageTableViewCell',
+			'layoutSubviews',
+			{
+				after: () => {
+					const now = Date.now();
+					if (now - state.lastLayoutCheck < CELL_LAYOUT_CHECK_INTERVAL) return;
+					state.lastLayoutCheck = now;
+					setTimeout(() => {
+						if (cellStates.get(key) !== state || !objc) return;
+						if (!nativeCall(state.label, 'isDescendantOfView:', cell)) {
+							queueSurfaceRebind(cell, state);
+						}
+					}, 0);
+				},
+			},
+			{ instance: cell },
 		);
 		state.surface = fabric.mount(host, surfaceModuleName, {
 			renderRevision: state.renderRevision,
@@ -931,6 +1016,7 @@ function createSurfaceState(
 			{ width, height: MIN_SURFACE_HEIGHT },
 			{ width, height: MAX_SURFACE_HEIGHT },
 		);
+		state.pressOverlay = createPressOverlay(state);
 		removeCellLabelHooks(key);
 		cellStates.set(key, state);
 		if (!applyAttachment(state)) throw new Error('Could not attach the Fabric message surface');
@@ -939,6 +1025,7 @@ function createSurfaceState(
 		cellStates.delete(key);
 		clearSurfaceTimers(state);
 		state.labelHook?.remove();
+		state.cellLayoutHook?.remove();
 		try {
 			if (state.surface) fabric.unmount(state.surface);
 		} catch {
@@ -954,6 +1041,7 @@ function teardownSurface(key: string, restore: boolean): void {
 	if (!state) return;
 	clearSurfaceTimers(state);
 	state.labelHook?.remove();
+	state.cellLayoutHook?.remove();
 	if (restore && objc && state.rendered && state.renderedText !== null) {
 		const current = nativeCall(state.label, 'attributedText') as NativeObjectHandle | null;
 		const currentText = current ? stringFromNative(nativeCall(current, 'string')) : undefined;
@@ -971,6 +1059,9 @@ function teardownSurface(key: string, restore: boolean): void {
 	}
 	surfaces.delete(state.surfaceId);
 	cellStates.delete(key);
+	const rebindTimer = surfaceRebindTimers.get(key);
+	if (rebindTimer) clearTimeout(rebindTimer);
+	surfaceRebindTimers.delete(key);
 }
 
 function cachedContentFor(target: LinkTarget, message: Message): EmbeddedContent | undefined {
@@ -985,13 +1076,14 @@ function updateExistingSurface(
 	state: EmbeddedSurfaceState,
 	attributedText: NativeObjectHandle,
 	range: { location: number; length: number },
+	forceRefresh: boolean = true,
 ): void {
 	state.original = attributedText;
 	state.range = range;
 	const attributes = linkAttributes(attributedText, range);
 	state.font = attributes.font;
 	state.highlight = attributes.highlight;
-	applyAttachment(state, true);
+	applyAttachment(state, forceRefresh);
 }
 
 function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
@@ -1047,7 +1139,6 @@ function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
 			cell,
 			key,
 			info,
-			channelId,
 			target,
 			channelName,
 			label,
@@ -1109,6 +1200,9 @@ function clearCell(key: string): void {
 	completedCells.delete(key);
 	retryCounts.delete(key);
 	waitingCells.delete(key);
+	const rebindTimer = surfaceRebindTimers.get(key);
+	if (rebindTimer) clearTimeout(rebindTimer);
+	surfaceRebindTimers.delete(key);
 	const retryTimer = retryTimers.get(key);
 	if (retryTimer) clearTimeout(retryTimer);
 	retryTimers.delete(key);
@@ -1119,6 +1213,20 @@ function clearCell(key: string): void {
 function removeCellLabelHooks(key: string): void {
 	for (const token of cellLabelHooks.get(key) ?? []) token.remove();
 	cellLabelHooks.delete(key);
+}
+
+function queueSurfaceRebind(cell: NativeObjectHandle, state: EmbeddedSurfaceState): void {
+	const key = state.cellKey;
+	if (surfaceRebindTimers.has(key)) return;
+	const timer = setTimeout(() => {
+		surfaceRebindTimers.delete(key);
+		if (cellStates.get(key) !== state || !objc) return;
+		if (nativeCall(state.label, 'isDescendantOfView:', cell)) return;
+		teardownSurface(key, false);
+		completedCells.delete(key);
+		scheduleCell(cell);
+	}, 0);
+	surfaceRebindTimers.set(key, timer);
 }
 
 function refreshCell(cell: NativeObjectHandle): void {
@@ -1157,12 +1265,12 @@ function observeCellLabels(cell: NativeObjectHandle): void {
 
 function installNativeHooks(): void {
 	if (!objc || hooks.length > 0) return;
-	let initialScan: NativeHookToken | null = null;
+	let initialScan: NativeHookToken;
 	initialScan = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
 		after: ({ self }) => {
 			const cells = visibleMessageCellsInCell(self);
 			if (cells.length === 0) return;
-			initialScan?.remove();
+			initialScan.remove();
 			for (const cell of cells) scheduleCell(cell);
 		},
 	});
@@ -1295,6 +1403,8 @@ function stop(): void {
 	retryCounts.clear();
 	for (const timer of retryTimers.values()) clearTimeout(timer);
 	retryTimers.clear();
+	for (const timer of surfaceRebindTimers.values()) clearTimeout(timer);
+	surfaceRebindTimers.clear();
 	waitingCells.clear();
 	cachedMessages.clear();
 	pendingMessages.clear();
