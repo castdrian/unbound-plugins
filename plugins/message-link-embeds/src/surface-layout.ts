@@ -20,6 +20,38 @@ export interface ScrollOffset {
 	y: number;
 }
 
+export class BottomAnchorTracker {
+	private anchor: BottomAnchor | undefined;
+
+	get pending(): boolean {
+		return this.anchor !== undefined;
+	}
+
+	capture(anchor: BottomAnchor | null): void {
+		if (!anchor?.atBottom || this.anchor) return;
+		this.anchor = anchor;
+	}
+
+	correction(
+		metrics: SurfaceLayoutMetrics,
+		userIsScrolling: boolean,
+	): ScrollOffset | undefined {
+		if (!this.anchor) return;
+		if (userIsScrolling) {
+			this.clear();
+			return;
+		}
+
+		const correction = bottomOffsetCorrection(this.anchor, metrics, false);
+		if (correction) this.clear();
+		return correction;
+	}
+
+	clear(): void {
+		this.anchor = undefined;
+	}
+}
+
 export function readBottomAnchor(
 	metrics: SurfaceLayoutMetrics,
 	tolerance: number = 36,

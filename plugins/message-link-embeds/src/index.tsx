@@ -17,9 +17,9 @@ import {
 	nativeUsernameColor,
 } from '#link-targets';
 import { enableAnimatedEmojiSources } from '#animated-emoji';
-import { reactionSnapshot } from '#reaction-state';
+import { reactionSnapshot, updateMessageRecord } from '#reaction-state';
 import {
-	bottomOffsetCorrection,
+	BottomAnchorTracker,
 	readBottomAnchor,
 	SurfaceHeightCache,
 	surfaceHeightCacheKey,
@@ -85,6 +85,7 @@ type RowGenerator = {
 type RowManagerConstructor = (...args: never[]) => unknown;
 type ChatItemProps = {
 	message: Message;
+	renderRevision: number;
 	rowGenerator: RowGenerator;
 };
 type ChatItemComponent = (props: ChatItemProps) => ReactNode;
@@ -100,12 +101,14 @@ type EmbeddedSurfaceState = {
 	cell: NativeObjectHandle;
 	cellKey: string;
 	channelName: string;
+	baseGenerator: RowGenerator;
 	font: NativeObjectHandle | null;
 	generator: RowGenerator;
 	host: NativeObjectHandle;
 	label: NativeObjectHandle;
 	labelHook: NativeHookToken | null;
 	messageId: string;
+	sourceReactionSnapshot: string;
 	targetReactionSnapshot: string;
 	original: NativeObjectHandle;
 	range: { location: number; length: number };
@@ -121,9 +124,11 @@ type EmbeddedSurfaceState = {
 	lastInvalidatedHeight: number;
 	applying: boolean;
 	layoutTimer: ReturnType<typeof setTimeout> | null;
+	reactionLayoutTimer: ReturnType<typeof setTimeout> | null;
 	bottomScrollTimer: ReturnType<typeof setTimeout> | null;
 	pendingHeight: number | null;
 	renderRevision: number;
+	bottomAnchor: BottomAnchorTracker;
 };
 type SurfaceProps = {
 	surfaceId: string;
@@ -175,35 +180,54 @@ function syncMessageReactions(): void {
 	if (!messages || !fabric) return;
 
 	for (const state of cellStates.values()) {
-		reconcileSurfaceText(state);
-		if (cellStates.get(state.cellKey) !== state) continue;
-		const message = messages.getMessage?.(
+		const source = messages.getMessage?.(state.selectedTarget.channelId, state.messageId);
+		const target = messages.getMessage?.(
 			state.selectedTarget.channelId,
 			state.selectedTarget.messageId,
 		);
-		if (!message) continue;
-		const targetReactionSnapshot = reactionSnapshot(message.reactions);
-		if (targetReactionSnapshot === state.targetReactionSnapshot) continue;
-		const table = tableForCell(state.cell);
-		const anchor = table ? tableBottomAnchor(table) : null;
-		const content = buildEmbeddedContent(message, state.selectedTarget.channelId);
-		if (!content) continue;
-
-		state.targetReactionSnapshot = targetReactionSnapshot;
-		state.record = content.record;
-		state.generator = content.generator;
-		state.renderRevision++;
-		try {
-			if (state.surface) {
-				fabric.update(state.surface, {
-					renderRevision: state.renderRevision,
-					surfaceId: state.surfaceId,
-				});
-			}
-		} catch {
+		if (!target) {
+			reconcileSurfaceText(state);
 			continue;
 		}
-		if (table && anchor) scheduleBottomScrollCorrection(state, table, anchor);
+		const sourceReactionSnapshot = source
+			? reactionSnapshot(source.reactions)
+			: state.sourceReactionSnapshot;
+		const targetReactionSnapshot = reactionSnapshot(target.reactions);
+		const sourceChanged = sourceReactionSnapshot !== state.sourceReactionSnapshot;
+		const targetChanged = targetReactionSnapshot !== state.targetReactionSnapshot;
+		if (!sourceChanged && !targetChanged) {
+			reconcileSurfaceText(state);
+			continue;
+		}
+		const table = tableForCell(state.cell);
+		if (table) state.bottomAnchor.capture(tableBottomAnchor(table));
+		reconcileSurfaceText(state);
+		if (cellStates.get(state.cellKey) !== state) continue;
+
+		if (sourceChanged) state.sourceReactionSnapshot = sourceReactionSnapshot;
+		if (targetChanged) {
+			try {
+				updateMessageRecord(
+					state.record,
+					buildSurfaceRecord(target, state.selectedTarget.channelId),
+				);
+				state.generator = revisionedRowGenerator(state.baseGenerator);
+				state.targetReactionSnapshot = targetReactionSnapshot;
+				state.renderRevision++;
+				if (state.surface) {
+					fabric.update(state.surface, {
+						renderRevision: state.renderRevision,
+						surfaceId: state.surfaceId,
+					});
+				}
+			} catch {
+				continue;
+			}
+		}
+		scheduleReactionScrollCorrection(
+			state,
+			targetChanged ? SURFACE_LAYOUT_SETTLE_DELAY * 2 + 16 : SURFACE_LAYOUT_SETTLE_DELAY,
+		);
 	}
 }
 
@@ -225,9 +249,29 @@ function scheduleMessageSync(): void {
 	}, 0);
 }
 
+function handleMessageStoreChange(): void {
+	if (messages) {
+		for (const state of cellStates.values()) {
+			const source = messages.getMessage?.(state.selectedTarget.channelId, state.messageId);
+			const target = messages.getMessage?.(
+				state.selectedTarget.channelId,
+				state.selectedTarget.messageId,
+			);
+			const sourceChanged =
+				source && reactionSnapshot(source.reactions) !== state.sourceReactionSnapshot;
+			const targetChanged =
+				target && reactionSnapshot(target.reactions) !== state.targetReactionSnapshot;
+			if (!sourceChanged && !targetChanged) continue;
+			const table = tableForCell(state.cell);
+			if (table) state.bottomAnchor.capture(tableBottomAnchor(table));
+		}
+	}
+	scheduleMessageSync();
+}
+
 function installMessageStoreListener(): void {
 	if (messageStoreListener || !messages?.addChangeListener) return;
-	messageStoreListener = scheduleMessageSync;
+	messageStoreListener = handleMessageStoreChange;
 	messages.addChangeListener(messageStoreListener);
 }
 
@@ -431,13 +475,28 @@ function buildRecord(target: Message, channelId: string): Message {
 	]) as Message;
 }
 
+function buildSurfaceRecord(target: Message, channelId: string): Message {
+	const record = buildRecord(target, channelId);
+	record.animateEmoji = true;
+	const usernameColor = nativeUsernameColor(record.colorString);
+	if (usernameColor !== undefined) record.usernameColor = usernameColor;
+	return record;
+}
+
+function revisionedRowGenerator(generator: RowGenerator): RowGenerator {
+	return new Proxy(generator, {
+		get(target, property) {
+			const value = Reflect.get(target, property, target);
+			return typeof value === 'function' ? value.bind(target) : value;
+		},
+	});
+}
+
 function buildEmbeddedContent(target: Message, channelId: string): EmbeddedContent | undefined {
 	if (!messageRecord || !rowManager) return;
 	try {
-		const record = buildRecord(target, channelId);
-		record.animateEmoji = true;
+		const record = buildSurfaceRecord(target, channelId);
 		const usernameColor = nativeUsernameColor(record.colorString);
-		if (usernameColor !== undefined) record.usernameColor = usernameColor;
 		const generator = Reflect.construct(rowManager, []) as RowGenerator;
 		generator.setOptions?.({
 			animateEmoji: true,
@@ -686,29 +745,49 @@ function tableIsScrolling(table: NativeObjectHandle): boolean {
 function scheduleBottomScrollCorrection(
 	state: EmbeddedSurfaceState,
 	table: NativeObjectHandle,
-	anchor: ReturnType<typeof readBottomAnchor>,
 ): void {
-	if (!anchor.atBottom) return;
+	if (!state.bottomAnchor.pending) return;
 	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
-	state.bottomScrollTimer = setTimeout(() => {
+	let attempts = 0;
+	const correct = () => {
 		state.bottomScrollTimer = null;
-		if (cellStates.get(state.cellKey) !== state || !objc) return;
+		if (cellStates.get(state.cellKey) !== state || !objc) {
+			state.bottomAnchor.clear();
+			return;
+		}
 		nativeCall(state.label, 'layoutIfNeeded');
 		nativeCall(state.cell, 'layoutIfNeeded');
 		nativeCall(table, 'layoutIfNeeded');
-		const correction = bottomOffsetCorrection(
-			anchor,
-			tableLayoutMetrics(table),
-			tableIsScrolling(table),
-		);
-		if (!correction) return;
-		nativeCall(
-			table,
-			'setContentOffset:animated:',
-			objc.struct('CGPoint', { x: correction.x, y: correction.y }),
-			false,
-		);
-	}, 16);
+		const metrics = tableLayoutMetrics(table);
+		const userIsScrolling = tableIsScrolling(table);
+		const correction = state.bottomAnchor.correction(metrics, userIsScrolling);
+		if (correction) {
+			nativeCall(
+				table,
+				'setContentOffset:animated:',
+				objc.struct('CGPoint', { x: correction.x, y: correction.y }),
+				false,
+			);
+			return;
+		}
+		if (state.bottomAnchor.pending && attempts < 12) {
+			attempts++;
+			state.bottomScrollTimer = setTimeout(correct, 16);
+			return;
+		}
+		state.bottomAnchor.clear();
+	};
+	state.bottomScrollTimer = setTimeout(correct, 16);
+}
+
+function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: number): void {
+	if (state.reactionLayoutTimer) clearTimeout(state.reactionLayoutTimer);
+	state.reactionLayoutTimer = setTimeout(() => {
+		state.reactionLayoutTimer = null;
+		if (cellStates.get(state.cellKey) !== state) return;
+		const table = tableForCell(state.cell);
+		if (table) scheduleBottomScrollCorrection(state, table);
+	}, delay);
 }
 
 function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): void {
@@ -719,11 +798,14 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 	nativeCall(state.cell, 'setNeedsUpdateConstraints');
 	nativeCall(state.cell, 'setNeedsLayout');
 	const table = tableForCell(state.cell);
-	if (!table) return;
-	const anchor = tableBottomAnchor(table);
+	if (!table) {
+		state.bottomAnchor.clear();
+		return;
+	}
+	state.bottomAnchor.capture(tableBottomAnchor(table));
 	nativeCall(table, 'beginUpdates');
 	nativeCall(table, 'endUpdates');
-	scheduleBottomScrollCorrection(state, table, anchor);
+	scheduleBottomScrollCorrection(state, table);
 }
 
 function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = false): boolean {
@@ -756,10 +838,13 @@ function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = fa
 
 function clearSurfaceTimers(state: EmbeddedSurfaceState): void {
 	if (state.layoutTimer) clearTimeout(state.layoutTimer);
+	if (state.reactionLayoutTimer) clearTimeout(state.reactionLayoutTimer);
 	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
 	state.layoutTimer = null;
+	state.reactionLayoutTimer = null;
 	state.bottomScrollTimer = null;
 	state.pendingHeight = null;
+	state.bottomAnchor.clear();
 }
 
 function reportSurfaceLayout(surfaceId: string, height: number): void {
@@ -782,18 +867,21 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 			return;
 		state.height = settledHeight;
 		surfaceHeights.set(state.heightCacheKey, settledHeight);
+		if (state.reactionLayoutTimer) clearTimeout(state.reactionLayoutTimer);
+		state.reactionLayoutTimer = null;
 		nativeCall(state.host, 'setFrame:', nativeFrame(state.width, settledHeight));
 		applyAttachment(state, true);
 	}, SURFACE_LAYOUT_SETTLE_DELAY);
 }
 
-function MessageSurface({ surfaceId }: SurfaceProps): ReactNode {
+function MessageSurface({ renderRevision, surfaceId }: SurfaceProps): ReactNode {
 	const state = surfaces.get(surfaceId);
 	const { React, ReactNative } = metro.common;
 	if (!state || !chatItem) return React.createElement(ReactNative.View, { style: { height: 1 } });
 	const embeddedMessage = React.createElement(chatItem, {
 		key: surfaceId,
 		message: state.record,
+		renderRevision,
 		rowGenerator: state.generator,
 	});
 	const onLayout = (event: AnyRecord) => {
@@ -858,6 +946,7 @@ function createSurfaceState(
 	label: NativeObjectHandle,
 	attributedText: NativeObjectHandle,
 	range: { location: number; length: number },
+	source: Message,
 	content: EmbeddedContent,
 ): EmbeddedSurfaceState | null {
 	if (!objc || !fabric) return null;
@@ -868,17 +957,22 @@ function createSurfaceState(
 	const initialHeight = surfaceHeights.get(heightCacheKey, INITIAL_SURFACE_HEIGHT);
 	const host = createHost(width, initialHeight);
 	if (!host) return null;
+	const bottomAnchor = new BottomAnchorTracker();
+	const table = tableForCell(cell);
+	if (table) bottomAnchor.capture(tableBottomAnchor(table));
 	const surfaceId = `message-link-${key}-${info.messageId}-${target.messageId}`;
 	const state: EmbeddedSurfaceState = {
 		cell,
 		cellKey: key,
 		channelName,
+		baseGenerator: content.generator,
 		font,
 		generator: content.generator,
 		host,
 		label,
 		labelHook: null,
 		messageId: info.messageId,
+		sourceReactionSnapshot: reactionSnapshot(source.reactions),
 		targetReactionSnapshot: reactionSnapshot(content.record.reactions),
 		original: attributedText,
 		range,
@@ -894,9 +988,11 @@ function createSurfaceState(
 		lastInvalidatedHeight: -1,
 		applying: false,
 		layoutTimer: null,
+		reactionLayoutTimer: null,
 		bottomScrollTimer: null,
 		pendingHeight: null,
 		renderRevision: 0,
+		bottomAnchor,
 	};
 	surfaces.set(surfaceId, state);
 	try {
@@ -1043,6 +1139,7 @@ function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
 			label,
 			attributedText,
 			range,
+			source,
 			built,
 		);
 		return state ? 'done' : 'retry';
