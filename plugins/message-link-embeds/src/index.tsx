@@ -211,7 +211,7 @@ function syncMessageReactions(): void {
 					state.record,
 					buildSurfaceRecord(target, state.selectedTarget.channelId),
 				);
-				state.generator = revisionedRowGenerator(state.baseGenerator);
+				state.generator = createRowGeneratorProxy(state.baseGenerator);
 				state.targetReactionSnapshot = targetReactionSnapshot;
 				state.renderRevision++;
 				if (state.surface) {
@@ -483,7 +483,7 @@ function buildSurfaceRecord(target: Message, channelId: string): Message {
 	return record;
 }
 
-function revisionedRowGenerator(generator: RowGenerator): RowGenerator {
+function createRowGeneratorProxy(generator: RowGenerator): RowGenerator {
 	return new Proxy(generator, {
 		get(target, property) {
 			const value = Reflect.get(target, property, target);
@@ -747,7 +747,7 @@ function scheduleBottomScrollCorrection(
 	table: NativeObjectHandle,
 ): void {
 	if (!state.bottomAnchor.pending) return;
-	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
+	if (state.bottomScrollTimer) return;
 	let attempts = 0;
 	const correct = () => {
 		state.bottomScrollTimer = null;
