@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { getContrastingTextColor, getRoleColorStops } from './role-colors';
+import {
+	colorComponentsToHex,
+	getContrastingTextColor,
+	getRoleColorAppearance,
+	getRoleColorStops,
+	getRoleGradientKey,
+} from '@more-user-tags/role-colors';
 
 describe('role color stops', () => {
 	test('preserves enhanced gradient and three-stop colors', () => {
@@ -31,6 +37,53 @@ describe('role color stops', () => {
 		expect(getRoleColorStops(colors, '#000000')).toEqual(['#123456', '#abcdef']);
 		expect(getRoleColorStops(colors, '#000000', false)).toEqual(['#123456']);
 	});
+
+	test('distinguishes solid, gradient, and holographic role styles', () => {
+		expect(getRoleColorAppearance({ primaryColor: '#112233' }, '#000000')).toEqual({
+			colors: ['#112233'],
+			style: 'solid',
+		});
+		expect(
+			getRoleColorAppearance({ primaryColor: '#112233', secondaryColor: '#445566' }, '#000000'),
+		).toEqual({
+			colors: ['#112233', '#445566'],
+			style: 'gradient',
+		});
+		expect(
+			getRoleColorAppearance(
+				{ primaryColor: '#112233', secondaryColor: '#445566', tertiaryColor: '#778899' },
+				'#000000',
+			),
+		).toEqual({
+			colors: ['#112233', '#445566', '#778899'],
+			style: 'holographic',
+		});
+		expect(
+			getRoleColorAppearance(
+				{ primaryColor: '#112233', secondaryColor: '#445566', tertiaryColor: '#112233' },
+				'#000000',
+			),
+		).toEqual({ colors: ['#112233', '#445566'], style: 'gradient' });
+		expect(
+			getRoleColorAppearance(
+				{ primaryColor: '#112233', secondaryColor: '#445566', tertiaryColor: '#778899' },
+				'#000000',
+				false,
+			),
+		).toEqual({ colors: ['#112233'], style: 'solid' });
+	});
+
+	test('keeps enhanced role colors when the legacy member color is absent', () => {
+		expect(
+			getRoleColorAppearance(
+				{ primaryColor: '#112233', secondaryColor: '#445566', tertiaryColor: '#778899' },
+				undefined,
+			),
+		).toEqual({
+			colors: ['#112233', '#445566', '#778899'],
+			style: 'holographic',
+		});
+	});
 });
 
 describe('role color text contrast', () => {
@@ -38,5 +91,16 @@ describe('role color text contrast', () => {
 		expect(getContrastingTextColor(['#111111', '#222222'])).toBe('#ffffff');
 		expect(getContrastingTextColor(['#eeeeee', '#ffffff'])).toBe('#000000');
 		expect(getContrastingTextColor(['#111111', '#eeeeee'])).toBe('#ffffff');
+	});
+});
+
+describe('role gradient keys', () => {
+	test('normalizes labels and role colors for native tag matching', () => {
+		expect(getRoleGradientKey(' Owner ', '#ABCDEF')).toBe('owner:#abcdef');
+	});
+
+	test('converts native color components into role hex values', () => {
+		expect(colorComponentsToHex(0.12549, 0.00392157, 0.980392)).toBe('#2001fa');
+		expect(colorComponentsToHex(-1, 0, 0)).toBeNull();
 	});
 });

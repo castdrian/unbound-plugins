@@ -4,6 +4,34 @@ export interface RoleColorStops {
 	tertiaryColor?: string;
 }
 
+export type RoleColorStyle = 'solid' | 'gradient' | 'holographic';
+
+export interface RoleColorAppearance {
+	colors: string[];
+	style: RoleColorStyle;
+}
+
+export function colorComponentsToHex(red: number, green: number, blue: number): string | null {
+	const components = [red, green, blue];
+	if (
+		components.some((component) => !Number.isFinite(component) || component < 0 || component > 1)
+	) {
+		return null;
+	}
+
+	return `#${components
+		.map((component) =>
+			Math.round(component * 255)
+				.toString(16)
+				.padStart(2, '0'),
+		)
+		.join('')}`;
+}
+
+export function getRoleGradientKey(label: string, color: string): string {
+	return `${label.trim().toLowerCase()}:${color.toLowerCase()}`;
+}
+
 function validHexColor(color: unknown): color is string {
 	return typeof color === 'string' && /^#[\da-f]{6}$/i.test(color);
 }
@@ -21,6 +49,25 @@ export function getRoleColorStops(
 		(color, index, stops): color is string =>
 			validHexColor(color) && stops.indexOf(color) === index,
 	);
+}
+
+export function getRoleColorAppearance(
+	colors: RoleColorStops | null | undefined,
+	fallbackColor: unknown,
+	includeEnhanced: boolean = true,
+): RoleColorAppearance {
+	const stops = getRoleColorStops(colors, fallbackColor, includeEnhanced);
+	const style: RoleColorStyle =
+		stops.length < 2
+			? 'solid'
+			: includeEnhanced &&
+					stops.length >= 3 &&
+					validHexColor(colors?.secondaryColor) &&
+					validHexColor(colors?.tertiaryColor)
+				? 'holographic'
+				: 'gradient';
+
+	return { colors: stops, style };
 }
 
 function relativeLuminance(color: string): number {

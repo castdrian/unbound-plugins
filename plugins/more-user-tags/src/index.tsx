@@ -1,7 +1,13 @@
-import { metro, patcher, storage } from '@unbound-app/api';
+import {
+	getContrastingTextColor,
+	getRoleColorAppearance,
+	type RoleColorAppearance,
+} from '@more-user-tags/role-colors';
+import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer';
 
 import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';
-import { getContrastingTextColor, getRoleColorStops } from '@more-user-tags/role-colors';
+import { metro, patcher, storage } from '@unbound-app/api';
+import type { PluginContext } from '@unbound-app/api/native';
 
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);
@@ -74,7 +80,7 @@ const TAGS: TagDefinition[] = [
 ];
 
 let unpatch: (() => void) | null = null;
-let unpatchTagGradient: (() => void) | null = null;
+let tagGradientRenderer: ReturnType<typeof createTagGradientRenderer> = null;
 let permissionBits: Record<string, bigint> | null = null;
 let computePermissions: ((options: any) => bigint) | null = null;
 let guilds: any = null;
@@ -85,19 +91,23 @@ function isTagEnabled(name: string): boolean {
 	return STORE.get(`tag.${name}`, true);
 }
 
-function resolveColors(tag: TagDefinition, guild: any, user: any): string[] {
+function resolveColors(tag: TagDefinition, guild: any, user: any): RoleColorAppearance {
 	if (STORE.get('useRoleColor', true) && guild && members) {
 		const member = members.getMember?.(guild.id, user?.id);
-		if (member?.colorString) {
-			return getRoleColorStops(
+		if (member) {
+			const appearance = getRoleColorAppearance(
 				member.colorStrings,
 				member.colorString,
 				STORE.get('useEnhancedRoleColors', true),
 			);
+			if (appearance.colors.length > 0) return appearance;
 		}
 	}
 
-	return STORE.get('coloredTags', true) ? [tag.color] : [];
+	return {
+		colors: STORE.get('coloredTags', true) ? [tag.color] : [],
+		style: 'solid',
+	};
 }
 
 function hasPermission(user: any, guild: any, channel: any, names: PermissionName[]): boolean {
@@ -143,32 +153,6 @@ function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRo
 	return null;
 }
 
-function applyTagGradient(ctx: any): any {
-	const colors = ctx.args[0]?.tagGradientColors;
-	const result = ctx.result;
-	if (!Array.isArray(colors) || colors.length < 2 || !result) return;
-
-	const React = metro.common.React;
-	if (!React?.isValidElement?.(result)) return;
-
-	const gradientModule = metro.findByProps('LinearGradient') as any;
-	const LinearGradient = gradientModule?.LinearGradient ?? gradientModule?.default;
-	if (!LinearGradient) return;
-
-	return React.createElement(
-		LinearGradient,
-		{
-			colors,
-			start: { x: 0, y: 0 },
-			end: { x: 1, y: 0 },
-			style: { borderRadius: 4, overflow: 'hidden' },
-		},
-		React.cloneElement(result, {
-			style: [result.props?.style, { backgroundColor: 'transparent' }],
-		}),
-	);
-}
-
 function MoreUserTagsSettings() {
 	const state = STORE.useSettingsStore();
 
@@ -201,7 +185,7 @@ function MoreUserTagsSettings() {
 				/>
 				<SettingsSwitchRow
 					label='Use Enhanced Role Colours'
-					description='Use every available role color stop for gradient and multi-colour styles'
+					description='Use gradient and holographic role colours across all generated tags when available'
 					value={state.get('useEnhancedRoleColors', true)}
 					onValueChange={(value: boolean) => state.set('useEnhancedRoleColors', value)}
 				/>
@@ -217,7 +201,12 @@ function MoreUserTagsSettings() {
 }
 
 export default {
-	start() {
+	start(context: PluginContext) {
+		unpatch?.();
+		tagGradientRenderer?.stop();
+		unpatch = null;
+		tagGradientRenderer = null;
+
 		permissionBits = (metro.findByProps('Permissions', 'ThemeTypes') as any)?.Permissions ?? null;
 		computePermissions =
 			(metro.findByProps('computePermissions', 'canEveryoneRole') as any)?.computePermissions ??
@@ -230,11 +219,12 @@ export default {
 
 		const target = metro.findByName('getTagProperties', { interop: false }) as any;
 		if (typeof target?.default !== 'function') return;
+		tagGradientRenderer = createTagGradientRenderer(context);
 
 		unpatch = patcher.after(target, 'default', (ctx) => {
 			try {
 				const result = ctx.result as any;
-				if (!result || result.tagText) return;
+				if (!result) return;
 
 				const message = (ctx.args[0] as any)?.message;
 				const user = message?.author;
@@ -246,9 +236,11 @@ export default {
 				const tag = resolveTag(message, user, guild, channel);
 				if (!tag) return;
 
-				const colors = resolveColors(tag, guild, user);
+				const appearance = resolveColors(tag, guild, user);
+				const { colors } = appearance;
 				const background = colors[0];
 				const { processColor } = metro.common.ReactNative;
+				tagGradientRenderer?.setAppearance([tag.displayName], appearance);
 				if (STORE.get('useOpTagStyle', false)) {
 					const opTagText = tag.displayName;
 					const tagged = {
@@ -269,10 +261,8 @@ export default {
 						...tagged,
 						opTagBackgroundColor: processColor(background),
 						opTagTextColor: processColor(getContrastingTextColor(colors)),
-						tagGradientColors: colors.length > 1 ? colors : undefined,
 					};
 				}
-
 				const tagged = {
 					...result,
 					tagText: tag.displayName,
@@ -285,22 +275,16 @@ export default {
 					...tagged,
 					tagBackgroundColor: processColor(background),
 					tagTextColor: processColor(getContrastingTextColor(colors)),
-					tagGradientColors: colors.length > 1 ? colors : undefined,
 				};
 			} catch {}
 		});
-
-		const botTag = metro.findByName('BotTag', { interop: false }) as any;
-		if (typeof botTag?.default === 'function') {
-			unpatchTagGradient = patcher.after(botTag, 'default', (ctx) => applyTagGradient(ctx));
-		}
 	},
 
 	stop() {
 		unpatch?.();
-		unpatchTagGradient?.();
+		tagGradientRenderer?.stop();
 		unpatch = null;
-		unpatchTagGradient = null;
+		tagGradientRenderer = null;
 		permissionBits = null;
 		computePermissions = null;
 		guilds = null;
