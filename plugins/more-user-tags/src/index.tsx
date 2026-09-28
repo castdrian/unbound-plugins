@@ -6,6 +6,8 @@ import {
 	SettingsSwitchRow,
 } from '../../../shared/settings-ui';
 
+import { getContrastingTextColor, getRoleColorStops } from './role-colors';
+
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);
 
@@ -77,6 +79,7 @@ const TAGS: TagDefinition[] = [
 ];
 
 let unpatch: (() => void) | null = null;
+let unpatchTagGradient: (() => void) | null = null;
 let permissionBits: Record<string, bigint> | null = null;
 let computePermissions: ((options: any) => bigint) | null = null;
 let guilds: any = null;
@@ -87,28 +90,19 @@ function isTagEnabled(name: string): boolean {
 	return STORE.get(`tag.${name}`, true);
 }
 
-function contrastingTextColor(background: string): string {
-	const hex = background.replace('#', '');
-	if (hex.length !== 6) return '#ffffff';
-
-	const value = Number.parseInt(hex, 16);
-	if (Number.isNaN(value)) return '#ffffff';
-
-	const red = (value >> 16) & 0xff;
-	const green = (value >> 8) & 0xff;
-	const blue = value & 0xff;
-	const luminance = (red * 299 + green * 587 + blue * 114) / 1000;
-
-	return luminance > 150 ? '#000000' : '#ffffff';
-}
-
-function resolveBackground(tag: TagDefinition, guild: any, user: any): string | null {
+function resolveColors(tag: TagDefinition, guild: any, user: any): string[] {
 	if (STORE.get('useRoleColor', true) && guild && members) {
-		const colorString = members.getMember?.(guild.id, user?.id)?.colorString;
-		if (colorString) return colorString;
+		const member = members.getMember?.(guild.id, user?.id);
+		if (member?.colorString) {
+			return getRoleColorStops(
+				member.colorStrings,
+				member.colorString,
+				STORE.get('useEnhancedRoleColors', true),
+			);
+		}
 	}
 
-	return STORE.get('coloredTags', true) ? tag.color : null;
+	return STORE.get('coloredTags', true) ? [tag.color] : [];
 }
 
 function hasPermission(user: any, guild: any, channel: any, names: PermissionName[]): boolean {
@@ -154,6 +148,32 @@ function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRo
 	return null;
 }
 
+function applyTagGradient(ctx: any): any {
+	const colors = ctx.args[0]?.tagGradientColors;
+	const result = ctx.result;
+	if (!Array.isArray(colors) || colors.length < 2 || !result) return;
+
+	const React = metro.common.React;
+	if (!React?.isValidElement?.(result)) return;
+
+	const gradientModule = metro.findByProps('LinearGradient') as any;
+	const LinearGradient = gradientModule?.LinearGradient ?? gradientModule?.default;
+	if (!LinearGradient) return;
+
+	return React.createElement(
+		LinearGradient,
+		{
+			colors,
+			start: { x: 0, y: 0 },
+			end: { x: 1, y: 0 },
+			style: { borderRadius: 4, overflow: 'hidden' },
+		},
+		React.cloneElement(result, {
+			style: [result.props?.style, { backgroundColor: 'transparent' }],
+		}),
+	);
+}
+
 function MoreUserTagsSettings() {
 	const state = STORE.useSettingsStore();
 
@@ -183,6 +203,18 @@ function MoreUserTagsSettings() {
 					description="Colour tags with the member's role colour where they have one"
 					value={state.get('useRoleColor', true)}
 					onValueChange={(value: boolean) => state.set('useRoleColor', value)}
+				/>
+				<SettingsSwitchRow
+					label='Use Enhanced Role Colours'
+					description='Use every available role color stop for gradient and multi-colour styles'
+					value={state.get('useEnhancedRoleColors', true)}
+					onValueChange={(value: boolean) => state.set('useEnhancedRoleColors', value)}
+				/>
+				<SettingsSwitchRow
+					label='Use Original Poster Tag Style'
+					description='Show staff tags with Discord’s original poster badge styling'
+					value={state.get('useOpTagStyle', false)}
+					onValueChange={(value: boolean) => state.set('useOpTagStyle', value)}
 				/>
 			</SettingsSection>
 		</SettingsScrollView>
@@ -219,24 +251,62 @@ export default {
 				const tag = resolveTag(message, user, guild, channel);
 				if (!tag) return;
 
-				const tagged = { ...result, tagText: tag.displayName, tagVerified: false };
+				const colors = resolveColors(tag, guild, user);
+				const background = colors[0];
+				const { processColor } = metro.common.ReactNative;
+				if (STORE.get('useOpTagStyle', false)) {
+					const opText = result.opTagText ?? 'OP';
+					const opTagText = `${opText} • ${tag.displayName}`;
+					const tagged = {
+						...result,
+						tagText: null,
+						tagAccessibilityLabel: opTagText,
+						tagVerified: false,
+						tagTextColor: null,
+						tagBackgroundColor: null,
+						tagType: null,
+						tagIconUrl: null,
+						opTagText,
+					};
 
-				const background = resolveBackground(tag, guild, user);
+					if (!background) return tagged;
+
+					return {
+						...tagged,
+						opTagBackgroundColor: processColor(background),
+						opTagTextColor: processColor(getContrastingTextColor(colors)),
+						tagGradientColors: colors.length > 1 ? colors : undefined,
+					};
+				}
+
+				const tagged = {
+					...result,
+					tagText: tag.displayName,
+					tagAccessibilityLabel: tag.displayName,
+					tagVerified: false,
+				};
 				if (!background) return tagged;
 
-				const { processColor } = metro.common.ReactNative;
 				return {
 					...tagged,
 					tagBackgroundColor: processColor(background),
-					tagTextColor: processColor(contrastingTextColor(background)),
+					tagTextColor: processColor(getContrastingTextColor(colors)),
+					tagGradientColors: colors.length > 1 ? colors : undefined,
 				};
 			} catch {}
 		});
+
+		const botTag = metro.findByName('BotTag', { interop: false }) as any;
+		if (typeof botTag?.default === 'function') {
+			unpatchTagGradient = patcher.after(botTag, 'default', (ctx) => applyTagGradient(ctx));
+		}
 	},
 
 	stop() {
 		unpatch?.();
+		unpatchTagGradient?.();
 		unpatch = null;
+		unpatchTagGradient = null;
 		permissionBits = null;
 		computePermissions = null;
 		guilds = null;
