@@ -20,7 +20,8 @@ import { enableAnimatedEmojiSources } from '#animated-emoji';
 import { reactionSnapshot, updateMessageRecord } from '#reaction-state';
 import {
 	BottomAnchorTracker,
-	readBottomAnchor,
+	readSurfaceAnchor,
+	shouldRefreshSurfaceRow,
 	SurfaceHeightCache,
 	surfaceHeightCacheKey,
 	type SurfaceLayoutMetrics,
@@ -56,6 +57,7 @@ type Message = AnyRecord & {
 type MessageStore = {
 	addChangeListener?: (listener: () => void) => void;
 	getMessage?: (channelId: string, messageId: string) => Message | null;
+	getLastMessage?: (channelId: string) => Message | null;
 	removeChangeListener?: (listener: () => void) => void;
 };
 type MessageActions = {
@@ -200,7 +202,7 @@ function syncMessageReactions(): void {
 			continue;
 		}
 		const table = tableForCell(state.cell);
-		if (table) state.bottomAnchor.capture(tableBottomAnchor(table));
+		if (table) captureSurfaceBottomAnchor(state, table);
 		reconcileSurfaceText(state);
 		if (cellStates.get(state.cellKey) !== state) continue;
 
@@ -237,7 +239,7 @@ function reconcileSurfaceText(state: EmbeddedSurfaceState): void {
 	const text = attributedText ? textForView(state.label) : undefined;
 	if (!attributedText || text === undefined || text === state.renderedText) return;
 	const range = findRenderedLinkRange(text, state.channelName);
-	if (range) updateExistingSurface(state, attributedText, range, false);
+	if (range) updateExistingSurface(state, attributedText, range);
 }
 
 function scheduleMessageSync(): void {
@@ -263,7 +265,7 @@ function handleMessageStoreChange(): void {
 				target && reactionSnapshot(target.reactions) !== state.targetReactionSnapshot;
 			if (!sourceChanged && !targetChanged) continue;
 			const table = tableForCell(state.cell);
-			if (table) state.bottomAnchor.capture(tableBottomAnchor(table));
+			if (table) captureSurfaceBottomAnchor(state, table);
 		}
 	}
 	scheduleMessageSync();
@@ -730,8 +732,13 @@ function tableLayoutMetrics(table: NativeObjectHandle): SurfaceLayoutMetrics {
 	};
 }
 
-function tableBottomAnchor(table: NativeObjectHandle) {
-	return readBottomAnchor(tableLayoutMetrics(table));
+function captureSurfaceBottomAnchor(state: EmbeddedSurfaceState, table: NativeObjectHandle): void {
+	const latestMessage = messages?.getLastMessage?.(state.selectedTarget.channelId);
+	const anchor = readSurfaceAnchor(
+		tableLayoutMetrics(table),
+		latestMessage?.id === state.messageId,
+	);
+	state.bottomAnchor.capture(anchor);
 }
 
 function tableIsScrolling(table: NativeObjectHandle): boolean {
@@ -791,7 +798,7 @@ function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: nu
 }
 
 function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): void {
-	if (!objc || (!force && state.lastInvalidatedHeight === state.height)) return;
+	if (!objc || !shouldRefreshSurfaceRow(force, state.lastInvalidatedHeight, state.height)) return;
 	state.lastInvalidatedHeight = state.height;
 	nativeCall(state.label, 'invalidateIntrinsicContentSize');
 	nativeCall(state.label, 'setNeedsLayout');
@@ -802,7 +809,7 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 		state.bottomAnchor.clear();
 		return;
 	}
-	state.bottomAnchor.capture(tableBottomAnchor(table));
+	captureSurfaceBottomAnchor(state, table);
 	nativeCall(table, 'beginUpdates');
 	nativeCall(table, 'endUpdates');
 	scheduleBottomScrollCorrection(state, table);
@@ -865,6 +872,8 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 			Math.abs(state.height - settledHeight) < 2
 		)
 			return;
+		const table = tableForCell(state.cell);
+		if (table) captureSurfaceBottomAnchor(state, table);
 		state.height = settledHeight;
 		surfaceHeights.set(state.heightCacheKey, settledHeight);
 		if (state.reactionLayoutTimer) clearTimeout(state.reactionLayoutTimer);
@@ -958,8 +967,6 @@ function createSurfaceState(
 	const host = createHost(width, initialHeight);
 	if (!host) return null;
 	const bottomAnchor = new BottomAnchorTracker();
-	const table = tableForCell(cell);
-	if (table) bottomAnchor.capture(tableBottomAnchor(table));
 	const surfaceId = `message-link-${key}-${info.messageId}-${target.messageId}`;
 	const state: EmbeddedSurfaceState = {
 		cell,
@@ -994,6 +1001,8 @@ function createSurfaceState(
 		renderRevision: 0,
 		bottomAnchor,
 	};
+	const table = tableForCell(cell);
+	if (table) captureSurfaceBottomAnchor(state, table);
 	surfaces.set(surfaceId, state);
 	try {
 		state.labelHook = objc.hook(

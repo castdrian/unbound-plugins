@@ -71,6 +71,16 @@ export function readBottomAnchor(
 	};
 }
 
+export function readSurfaceAnchor(
+	metrics: SurfaceLayoutMetrics,
+	followsLatestMessage: boolean,
+	tolerance: number = 36,
+): BottomAnchor {
+	const anchor = readBottomAnchor(metrics, tolerance);
+	if (followsLatestMessage) anchor.atBottom = true;
+	return anchor;
+}
+
 export function bottomOffsetCorrection(
 	anchor: BottomAnchor,
 	metrics: SurfaceLayoutMetrics,
@@ -87,6 +97,14 @@ export function bottomOffsetCorrection(
 
 export function surfaceHeightCacheKey(channelId: string, messageId: string, width: number): string {
 	return `${channelId}:${messageId}:${Math.round(width)}`;
+}
+
+export function shouldRefreshSurfaceRow(
+	force: boolean,
+	lastInvalidatedHeight: number,
+	height: number,
+): boolean {
+	return force || lastInvalidatedHeight !== height;
 }
 
 export class SurfaceHeightCache {

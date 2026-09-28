@@ -4,6 +4,8 @@ import {
 	BottomAnchorTracker,
 	bottomOffsetCorrection,
 	readBottomAnchor,
+	readSurfaceAnchor,
+	shouldRefreshSurfaceRow,
 	SurfaceHeightCache,
 	surfaceHeightCacheKey,
 	type SurfaceLayoutMetrics,
@@ -52,7 +54,24 @@ describe('chat bottom anchoring', () => {
 		).toBeUndefined();
 	});
 
-	test('keeps a reaction anchor until the resized row publishes its new content height', () => {
+	test('pins a latest-message surface when reaction layout already moved the row', () => {
+		const anchor = readSurfaceAnchor(metrics({ offsetY: 700 }), true);
+
+		expect(anchor.atBottom).toBe(true);
+		expect(bottomOffsetCorrection(anchor, metrics({ offsetY: 700 }), false)).toEqual({
+			x: 0,
+			y: 1000,
+		});
+	});
+
+	test('does not pin older message surfaces away from their current scroll position', () => {
+		const anchor = readSurfaceAnchor(metrics({ offsetY: 700 }), false);
+
+		expect(anchor.atBottom).toBe(false);
+		expect(bottomOffsetCorrection(anchor, metrics({ offsetY: 700 }), false)).toBeUndefined();
+	});
+
+	test('keeps a surface anchor until the resized row publishes its new content height', () => {
 		const anchor = readBottomAnchor(metrics());
 		const tracker = new BottomAnchorTracker();
 
@@ -78,6 +97,16 @@ describe('chat bottom anchoring', () => {
 
 		expect(tracker.correction(metrics({ contentHeight: 1640 }), true)).toBeUndefined();
 		expect(tracker.pending).toBe(false);
+	});
+});
+
+describe('embedded row invalidation', () => {
+	test('refreshes a reattached surface even when its height did not change', () => {
+		expect(shouldRefreshSurfaceRow(true, 230, 230)).toBe(true);
+	});
+
+	test('skips duplicate row invalidation when the surface height is unchanged', () => {
+		expect(shouldRefreshSurfaceRow(false, 230, 230)).toBe(false);
 	});
 });
 
