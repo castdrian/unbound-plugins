@@ -17,7 +17,7 @@ import {
 	nativeUsernameColor,
 } from '#link-targets';
 import { enableAnimatedEmojiSources } from '#animated-emoji';
-import { reactionSnapshot, updateMessageRecord } from '#reaction-state';
+import { reactionSnapshot, stripMessageReactions } from '#reaction-state';
 import {
 	BottomAnchorTracker,
 	readSurfaceAnchor,
@@ -111,7 +111,6 @@ type EmbeddedSurfaceState = {
 	labelHook: NativeHookToken | null;
 	messageId: string;
 	sourceReactionSnapshot: string;
-	targetReactionSnapshot: string;
 	original: NativeObjectHandle;
 	range: { location: number; length: number };
 	record: Message;
@@ -183,21 +182,11 @@ function syncMessageReactions(): void {
 
 	for (const state of cellStates.values()) {
 		const source = messages.getMessage?.(state.selectedTarget.channelId, state.messageId);
-		const target = messages.getMessage?.(
-			state.selectedTarget.channelId,
-			state.selectedTarget.messageId,
-		);
-		if (!target) {
-			reconcileSurfaceText(state);
-			continue;
-		}
 		const sourceReactionSnapshot = source
 			? reactionSnapshot(source.reactions)
 			: state.sourceReactionSnapshot;
-		const targetReactionSnapshot = reactionSnapshot(target.reactions);
 		const sourceChanged = sourceReactionSnapshot !== state.sourceReactionSnapshot;
-		const targetChanged = targetReactionSnapshot !== state.targetReactionSnapshot;
-		if (!sourceChanged && !targetChanged) {
+		if (!sourceChanged) {
 			reconcileSurfaceText(state);
 			continue;
 		}
@@ -206,30 +195,8 @@ function syncMessageReactions(): void {
 		reconcileSurfaceText(state);
 		if (cellStates.get(state.cellKey) !== state) continue;
 
-		if (sourceChanged) state.sourceReactionSnapshot = sourceReactionSnapshot;
-		if (targetChanged) {
-			try {
-				updateMessageRecord(
-					state.record,
-					buildSurfaceRecord(target, state.selectedTarget.channelId),
-				);
-				state.generator = createRowGeneratorProxy(state.baseGenerator);
-				state.targetReactionSnapshot = targetReactionSnapshot;
-				state.renderRevision++;
-				if (state.surface) {
-					fabric.update(state.surface, {
-						renderRevision: state.renderRevision,
-						surfaceId: state.surfaceId,
-					});
-				}
-			} catch {
-				continue;
-			}
-		}
-		scheduleReactionScrollCorrection(
-			state,
-			targetChanged ? SURFACE_LAYOUT_SETTLE_DELAY * 2 + 16 : SURFACE_LAYOUT_SETTLE_DELAY,
-		);
+		state.sourceReactionSnapshot = sourceReactionSnapshot;
+		scheduleReactionScrollCorrection(state, SURFACE_LAYOUT_SETTLE_DELAY);
 	}
 }
 
@@ -255,15 +222,9 @@ function handleMessageStoreChange(): void {
 	if (messages) {
 		for (const state of cellStates.values()) {
 			const source = messages.getMessage?.(state.selectedTarget.channelId, state.messageId);
-			const target = messages.getMessage?.(
-				state.selectedTarget.channelId,
-				state.selectedTarget.messageId,
-			);
 			const sourceChanged =
 				source && reactionSnapshot(source.reactions) !== state.sourceReactionSnapshot;
-			const targetChanged =
-				target && reactionSnapshot(target.reactions) !== state.targetReactionSnapshot;
-			if (!sourceChanged && !targetChanged) continue;
+			if (!sourceChanged) continue;
 			const table = tableForCell(state.cell);
 			if (table) captureSurfaceBottomAnchor(state, table);
 		}
@@ -479,6 +440,7 @@ function buildRecord(target: Message, channelId: string): Message {
 
 function buildSurfaceRecord(target: Message, channelId: string): Message {
 	const record = buildRecord(target, channelId);
+	stripMessageReactions(record);
 	record.animateEmoji = true;
 	const usernameColor = nativeUsernameColor(record.colorString);
 	if (usernameColor !== undefined) record.usernameColor = usernameColor;
@@ -980,7 +942,6 @@ function createSurfaceState(
 		labelHook: null,
 		messageId: info.messageId,
 		sourceReactionSnapshot: reactionSnapshot(source.reactions),
-		targetReactionSnapshot: reactionSnapshot(content.record.reactions),
 		original: attributedText,
 		range,
 		record: content.record,

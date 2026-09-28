@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { reactionSnapshot, updateMessageRecord } from '#reaction-state';
+import { reactionSnapshot, stripMessageReactions } from '#reaction-state';
 
 describe('message reaction snapshots', () => {
 	test('creates a stable snapshot for message reaction changes', () => {
@@ -38,11 +38,11 @@ describe('message reaction snapshots', () => {
 		expect(reactionSnapshot(reactions)).not.toBe(initial);
 	});
 
-	test('updates a mounted message record without replacing its identity', () => {
-		const record = { content: 'preview', id: 'message', reactions: [] as unknown[] };
-		const next = { ...record, reactions: [{ count: 1 }] };
+	test('removes reactions from the embedded message without replacing its identity', () => {
+		const record = { content: 'preview', id: 'message', reactions: [{ count: 1 }] };
 
-		expect(updateMessageRecord(record, next)).toBe(record);
-		expect(record.reactions).toEqual([{ count: 1 }]);
+		expect(stripMessageReactions(record)).toBe(record);
+		expect(record.reactions).toEqual([]);
+		expect(record.content).toBe('preview');
 	});
 });
