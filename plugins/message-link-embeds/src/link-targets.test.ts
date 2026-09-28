@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { findRenderedLinkRange, linkedTargets, nativeUsernameColor } from '@message-link-embeds/link-targets';
+import {
+	findRenderedLinkRange,
+	linkedTargets,
+	nativeUsernameColor,
+} from '@message-link-embeds/link-targets';
 
 describe('linked message targets', () => {
 	test('extracts Discord message links from nested rich content', () => {
