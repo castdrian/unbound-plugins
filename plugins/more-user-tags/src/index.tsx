@@ -255,8 +255,7 @@ export default {
 				const background = colors[0];
 				const { processColor } = metro.common.ReactNative;
 				if (STORE.get('useOpTagStyle', false)) {
-					const opText = result.opTagText ?? 'OP';
-					const opTagText = `${opText} • ${tag.displayName}`;
+					const opTagText = tag.displayName;
 					const tagged = {
 						...result,
 						tagText: null,
