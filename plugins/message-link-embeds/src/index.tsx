@@ -26,6 +26,7 @@ const INITIAL_SURFACE_HEIGHT = MIN_SURFACE_HEIGHT;
 const MAX_SURFACE_HEIGHT = 520;
 const SURFACE_LAYOUT_SETTLE_DELAY = 80;
 const SURFACE_BOTTOM_TRIM = 5;
+const SURFACE_SPACER_FONT_SIZE = 6;
 const EMBED_BACKGROUND = '#2b2d31';
 const MAX_NATIVE_VIEW_DEPTH = 10;
 
@@ -566,11 +567,29 @@ function attributedSurfaceInsertion(
 	const trailingText = sourceText.slice(insertionLocation);
 	const leadingNewline = sourceText[insertionLocation - 1] === '\n' ? '' : '\n';
 	const trailingNewline = trailingText.trim().length > 0 ? '\n' : '';
-	const attachmentLocation = leadingNewline.length;
-	const insertionText = `${leadingNewline}\uFFFC${trailingNewline}`;
+	const spacerText = '\u200B\n';
+	const spacerLocation = leadingNewline.length;
+	const attachmentLocation = spacerLocation + spacerText.length;
+	const insertionText = `${leadingNewline}${spacerText}\uFFFC${trailingNewline}`;
 	const attributes: AnyRecord = state.font ? { NSFont: state.font } : {};
 	const insertion = objc.alloc('NSMutableAttributedString');
 	invoke(insertion, 'initWithString:attributes:', insertionText, attributes);
+	const spacerFont = state.font
+		? (invoke(
+				state.font,
+				'fontWithSize:',
+				SURFACE_SPACER_FONT_SIZE,
+			) as NativeObjectHandle | null)
+		: null;
+	if (spacerFont) {
+		invoke(
+			insertion,
+			'addAttribute:value:range:',
+			'NSFont',
+			spacerFont,
+			nativeRange(spacerLocation, spacerText.length),
+		);
+	}
 	invoke(
 		insertion,
 		'addAttribute:value:range:',
