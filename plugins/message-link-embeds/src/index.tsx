@@ -18,6 +18,13 @@ import {
 } from '#link-targets';
 import { enableAnimatedEmojiSources } from '#animated-emoji';
 import { reactionSnapshot } from '#reaction-state';
+import {
+	bottomOffsetCorrection,
+	readBottomAnchor,
+	SurfaceHeightCache,
+	surfaceHeightCacheKey,
+	type SurfaceLayoutMetrics,
+} from '#surface-layout';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE_PREFIX = 'MessageLinkEmbedSurface';
@@ -26,7 +33,7 @@ const INITIAL_SURFACE_HEIGHT = MIN_SURFACE_HEIGHT;
 const MAX_SURFACE_HEIGHT = 520;
 const SURFACE_LAYOUT_SETTLE_DELAY = 80;
 const SURFACE_BOTTOM_TRIM = 5;
-const SURFACE_SPACER_FONT_SIZE = 6;
+const SURFACE_SPACER_FONT_SIZE = 8;
 const EMBED_BACKGROUND = '#2b2d31';
 const MAX_NATIVE_VIEW_DEPTH = 10;
 
@@ -110,6 +117,7 @@ type EmbeddedSurfaceState = {
 	surfaceId: string;
 	width: number;
 	height: number;
+	heightCacheKey: string;
 	lastInvalidatedHeight: number;
 	applying: boolean;
 	layoutTimer: ReturnType<typeof setTimeout> | null;
@@ -149,6 +157,7 @@ const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const waitingCells = new Map<string, string>();
 const cellStates = new Map<string, EmbeddedSurfaceState>();
 const surfaces = new Map<string, EmbeddedSurfaceState>();
+const surfaceHeights = new SurfaceHeightCache();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
 const surfaceRebindTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -175,6 +184,8 @@ function syncMessageReactions(): void {
 		if (!message) continue;
 		const targetReactionSnapshot = reactionSnapshot(message.reactions);
 		if (targetReactionSnapshot === state.targetReactionSnapshot) continue;
+		const table = tableForCell(state.cell);
+		const anchor = table ? tableBottomAnchor(table) : null;
 		const content = buildEmbeddedContent(message, state.selectedTarget.channelId);
 		if (!content) continue;
 
@@ -192,6 +203,7 @@ function syncMessageReactions(): void {
 		} catch {
 			continue;
 		}
+		if (table && anchor) scheduleBottomScrollCorrection(state, table, anchor);
 	}
 }
 
@@ -635,12 +647,7 @@ function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
 	return null;
 }
 
-function tableBottomAnchor(table: NativeObjectHandle): {
-	atBottom: boolean;
-	inverted: boolean;
-	x: number;
-	y: number;
-} {
+function tableLayoutMetrics(table: NativeObjectHandle): SurfaceLayoutMetrics {
 	const contentSize = structFields(nativeCall(table, 'contentSize'));
 	const contentOffset = structFields(nativeCall(table, 'contentOffset'));
 	const bounds = structFields(nativeCall(table, 'bounds'));
@@ -652,19 +659,56 @@ function tableBottomAnchor(table: NativeObjectHandle): {
 	const offsetY = Number(contentOffset.y);
 	const topInset = Number(contentInset.top ?? 0);
 	const bottomInset = Number(contentInset.bottom ?? 0);
-	const maximumOffset = contentHeight - viewportHeight + bottomInset;
-	const inverted = Number(transform.d) < 0;
-	const bottomOffset = inverted ? -topInset : Math.max(-topInset, maximumOffset);
 	const x = Number(contentOffset.x);
 	return {
-		atBottom:
-			Number.isFinite(bottomOffset) &&
-			Number.isFinite(offsetY) &&
-			Math.abs(bottomOffset - offsetY) <= Math.max(36, topInset + bottomInset),
-		inverted,
-		x: Number.isFinite(x) ? x : 0,
-		y: Number.isFinite(offsetY) ? offsetY : 0,
+		bottomInset,
+		contentHeight,
+		inverted: Number(transform.d) < 0,
+		offsetX: x,
+		offsetY,
+		topInset,
+		viewportHeight,
 	};
+}
+
+function tableBottomAnchor(table: NativeObjectHandle) {
+	return readBottomAnchor(tableLayoutMetrics(table));
+}
+
+function tableIsScrolling(table: NativeObjectHandle): boolean {
+	return Boolean(
+		nativeCall(table, 'isTracking') ||
+		nativeCall(table, 'isDragging') ||
+		nativeCall(table, 'isDecelerating'),
+	);
+}
+
+function scheduleBottomScrollCorrection(
+	state: EmbeddedSurfaceState,
+	table: NativeObjectHandle,
+	anchor: ReturnType<typeof readBottomAnchor>,
+): void {
+	if (!anchor.atBottom) return;
+	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
+	state.bottomScrollTimer = setTimeout(() => {
+		state.bottomScrollTimer = null;
+		if (cellStates.get(state.cellKey) !== state || !objc) return;
+		nativeCall(state.label, 'layoutIfNeeded');
+		nativeCall(state.cell, 'layoutIfNeeded');
+		nativeCall(table, 'layoutIfNeeded');
+		const correction = bottomOffsetCorrection(
+			anchor,
+			tableLayoutMetrics(table),
+			tableIsScrolling(table),
+		);
+		if (!correction) return;
+		nativeCall(
+			table,
+			'setContentOffset:animated:',
+			objc.struct('CGPoint', { x: correction.x, y: correction.y }),
+			false,
+		);
+	}, 16);
 }
 
 function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): void {
@@ -679,38 +723,7 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 	const anchor = tableBottomAnchor(table);
 	nativeCall(table, 'beginUpdates');
 	nativeCall(table, 'endUpdates');
-	if (!anchor.atBottom) return;
-	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
-	state.bottomScrollTimer = setTimeout(() => {
-		state.bottomScrollTimer = null;
-		if (cellStates.get(state.cellKey) !== state || !objc) return;
-		nativeCall(state.label, 'layoutIfNeeded');
-		nativeCall(state.cell, 'layoutIfNeeded');
-		nativeCall(table, 'layoutIfNeeded');
-		const updatedAnchor = tableBottomAnchor(table);
-		if (Math.abs(updatedAnchor.y - anchor.y) > 24 && !updatedAnchor.atBottom) return;
-		if (updatedAnchor.atBottom) return;
-		const contentSize = structFields(nativeCall(table, 'contentSize'));
-		const bounds = structFields(nativeCall(table, 'bounds'));
-		const boundsSize = bounds.size as AnyRecord | undefined;
-		const contentInset = structFields(nativeCall(table, 'adjustedContentInset'));
-		const contentHeight = Number(contentSize.height);
-		const viewportHeight = Number(boundsSize?.height);
-		const bottomInset = Number(contentInset.bottom ?? 0);
-		const topInset = Number(contentInset.top ?? 0);
-		if (!Number.isFinite(contentHeight) || !Number.isFinite(viewportHeight)) return;
-		const y = updatedAnchor.inverted
-			? -topInset
-			: Math.max(-topInset, contentHeight - viewportHeight + bottomInset);
-		const currentOffset = structFields(nativeCall(table, 'contentOffset'));
-		if (Math.abs(Number(currentOffset.y) - y) <= 1) return;
-		nativeCall(
-			table,
-			'setContentOffset:animated:',
-			objc.struct('CGPoint', { x: updatedAnchor.x, y }),
-			false,
-		);
-	}, 16);
+	scheduleBottomScrollCorrection(state, table, anchor);
 }
 
 function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = false): boolean {
@@ -768,6 +781,7 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 		)
 			return;
 		state.height = settledHeight;
+		surfaceHeights.set(state.heightCacheKey, settledHeight);
 		nativeCall(state.host, 'setFrame:', nativeFrame(state.width, settledHeight));
 		applyAttachment(state, true);
 	}, SURFACE_LAYOUT_SETTLE_DELAY);
@@ -850,7 +864,9 @@ function createSurfaceState(
 	const width = availableMessageWidth(cell, label);
 	if (!Number.isFinite(width) || width < 80) return null;
 	const font = linkFont(attributedText, range);
-	const host = createHost(width, INITIAL_SURFACE_HEIGHT);
+	const heightCacheKey = surfaceHeightCacheKey(target.channelId, target.messageId, width);
+	const initialHeight = surfaceHeights.get(heightCacheKey, INITIAL_SURFACE_HEIGHT);
+	const host = createHost(width, initialHeight);
 	if (!host) return null;
 	const surfaceId = `message-link-${key}-${info.messageId}-${target.messageId}`;
 	const state: EmbeddedSurfaceState = {
@@ -873,7 +889,8 @@ function createSurfaceState(
 		surface: null,
 		surfaceId,
 		width,
-		height: INITIAL_SURFACE_HEIGHT,
+		height: initialHeight,
+		heightCacheKey,
 		lastInvalidatedHeight: -1,
 		applying: false,
 		layoutTimer: null,
@@ -1290,6 +1307,7 @@ function stop(): void {
 	waitingCells.clear();
 	cachedMessages.clear();
 	pendingMessages.clear();
+	surfaceHeights.clear();
 	messages = null;
 	messageActions = null;
 	channelStore = null;
