@@ -2,7 +2,6 @@ import { metro } from '@unbound-app/api';
 import type {
 	NativeFabricBridge,
 	NativeFabricSurface,
-	NativeHookContext,
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
@@ -29,7 +28,6 @@ const SURFACE_LAYOUT_SETTLE_DELAY = 80;
 const SURFACE_BOTTOM_TRIM = 5;
 const EMBED_BACKGROUND = '#2b2d31';
 const MAX_NATIVE_VIEW_DEPTH = 10;
-const CELL_LAYOUT_CHECK_INTERVAL = 500;
 
 type AnyRecord = Record<string, unknown>;
 type NativeInvoker = (handle: NativeObjectHandle, selector: string, ...args: unknown[]) => unknown;
@@ -54,12 +52,6 @@ type MessageStore = {
 };
 type MessageActions = {
 	fetchMessage?: (target: LinkTarget) => Promise<Message | null>;
-	jumpToMessage?: (options: {
-		channelId: string;
-		messageId: string;
-		flash: boolean;
-		jumpType: string;
-	}) => unknown;
 };
 type ChannelStore = {
 	getChannel?: (channelId: string) => AnyRecord | undefined;
@@ -102,12 +94,9 @@ type EmbeddedSurfaceState = {
 	channelName: string;
 	font: NativeObjectHandle | null;
 	generator: RowGenerator;
-	highlight: NativeObjectHandle | null;
 	host: NativeObjectHandle;
 	label: NativeObjectHandle;
 	labelHook: NativeHookToken | null;
-	cellLayoutHook: NativeHookToken | null;
-	pressOverlay: NativeObjectHandle | null;
 	messageId: string;
 	targetReactionSnapshot: string;
 	original: NativeObjectHandle;
@@ -121,9 +110,9 @@ type EmbeddedSurfaceState = {
 	width: number;
 	height: number;
 	lastInvalidatedHeight: number;
-	lastLayoutCheck: number;
 	applying: boolean;
 	layoutTimer: ReturnType<typeof setTimeout> | null;
+	bottomScrollTimer: ReturnType<typeof setTimeout> | null;
 	pendingHeight: number | null;
 	renderRevision: number;
 };
@@ -166,19 +155,6 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 	if (!objc) return null;
 	try {
 		return objc.invoke(handle, selector, args, { thread: 'main' });
-	} catch {
-		return null;
-	}
-}
-
-function nativeCallCurrent(
-	handle: NativeObjectHandle,
-	selector: string,
-	...args: unknown[]
-): unknown {
-	if (!objc) return null;
-	try {
-		return objc.invoke(handle, selector, args, { thread: 'current' });
 	} catch {
 		return null;
 	}
@@ -361,12 +337,12 @@ function channelNameFor(target: LinkTarget, targetMessage: Message): string | un
 	return typeof fromMessage === 'string' && fromMessage.length > 0 ? fromMessage : undefined;
 }
 
-function linkAttributes(
+function linkFont(
 	attributedText: NativeObjectHandle,
 	range: { location: number; length: number },
 	invoke: NativeInvoker = nativeCall,
-): { font: NativeObjectHandle | null; highlight: NativeObjectHandle | null } {
-	if (!objc) return { font: null, highlight: null };
+): NativeObjectHandle | null {
+	if (!objc) return null;
 	const text = stringFromNative(invoke(attributedText, 'string')) ?? '';
 	const end = range.location + range.length;
 	for (let index = range.location; index < end; index++) {
@@ -375,12 +351,9 @@ function linkAttributes(
 		if (!values || typeof values !== 'object') continue;
 		const attributes = values as AnyRecord;
 		if (!attributes.YYTextAttachment) continue;
-		return {
-			font: (attributes.NSFont as NativeObjectHandle | undefined) ?? null,
-			highlight: (attributes.YYTextHighlight as NativeObjectHandle | undefined) ?? null,
-		};
+		return (attributes.NSFont as NativeObjectHandle | undefined) ?? null;
 	}
-	return { font: null, highlight: null };
+	return null;
 }
 
 function messagePayload(message: Message): Message {
@@ -541,22 +514,6 @@ function fetchLinkedMessage(target: LinkTarget): void {
 		});
 }
 
-function jumpToMessage(target: LinkTarget): void {
-	try {
-		const actions = messageActions?.jumpToMessage
-			? messageActions
-			: metro.findByProps('jumpToMessage');
-		actions?.jumpToMessage?.({
-			channelId: target.channelId,
-			flash: true,
-			jumpType: 'INSTANT',
-			messageId: target.messageId,
-		});
-	} catch {
-		return;
-	}
-}
-
 function nativeFrame(width: number, height: number): unknown {
 	return objc?.struct('CGRect', { origin: { x: 0, y: 0 }, size: { width, height } }) ?? null;
 }
@@ -594,7 +551,7 @@ function createHost(width: number, height: number): NativeObjectHandle | null {
 	}
 }
 
-function attributedAttachment(
+function attributedSurfaceInsertion(
 	state: EmbeddedSurfaceState,
 	invoke: NativeInvoker = nativeCall,
 ): NativeObjectHandle | null {
@@ -604,17 +561,22 @@ function attributedAttachment(
 	const attachment = objc.alloc(attachmentClass);
 	invoke(attachment, 'setValue:forKey:', state.host, 'content');
 	invoke(attachment, 'setValue:forKey:', 1, 'contentMode');
-	const attributes: AnyRecord = {};
-	if (state.font) attributes.NSFont = state.font;
-	if (state.highlight) attributes.YYTextHighlight = state.highlight;
-	const replacement = objc.alloc('NSMutableAttributedString');
-	invoke(replacement, 'initWithString:attributes:', '\uFFFC', attributes);
+	const sourceText = stringFromNative(invoke(state.original, 'string')) ?? '';
+	const insertionLocation = state.range.location + state.range.length;
+	const trailingText = sourceText.slice(insertionLocation);
+	const leadingNewline = sourceText[insertionLocation - 1] === '\n' ? '' : '\n';
+	const trailingNewline = trailingText.trim().length > 0 ? '\n' : '';
+	const attachmentLocation = leadingNewline.length;
+	const insertionText = `${leadingNewline}\uFFFC${trailingNewline}`;
+	const attributes: AnyRecord = state.font ? { NSFont: state.font } : {};
+	const insertion = objc.alloc('NSMutableAttributedString');
+	invoke(insertion, 'initWithString:attributes:', insertionText, attributes);
 	invoke(
-		replacement,
+		insertion,
 		'addAttribute:value:range:',
 		'YYTextAttachment',
 		attachment,
-		nativeRange(0, 1),
+		nativeRange(attachmentLocation, 1),
 	);
 	const delegateClass = objc.getClass('YYTextRunDelegate');
 	if (delegateClass) {
@@ -625,103 +587,21 @@ function attributedAttachment(
 		const coreDelegate = invoke(delegate, 'CTRunDelegate');
 		if (coreDelegate) {
 			invoke(
-				replacement,
+				insertion,
 				'addAttribute:value:range:',
 				'CTRunDelegate',
 				coreDelegate,
-				nativeRange(0, 1),
+				nativeRange(attachmentLocation, 1),
 			);
 		}
 	}
-	return replacement;
+	return insertion;
 }
 
 function structFields(value: unknown): AnyRecord {
 	if (!value || typeof value !== 'object') return {};
 	const fields = (value as AnyRecord).value;
 	return fields && typeof fields === 'object' ? (fields as AnyRecord) : {};
-}
-
-function setPressOverlay(state: EmbeddedSurfaceState, pressed: boolean): void {
-	if (!state.pressOverlay) return;
-	if (pressed) resizePressOverlay(state);
-	nativeCall(state.pressOverlay, 'setHidden:', !pressed);
-}
-
-function resizePressOverlay(
-	state: EmbeddedSurfaceState,
-	height: number = state.pendingHeight ?? state.height,
-): void {
-	if (!state.pressOverlay) return;
-	nativeCall(state.pressOverlay, 'setFrame:', nativeFrame(state.width, height));
-}
-
-function replaceSurfaceText(state: EmbeddedSurfaceState, context: NativeHookContext): void {
-	const { args } = context;
-	if (state.applying) return;
-	const incoming = args[0] as NativeObjectHandle | undefined;
-	if (!incoming || typeof incoming !== 'object') return;
-	const text = nativeCallCurrent(incoming, 'string');
-	if (typeof text !== 'string') return;
-	const range = findRenderedLinkRange(text, state.channelName);
-	if (!range) return;
-	const attributes = linkAttributes(incoming, range, nativeCallCurrent);
-	const previousFont = state.font;
-	const previousHighlight = state.highlight;
-	state.font = attributes.font;
-	state.highlight = attributes.highlight;
-	const attachment = attributedAttachment(state, nativeCallCurrent);
-	const updated = attachment
-		? (nativeCallCurrent(incoming, 'mutableCopy') as NativeObjectHandle | null)
-		: null;
-	if (!updated) {
-		state.font = previousFont;
-		state.highlight = previousHighlight;
-		return;
-	}
-	nativeCallCurrent(
-		updated,
-		'replaceCharactersInRange:withAttributedString:',
-		nativeRange(range.location, range.length),
-		attachment,
-	);
-	const renderedText = nativeCallCurrent(updated, 'string');
-	if (typeof renderedText !== 'string') {
-		state.font = previousFont;
-		state.highlight = previousHighlight;
-		return;
-	}
-	state.original = incoming;
-	state.range = range;
-	state.rendered = updated;
-	state.renderedText = renderedText;
-	context.replaceObjectArgument(0, updated);
-}
-
-function createPressOverlay(state: EmbeddedSurfaceState): NativeObjectHandle | null {
-	if (!objc) return null;
-	try {
-		const overlay = objc.alloc('UIView');
-		const color = nativeCall(
-			objc.getClass('UIColor') as NativeObjectHandle,
-			'colorWithWhite:alpha:',
-			1,
-			0.1,
-		);
-		nativeCall(overlay, 'setFrame:', nativeFrame(state.width, state.height));
-		nativeCall(overlay, 'setAutoresizingMask:', 18);
-		nativeCall(overlay, 'setUserInteractionEnabled:', false);
-		nativeCall(overlay, 'setOpaque:', false);
-		nativeCall(overlay, 'setClipsToBounds:', true);
-		nativeCall(overlay, 'setBackgroundColor:', color);
-		nativeCall(overlay, 'setHidden:', true);
-		const layer = nativeCall(overlay, 'layer') as NativeObjectHandle | null;
-		if (layer) nativeCall(layer, 'setCornerRadius:', 8);
-		nativeCall(state.host, 'addSubview:', overlay);
-		return overlay;
-	} catch {
-		return null;
-	}
 }
 
 function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
@@ -740,6 +620,7 @@ function tableBottomAnchor(table: NativeObjectHandle): {
 	atBottom: boolean;
 	inverted: boolean;
 	x: number;
+	y: number;
 } {
 	const contentSize = structFields(nativeCall(table, 'contentSize'));
 	const contentOffset = structFields(nativeCall(table, 'contentOffset'));
@@ -763,6 +644,7 @@ function tableBottomAnchor(table: NativeObjectHandle): {
 			Math.abs(bottomOffset - offsetY) <= Math.max(36, topInset + bottomInset),
 		inverted,
 		x: Number.isFinite(x) ? x : 0,
+		y: Number.isFinite(offsetY) ? offsetY : 0,
 	};
 }
 
@@ -778,7 +660,17 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 	const anchor = tableBottomAnchor(table);
 	nativeCall(table, 'beginUpdates');
 	nativeCall(table, 'endUpdates');
-	if (anchor.atBottom) {
+	if (!anchor.atBottom) return;
+	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
+	state.bottomScrollTimer = setTimeout(() => {
+		state.bottomScrollTimer = null;
+		if (cellStates.get(state.cellKey) !== state || !objc) return;
+		nativeCall(state.label, 'layoutIfNeeded');
+		nativeCall(state.cell, 'layoutIfNeeded');
+		nativeCall(table, 'layoutIfNeeded');
+		const updatedAnchor = tableBottomAnchor(table);
+		if (Math.abs(updatedAnchor.y - anchor.y) > 24 && !updatedAnchor.atBottom) return;
+		if (updatedAnchor.atBottom) return;
 		const contentSize = structFields(nativeCall(table, 'contentSize'));
 		const bounds = structFields(nativeCall(table, 'bounds'));
 		const boundsSize = bounds.size as AnyRecord | undefined;
@@ -787,21 +679,19 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 		const viewportHeight = Number(boundsSize?.height);
 		const bottomInset = Number(contentInset.bottom ?? 0);
 		const topInset = Number(contentInset.top ?? 0);
-		if (Number.isFinite(contentHeight) && Number.isFinite(viewportHeight)) {
-			const y = anchor.inverted
-				? -topInset
-				: Math.max(-topInset, contentHeight - viewportHeight + bottomInset);
-			const currentOffset = structFields(nativeCall(table, 'contentOffset'));
-			if (Math.abs(Number(currentOffset.y) - y) > 1) {
-				nativeCall(
-					table,
-					'setContentOffset:animated:',
-					objc.struct('CGPoint', { x: anchor.x, y }),
-					false,
-				);
-			}
-		}
-	}
+		if (!Number.isFinite(contentHeight) || !Number.isFinite(viewportHeight)) return;
+		const y = updatedAnchor.inverted
+			? -topInset
+			: Math.max(-topInset, contentHeight - viewportHeight + bottomInset);
+		const currentOffset = structFields(nativeCall(table, 'contentOffset'));
+		if (Math.abs(Number(currentOffset.y) - y) <= 1) return;
+		nativeCall(
+			table,
+			'setContentOffset:animated:',
+			objc.struct('CGPoint', { x: updatedAnchor.x, y }),
+			false,
+		);
+	}, 16);
 }
 
 function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = false): boolean {
@@ -809,15 +699,15 @@ function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = fa
 	if (state.applying) return false;
 	state.applying = true;
 	try {
-		const attachment = attributedAttachment(state);
+		const attachment = attributedSurfaceInsertion(state);
 		if (!attachment) return false;
 		const updated = nativeCall(state.original, 'mutableCopy') as NativeObjectHandle | null;
 		if (!updated) return false;
 		nativeCall(
 			updated,
-			'replaceCharactersInRange:withAttributedString:',
-			nativeRange(state.range.location, state.range.length),
+			'insertAttributedString:atIndex:',
 			attachment,
+			state.range.location + state.range.length,
 		);
 		const text = stringFromNative(nativeCall(updated, 'string'));
 		if (typeof text !== 'string') return false;
@@ -834,7 +724,9 @@ function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = fa
 
 function clearSurfaceTimers(state: EmbeddedSurfaceState): void {
 	if (state.layoutTimer) clearTimeout(state.layoutTimer);
+	if (state.bottomScrollTimer) clearTimeout(state.bottomScrollTimer);
 	state.layoutTimer = null;
+	state.bottomScrollTimer = null;
 	state.pendingHeight = null;
 }
 
@@ -842,7 +734,6 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 	const state = surfaces.get(surfaceId);
 	if (!state || !Number.isFinite(height) || height <= 0 || height > MAX_SURFACE_HEIGHT) return;
 	const fittedHeight = Math.max(MIN_SURFACE_HEIGHT, height - SURFACE_BOTTOM_TRIM);
-	resizePressOverlay(state, fittedHeight);
 	const currentHeight = state.pendingHeight ?? state.height;
 	if (Math.abs(currentHeight - fittedHeight) < 2) return;
 	state.pendingHeight = fittedHeight;
@@ -859,7 +750,6 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 			return;
 		state.height = settledHeight;
 		nativeCall(state.host, 'setFrame:', nativeFrame(state.width, settledHeight));
-		resizePressOverlay(state);
 		applyAttachment(state, true);
 	}, SURFACE_LAYOUT_SETTLE_DELAY);
 }
@@ -878,14 +768,8 @@ function MessageSurface({ surfaceId }: SurfaceProps): ReactNode {
 		if (height > 0) reportSurfaceLayout(surfaceId, height);
 	};
 	return React.createElement(
-		ReactNative.Pressable,
+		ReactNative.View,
 		{
-			accessibilityLabel: 'Open linked message',
-			accessibilityRole: 'link',
-			onAccessibilityTap: () => jumpToMessage(state.selectedTarget),
-			onPress: () => jumpToMessage(state.selectedTarget),
-			onPressIn: () => setPressOverlay(state, true),
-			onPressOut: () => setPressOverlay(state, false),
 			onLayout,
 			style: {
 				backgroundColor: EMBED_BACKGROUND,
@@ -946,7 +830,7 @@ function createSurfaceState(
 	if (!objc || !fabric) return null;
 	const width = availableMessageWidth(cell, label);
 	if (!Number.isFinite(width) || width < 80) return null;
-	const attributes = linkAttributes(attributedText, range);
+	const font = linkFont(attributedText, range);
 	const host = createHost(width, INITIAL_SURFACE_HEIGHT);
 	if (!host) return null;
 	const surfaceId = `message-link-${key}-${info.messageId}-${target.messageId}`;
@@ -954,14 +838,11 @@ function createSurfaceState(
 		cell,
 		cellKey: key,
 		channelName,
-		font: attributes.font,
+		font,
 		generator: content.generator,
-		highlight: attributes.highlight,
 		host,
 		label,
 		labelHook: null,
-		cellLayoutHook: null,
-		pressOverlay: null,
 		messageId: info.messageId,
 		targetReactionSnapshot: reactionSnapshot(content.record.reactions),
 		original: attributedText,
@@ -975,9 +856,9 @@ function createSurfaceState(
 		width,
 		height: INITIAL_SURFACE_HEIGHT,
 		lastInvalidatedHeight: -1,
-		lastLayoutCheck: 0,
 		applying: false,
 		layoutTimer: null,
+		bottomScrollTimer: null,
 		pendingHeight: null,
 		renderRevision: 0,
 	};
@@ -986,26 +867,13 @@ function createSurfaceState(
 		state.labelHook = objc.hook(
 			'DCDReusableYYLabel',
 			'setAttributedText:',
-			{ before: (context) => replaceSurfaceText(state, context) },
-			{ instance: label },
-		);
-		state.cellLayoutHook = objc.hook(
-			'DCDMessageTableViewCell',
-			'layoutSubviews',
 			{
 				after: () => {
-					const now = Date.now();
-					if (now - state.lastLayoutCheck < CELL_LAYOUT_CHECK_INTERVAL) return;
-					state.lastLayoutCheck = now;
-					setTimeout(() => {
-						if (cellStates.get(key) !== state || !objc) return;
-						if (!nativeCall(state.label, 'isDescendantOfView:', cell)) {
-							queueSurfaceRebind(cell, state);
-						}
-					}, 0);
+					if (state.applying) return;
+					setTimeout(() => reconcileSurfaceText(state), 0);
 				},
 			},
-			{ instance: cell },
+			{ instance: label },
 		);
 		state.surface = fabric.mount(host, surfaceModuleName, {
 			renderRevision: state.renderRevision,
@@ -1016,7 +884,6 @@ function createSurfaceState(
 			{ width, height: MIN_SURFACE_HEIGHT },
 			{ width, height: MAX_SURFACE_HEIGHT },
 		);
-		state.pressOverlay = createPressOverlay(state);
 		removeCellLabelHooks(key);
 		cellStates.set(key, state);
 		if (!applyAttachment(state)) throw new Error('Could not attach the Fabric message surface');
@@ -1025,7 +892,6 @@ function createSurfaceState(
 		cellStates.delete(key);
 		clearSurfaceTimers(state);
 		state.labelHook?.remove();
-		state.cellLayoutHook?.remove();
 		try {
 			if (state.surface) fabric.unmount(state.surface);
 		} catch {
@@ -1041,7 +907,6 @@ function teardownSurface(key: string, restore: boolean): void {
 	if (!state) return;
 	clearSurfaceTimers(state);
 	state.labelHook?.remove();
-	state.cellLayoutHook?.remove();
 	if (restore && objc && state.rendered && state.renderedText !== null) {
 		const current = nativeCall(state.label, 'attributedText') as NativeObjectHandle | null;
 		const currentText = current ? stringFromNative(nativeCall(current, 'string')) : undefined;
@@ -1080,9 +945,7 @@ function updateExistingSurface(
 ): void {
 	state.original = attributedText;
 	state.range = range;
-	const attributes = linkAttributes(attributedText, range);
-	state.font = attributes.font;
-	state.highlight = attributes.highlight;
+	state.font = linkFont(attributedText, range);
 	applyAttachment(state, forceRefresh);
 }
 
