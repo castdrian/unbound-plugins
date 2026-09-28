@@ -6,6 +6,7 @@ import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
+import { bunPathAliases } from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -75,6 +76,7 @@ export default {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
 	plugins: [
+		bunPathAliases(),
 		reviewdbAlias(),
 		nodeResolve(),
 		json(),

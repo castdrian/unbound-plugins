@@ -1,13 +1,7 @@
 {
 	"extends": "../../tsconfig.json",
 	"compilerOptions": {
-		"baseUrl": ".",
-		"ignoreDeprecations": "5.0",
-		"paths": {
-			"@clear-urls/*": [
-				"src/*"
-			]
-		}
+		"ignoreDeprecations": "5.0"
 	},
 	"include": [
 		"src"

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { reactionSnapshot, stripMessageReactions } from '#reaction-state';
+import { reactionSnapshot, stripMessageReactions } from '@message-link-embeds/reaction-state';
 
 describe('message reaction snapshots', () => {
 	test('creates a stable snapshot for message reaction changes', () => {

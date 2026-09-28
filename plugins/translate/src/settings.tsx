@@ -11,7 +11,7 @@ import {
 } from '@translate/api';
 import { openDiscordLoginFlow } from '@translate/oauth';
 import LanguagePickerSheet from '@translate/sheets/LanguagePickerSheet';
-import { SettingsRow, SettingsScrollView, SettingsSection } from '../../../shared/settings-ui';
+import { SettingsRow, SettingsScrollView, SettingsSection } from '@shared/settings-ui';
 
 const STORE = storage.getStore('unbound.translate');
 

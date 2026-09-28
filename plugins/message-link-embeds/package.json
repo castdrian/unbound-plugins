@@ -4,12 +4,6 @@
 	"private": true,
 	"description": "Embeds previews of messages that link to other Discord messages.",
 	"type": "module",
-	"imports": {
-		"#animated-emoji": "./src/animated-emoji.ts",
-		"#link-targets": "./src/link-targets.ts",
-		"#reaction-state": "./src/reaction-state.ts",
-		"#surface-layout": "./src/surface-layout.ts"
-	},
 	"scripts": {
 		"build": "rollup -c",
 		"test": "bun test src/animated-emoji.test.ts src/link-targets.test.ts src/reaction-state.test.ts src/surface-layout.test.ts"

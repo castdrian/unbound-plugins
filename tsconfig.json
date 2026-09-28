@@ -15,8 +15,20 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@aussie-speech/*": [
+				"plugins/aussie-speech/src/*"
+			],
 			"@mention-avatars/*": [
 				"plugins/mention-avatars/src/*"
+			],
+			"@fix-gif-download/*": [
+				"plugins/fix-gif-download/src/*"
+			],
+			"@shared/*": [
+				"shared/*"
+			],
+			"@text-replace/*": [
+				"plugins/text-replace/src/*"
 			],
 			"@translate/*": [
 				"plugins/translate/src/*"
@@ -50,6 +62,12 @@
 			],
 			"@preview-message/*": [
 				"plugins/preview-message/src/*"
+			],
+			"@message-link-embeds/*": [
+				"plugins/message-link-embeds/src/*"
+			],
+			"@scripts/*": [
+				"scripts/*"
 			]
 		},
 		"noEmit": true

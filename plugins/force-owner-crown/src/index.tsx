@@ -1,6 +1,6 @@
 import { assets, metro, patcher } from '@unbound-app/api';
 
-import { resolveCrownSource } from './crown';
+import { resolveCrownSource } from '@force-owner-crown/crown';
 
 const CROWN_ASSET = 'ic_crown_16px';
 const CROWN_LABEL = 'Server Owner';

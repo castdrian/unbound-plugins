@@ -1,12 +1,7 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
-import {
-	SettingsScrollView,
-	SettingsSection,
-	SettingsSwitchRow,
-} from '../../../shared/settings-ui';
-
-import { getContrastingTextColor, getRoleColorStops } from './role-colors';
+import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';
+import { getContrastingTextColor, getRoleColorStops } from '@more-user-tags/role-colors';
 
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);

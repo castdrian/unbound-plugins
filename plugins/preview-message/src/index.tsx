@@ -1,7 +1,7 @@
 import { assets, metro, patcher, plugins, storage } from '@unbound-app/api';
 
-import { extractUrls, fetchLinkEmbed, type LinkEmbed } from './embeds';
-import { applyRules, normalizeRules } from '../../text-replace/src/rules';
+import { extractUrls, fetchLinkEmbed, type LinkEmbed } from '@preview-message/embeds';
+import { applyRules, normalizeRules } from '@text-replace/rules';
 
 const RIGHT_ACTIONS_PATH = 'modules/chat_input/native/action_buttons/ChatInputRightActions.tsx';
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';

@@ -1,4 +1,4 @@
-import { australianSpellings, mappings } from './lexicon';
+import { australianSpellings, mappings } from '@aussie-speech/lexicon';
 
 const protectedText =
 	/(```[\s\S]*?```|`[^`]*`|<@!?\d+>|<@&\d+>|<#\d+>|<a?:[\w~]+:\d+>|https?:\/\/[^\s<]+)/g;

@@ -5,7 +5,7 @@ import {
 	SettingsScrollView,
 	SettingsSection,
 	SettingsSwitchRow,
-} from '../../../shared/settings-ui';
+} from '@shared/settings-ui';
 
 const ADDON_ID = 'unbound.show-me-your-name';
 const STORE = storage.getStore(ADDON_ID);

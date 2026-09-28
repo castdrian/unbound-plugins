@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test';
 
-import { addUserId, editUserId, isUserId, parseUserList, removeUserId } from './user-list';
+import {
+	addUserId,
+	editUserId,
+	isUserId,
+	parseUserList,
+	removeUserId,
+} from '@no-reply-mention/user-list';
 
 const first = '100000000000000001';
 const second = '100000000000000002';

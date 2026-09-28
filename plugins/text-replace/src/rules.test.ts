@@ -6,7 +6,7 @@ import {
 	serializeRuleset,
 	stringToRegex,
 	type TextReplaceRule,
-} from './rules';
+} from '@text-replace/rules';
 
 function rule(find: string, replace: string, onlyIfIncludes: string = ''): TextReplaceRule {
 	return { find, replace, onlyIfIncludes, id: find };

@@ -7,6 +7,7 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.14",
         "@unbound-app/cli": "latest",
+        "@unbound-plugins/rollup-path-aliases": "workspace:*",
       },
     },
     "plugins/aussie-mode": {
@@ -337,6 +338,10 @@
         "rollup-plugin-swc3": "^0.12.1",
       },
     },
+    "shared/rollup-path-aliases": {
+      "name": "@unbound-plugins/rollup-path-aliases",
+      "version": "1.0.0",
+    },
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
@@ -614,6 +619,8 @@
     "@unbound-app/cli": ["@unbound-app/cli@0.1.3", "", { "dependencies": { "@clack/prompts": "^1.7.0", "@modelcontextprotocol/sdk": "^1.29.0", "@unbound-app/debugger-protocol": "0.1.3", "cleye": "^1.3.4", "picocolors": "^1.1.1", "zod": "^4.0.0" }, "peerDependencies": { "typescript": "^5.9.3" }, "bin": { "ubd": "dist/index.mjs" } }, "sha512-9cf4sGUohJu6MTDMjZU7HLjvOizKgeYs2yX0ATfzruvc4Pi4s9+UjRcc6wVJEZzwWj7uWpdawlmBNuVWKEGLMQ=="],
 
     "@unbound-app/debugger-protocol": ["@unbound-app/debugger-protocol@0.1.3", "", { "dependencies": { "zod": "^4.0.0" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-9he+7Z1hBgAAsgVTTUrlk1K4bRbccxuh+kK/IzoptqS0hmXvtFSUdSwzXLxbWWl2hT7b613WonquCXPMpzF0Jg=="],
+
+    "@unbound-plugins/rollup-path-aliases": ["@unbound-plugins/rollup-path-aliases@workspace:shared/rollup-path-aliases"],
 
     "abort-controller": ["abort-controller@3.0.0", "", { "dependencies": { "event-target-shim": "^5.0.0" } }, "sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg=="],
 

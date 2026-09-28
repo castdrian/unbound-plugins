@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { getPreferredGifUrl, isGifSource, rewriteGifMedia } from '../src/media';
+import { getPreferredGifUrl, isGifSource, rewriteGifMedia } from '@fix-gif-download/media';
 
 test('recognizes a GIF source hidden behind Discord video media', () => {
 	const media = {

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
-import { australianSpellings, mappings } from '../src/lexicon';
-import { translate } from '../src/translator';
+import { australianSpellings, mappings } from '@aussie-speech/lexicon';
+import { translate } from '@aussie-speech/translator';
 
 test('keeps the lexicon lowercase with distinct mappings and sources', () => {
 	const sources = mappings.map(([source]) => source);

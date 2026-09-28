@@ -8,7 +8,7 @@ import {
 	PLUGIN_NAME_MAX_LENGTH,
 	validatePluginDirectory,
 	validatePluginFolder,
-} from './validate-plugins';
+} from '@scripts/validate-plugins';
 
 const validManifest = {
 	id: 'unbound.example-plugin',

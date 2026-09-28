@@ -6,6 +6,7 @@ import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
+import { bunPathAliases } from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -50,5 +51,5 @@ export default {
 		globals: { '@unbound-app/api': 'window.unbound' },
 	},
 	external: ['@unbound-app/api'],
-	plugins: [nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
+	plugins: [bunPathAliases(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
 };

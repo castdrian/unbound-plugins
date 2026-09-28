@@ -8,15 +8,15 @@ import type {
 	PluginContext,
 } from '@unbound-app/api/native';
 import type { ReactNode } from 'react';
-import { enableAnimatedEmojiSources } from '#animated-emoji';
+import { enableAnimatedEmojiSources } from '@message-link-embeds/animated-emoji';
 import {
 	contentText,
 	findRenderedLinkRange,
 	type LinkTarget,
 	linkedTargets,
 	nativeUsernameColor,
-} from '#link-targets';
-import { reactionSnapshot, stripMessageReactions } from '#reaction-state';
+} from '@message-link-embeds/link-targets';
+import { reactionSnapshot, stripMessageReactions } from '@message-link-embeds/reaction-state';
 import {
 	BottomAnchorTracker,
 	readSurfaceAnchor,
@@ -24,7 +24,7 @@ import {
 	type SurfaceLayoutMetrics,
 	shouldRefreshSurfaceRow,
 	surfaceHeightCacheKey,
-} from '#surface-layout';
+} from '@message-link-embeds/surface-layout';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE_PREFIX = 'MessageLinkEmbedSurface';

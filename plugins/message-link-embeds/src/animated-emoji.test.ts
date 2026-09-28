@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { enableAnimatedEmojiSources } from './animated-emoji';
+import { enableAnimatedEmojiSources } from '@message-link-embeds/animated-emoji';
 
 describe('animated embedded emoji sources', () => {
 	test('uses animated GIF URLs for both animated and fallback render paths', () => {

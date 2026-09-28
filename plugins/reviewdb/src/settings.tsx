@@ -9,7 +9,7 @@ import {
 	SettingsScrollView,
 	SettingsSection,
 	SettingsSwitchRow,
-} from '../../../shared/settings-ui';
+} from '@shared/settings-ui';
 
 const STORE = storage.getStore('unbound.reviewdb');
 

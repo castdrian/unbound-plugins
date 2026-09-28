@@ -1,6 +1,6 @@
 import { metro, patcher } from '@unbound-app/api';
 
-import { translate } from './translator';
+import { translate } from '@aussie-speech/translator';
 
 const unpatches: Array<() => void> = [];
 

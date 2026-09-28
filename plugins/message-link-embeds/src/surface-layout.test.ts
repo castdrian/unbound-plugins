@@ -9,7 +9,7 @@ import {
 	type SurfaceLayoutMetrics,
 	shouldRefreshSurfaceRow,
 	surfaceHeightCacheKey,
-} from '#surface-layout';
+} from '@message-link-embeds/surface-layout';
 
 function metrics(overrides: Partial<SurfaceLayoutMetrics> = {}): SurfaceLayoutMetrics {
 	return {

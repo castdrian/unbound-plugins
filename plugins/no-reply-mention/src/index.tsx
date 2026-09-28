@@ -9,8 +9,14 @@ import {
 	SettingsSection,
 	SettingsSwitchRow,
 	getSettingsColors,
-} from '../../../shared/settings-ui';
-import { addUserId, editUserId, isUserId, parseUserList, removeUserId } from './user-list';
+} from '@shared/settings-ui';
+import {
+	addUserId,
+	editUserId,
+	isUserId,
+	parseUserList,
+	removeUserId,
+} from '@no-reply-mention/user-list';
 
 const ADDON_ID = 'unbound.no-reply-mention';
 const STORE = storage.getStore(ADDON_ID);

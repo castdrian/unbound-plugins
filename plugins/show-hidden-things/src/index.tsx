@@ -1,10 +1,6 @@
 import { metro, patcher, storage } from '@unbound-app/api';
 
-import {
-	SettingsScrollView,
-	SettingsSection,
-	SettingsSwitchRow,
-} from '../../../shared/settings-ui';
+import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';
 
 const STORE = storage.getStore('unbound.show-hidden-things');
 

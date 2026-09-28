@@ -5,6 +5,7 @@
 	"type": "module",
 	"workspaces": [
 		"plugins/*",
+		"shared/*",
 		"themes/*"
 	],
 	"scripts": {
@@ -18,6 +19,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",
-		"@unbound-app/cli": "latest"
+		"@unbound-app/cli": "latest",
+		"@unbound-plugins/rollup-path-aliases": "workspace:*"
 	}
 }

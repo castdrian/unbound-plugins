@@ -1,6 +1,6 @@
 import { metro, patcher } from '@unbound-app/api';
 
-import { getPreferredGifUrl, isGifSource, resolveKlipyGifUrl } from './media';
+import { getPreferredGifUrl, isGifSource, resolveKlipyGifUrl } from '@fix-gif-download/media';
 
 const PATCHER = patcher.createPatcher('unbound.fix-gif-download');
 
