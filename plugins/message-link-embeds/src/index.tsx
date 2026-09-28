@@ -8,7 +8,7 @@ import type {
 	PluginContext,
 } from '@unbound-app/api/native';
 import type { ReactNode } from 'react';
-
+import { enableAnimatedEmojiSources } from '#animated-emoji';
 import {
 	contentText,
 	findRenderedLinkRange,
@@ -16,15 +16,14 @@ import {
 	linkedTargets,
 	nativeUsernameColor,
 } from '#link-targets';
-import { enableAnimatedEmojiSources } from '#animated-emoji';
 import { reactionSnapshot, stripMessageReactions } from '#reaction-state';
 import {
 	BottomAnchorTracker,
 	readSurfaceAnchor,
-	shouldRefreshSurfaceRow,
 	SurfaceHeightCache,
-	surfaceHeightCacheKey,
 	type SurfaceLayoutMetrics,
+	shouldRefreshSurfaceRow,
+	surfaceHeightCacheKey,
 } from '#surface-layout';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
@@ -610,11 +609,7 @@ function attributedSurfaceInsertion(
 	const insertion = objc.alloc('NSMutableAttributedString');
 	invoke(insertion, 'initWithString:attributes:', insertionText, attributes);
 	const spacerFont = state.font
-		? (invoke(
-				state.font,
-				'fontWithSize:',
-				SURFACE_SPACER_FONT_SIZE,
-			) as NativeObjectHandle | null)
+		? (invoke(state.font, 'fontWithSize:', SURFACE_SPACER_FONT_SIZE) as NativeObjectHandle | null)
 		: null;
 	if (spacerFont) {
 		invoke(
@@ -706,8 +701,8 @@ function captureSurfaceBottomAnchor(state: EmbeddedSurfaceState, table: NativeOb
 function tableIsScrolling(table: NativeObjectHandle): boolean {
 	return Boolean(
 		nativeCall(table, 'isTracking') ||
-		nativeCall(table, 'isDragging') ||
-		nativeCall(table, 'isDecelerating'),
+			nativeCall(table, 'isDragging') ||
+			nativeCall(table, 'isDecelerating'),
 	);
 }
 
@@ -1264,11 +1259,7 @@ function installNativeHooks(): void {
 
 function dependenciesReady(): boolean {
 	return Boolean(
-		messages?.getMessage &&
-		messageActions?.fetchMessage &&
-		messageRecord &&
-		rowManager &&
-		chatItem,
+		messages?.getMessage && messageActions?.fetchMessage && messageRecord && rowManager && chatItem,
 	);
 }
 

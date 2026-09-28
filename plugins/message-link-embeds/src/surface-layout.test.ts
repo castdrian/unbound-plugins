@@ -5,10 +5,10 @@ import {
 	bottomOffsetCorrection,
 	readBottomAnchor,
 	readSurfaceAnchor,
-	shouldRefreshSurfaceRow,
 	SurfaceHeightCache,
-	surfaceHeightCacheKey,
 	type SurfaceLayoutMetrics,
+	shouldRefreshSurfaceRow,
+	surfaceHeightCacheKey,
 } from '#surface-layout';
 
 function metrics(overrides: Partial<SurfaceLayoutMetrics> = {}): SurfaceLayoutMetrics {
@@ -41,17 +41,13 @@ describe('chat bottom anchoring', () => {
 	test('leaves the scroll position alone while the user is scrolling', () => {
 		const anchor = readBottomAnchor(metrics());
 
-		expect(
-			bottomOffsetCorrection(anchor, metrics({ contentHeight: 1640 }), true),
-		).toBeUndefined();
+		expect(bottomOffsetCorrection(anchor, metrics({ contentHeight: 1640 }), true)).toBeUndefined();
 	});
 
 	test('does not pull the user down when they were not at the bottom', () => {
 		const anchor = readBottomAnchor(metrics({ offsetY: 700 }));
 
-		expect(
-			bottomOffsetCorrection(anchor, metrics({ contentHeight: 1640 }), false),
-		).toBeUndefined();
+		expect(bottomOffsetCorrection(anchor, metrics({ contentHeight: 1640 }), false)).toBeUndefined();
 	});
 
 	test('pins a latest-message surface when reaction layout already moved the row', () => {

@@ -32,10 +32,7 @@ export class BottomAnchorTracker {
 		this.anchor = anchor;
 	}
 
-	correction(
-		metrics: SurfaceLayoutMetrics,
-		userIsScrolling: boolean,
-	): ScrollOffset | undefined {
+	correction(metrics: SurfaceLayoutMetrics, userIsScrolling: boolean): ScrollOffset | undefined {
 		if (!this.anchor) return;
 		if (userIsScrolling) {
 			this.clear();
