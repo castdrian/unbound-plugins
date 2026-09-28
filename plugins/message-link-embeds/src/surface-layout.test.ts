@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+	BottomAnchorTracker,
 	bottomOffsetCorrection,
 	readBottomAnchor,
 	SurfaceHeightCache,
@@ -49,6 +50,34 @@ describe('chat bottom anchoring', () => {
 		expect(
 			bottomOffsetCorrection(anchor, metrics({ contentHeight: 1640 }), false),
 		).toBeUndefined();
+	});
+
+	test('keeps a reaction anchor until the resized row publishes its new content height', () => {
+		const anchor = readBottomAnchor(metrics());
+		const tracker = new BottomAnchorTracker();
+
+		tracker.capture(anchor);
+
+		expect(tracker.correction(metrics(), false)).toBeUndefined();
+		expect(tracker.correction(metrics({ contentHeight: 1640 }), false)).toEqual({ x: 0, y: 1040 });
+		expect(tracker.pending).toBe(false);
+	});
+
+	test('corrects the bottom anchor when removing a reaction shrinks the row', () => {
+		const tracker = new BottomAnchorTracker();
+
+		tracker.capture(readBottomAnchor(metrics()));
+
+		expect(tracker.correction(metrics({ contentHeight: 1540 }), false)).toEqual({ x: 0, y: 940 });
+	});
+
+	test('discards a pending reaction anchor when the user begins scrolling', () => {
+		const tracker = new BottomAnchorTracker();
+
+		tracker.capture(readBottomAnchor(metrics()));
+
+		expect(tracker.correction(metrics({ contentHeight: 1640 }), true)).toBeUndefined();
+		expect(tracker.pending).toBe(false);
 	});
 });
 
