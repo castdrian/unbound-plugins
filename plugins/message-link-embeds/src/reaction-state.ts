@@ -1,11 +1,8 @@
 type ReactionRecord = Record<string, unknown>;
 
-export function updateMessageRecord<T extends Record<string, unknown>>(
-	current: T,
-	next: Record<string, unknown>,
-): T {
-	Object.assign(current, next);
-	return current;
+export function stripMessageReactions<T extends Record<string, unknown>>(message: T): T {
+	Object.assign(message, { reactions: [] });
+	return message;
 }
 
 export function reactionSnapshot(value: unknown): string {
