@@ -17,5 +17,6 @@
 	],
 	"minNativePluginApi": "1.0.0",
 	"version": "1.0.0",
+	"icon": "ReactionIcon",
 	"main": "index.tsx"
 }
