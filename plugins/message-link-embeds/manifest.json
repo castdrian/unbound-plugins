@@ -8,7 +8,15 @@
 			"id": "0"
 		}
 	],
+	"capabilities": [
+		"native.objc.classes",
+		"native.objc.invoke",
+		"native.objc.ivars",
+		"native.objc.hooks",
+		"native.fabric.mount"
+	],
 	"version": "1.0.0",
+	"minNativePluginApi": "1.0.0",
 	"icon": "LinkIcon",
 	"capabilities": [
 		"native.objc.classes",
