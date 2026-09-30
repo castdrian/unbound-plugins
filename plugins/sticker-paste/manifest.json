@@ -1,7 +1,7 @@
 {
 	"id": "unbound.sticker-paste",
-	"name": "Sticker Paste",
-	"description": "Keeps selected stickers in the chat box instead of sending them immediately.",
+	"name": "Sticker Preview",
+	"description": "Displays a preview of a selected sticker instead of sending it immediately.",
 	"authors": [
 		{
 			"name": "Unbound Team",
