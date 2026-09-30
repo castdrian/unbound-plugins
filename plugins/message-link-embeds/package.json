@@ -6,13 +6,14 @@
 	"type": "module",
 	"scripts": {
 		"build": "rollup -c",
-		"test": "bun test src/animated-emoji.test.ts src/link-targets.test.ts src/reaction-state.test.ts src/surface-layout.test.ts"
+		"test": "bun test src/animated-media.test.ts src/link-targets.test.ts src/reaction-state.test.ts src/surface-layout.test.ts"
 	},
 	"devDependencies": {
 		"@rollup/plugin-json": "^6.1.0",
 		"@rollup/plugin-node-resolve": "^16.0.3",
 		"@types/react": "^19.2.7",
 		"@unbound-app/api": "latest",
+		"@unbound-plugins/rollup-path-aliases": "workspace:*",
 		"react-native": "^0.83.0",
 		"rollup": "^4.62.2",
 		"rollup-plugin-iife": "^0.8.0",

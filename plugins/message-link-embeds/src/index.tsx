@@ -1,14 +1,7 @@
-import { metro } from '@unbound-app/api';
-import type {
-	NativeFabricBridge,
-	NativeFabricSurface,
-	NativeHookToken,
-	NativeObjCBridge,
-	NativeObjectHandle,
-	PluginContext,
-} from '@unbound-app/api/native';
-import type { ReactNode } from 'react';
-import { enableAnimatedEmojiSources } from '@message-link-embeds/animated-emoji';
+import {
+	enableAnimatedEmojiSources,
+	installEmbeddedAnimationSupport,
+} from '@message-link-embeds/animated-media';
 import {
 	contentText,
 	findRenderedLinkRange,
@@ -25,6 +18,16 @@ import {
 	shouldRefreshSurfaceRow,
 	surfaceHeightCacheKey,
 } from '@message-link-embeds/surface-layout';
+import { metro } from '@unbound-app/api';
+import type {
+	NativeFabricBridge,
+	NativeFabricSurface,
+	NativeHookToken,
+	NativeObjCBridge,
+	NativeObjectHandle,
+	PluginContext,
+} from '@unbound-app/api/native';
+import type { ReactNode } from 'react';
 
 const CHAT_ITEM_PATH = 'components_native/chat/ChatItem.tsx';
 const SURFACE_MODULE_PREFIX = 'MessageLinkEmbedSurface';
@@ -145,6 +148,7 @@ let selectedChannel: SelectedChannel | null = null;
 let messageRecord: MessageRecordConstructor | null = null;
 let rowManager: RowManagerConstructor | null = null;
 let chatItem: ChatItemComponent | null = null;
+let embeddedAnimationSupport: ReturnType<typeof installEmbeddedAnimationSupport> | null = null;
 let moduleListenerCleanup: (() => boolean) | null = null;
 let messageStoreListener: (() => void) | null = null;
 let messageSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -854,7 +858,7 @@ function MessageSurface({ renderRevision, surfaceId }: SurfaceProps): ReactNode 
 		const height = Number(event?.nativeEvent?.layout?.height);
 		if (height > 0) reportSurfaceLayout(surfaceId, height);
 	};
-	return React.createElement(
+	const content = React.createElement(
 		ReactNative.View,
 		{
 			onLayout,
@@ -870,6 +874,8 @@ function MessageSurface({ renderRevision, surfaceId }: SurfaceProps): ReactNode 
 		},
 		embeddedMessage,
 	);
+	if (!embeddedAnimationSupport) return content;
+	return React.createElement(embeddedAnimationSupport.context.Provider, { value: true }, content);
 }
 
 function resolveChatItem(value: unknown, depth: number = 0): ChatItemComponent | null {
@@ -1341,6 +1347,8 @@ function start(context?: PluginContext): void {
 	lifecycle++;
 	objc = context?.native.objc ?? null;
 	fabric = context?.native.fabric ?? null;
+	embeddedAnimationSupport?.dispose();
+	embeddedAnimationSupport = installEmbeddedAnimationSupport(metro.common.React, metro, modulePath);
 	selectedChannel = metro.findByProps('getLastSelectedChannelId', 'getChannelId');
 	channelStore = metro.findByProps('getChannel');
 	initialize();
@@ -1354,6 +1362,8 @@ function stop(): void {
 	clearModuleListener();
 	for (const key of [...cellLabelHooks.keys()]) removeCellLabelHooks(key);
 	for (const key of [...cellStates.keys()]) teardownSurface(key, true);
+	embeddedAnimationSupport?.dispose();
+	embeddedAnimationSupport = null;
 	activeCells.clear();
 	pendingCells.clear();
 	completedCells.clear();

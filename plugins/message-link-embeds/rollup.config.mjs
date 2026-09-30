@@ -6,6 +6,7 @@ import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
+import { bunPathAliases } from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -48,7 +49,7 @@ const globals = {
 export default {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
-	plugins: [json(), nodeResolve(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
+	plugins: [bunPathAliases(), json(), nodeResolve(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
 	output: {
 		dir: 'dist',
 		entryFileNames: 'index.js',
