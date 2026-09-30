@@ -375,7 +375,7 @@ function start(): void {
 				if (!channelId || !ctx.result?.props) return ctx.result;
 				const React = metro.common.React;
 				const preview = React.createElement(PendingSticker, {
-					key: 'sticker-paste-preview',
+					key: 'sticker-preview',
 					channelId,
 					clearSticker,
 					Sticker,
