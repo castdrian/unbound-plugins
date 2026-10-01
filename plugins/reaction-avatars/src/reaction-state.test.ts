@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
 	hydrateReactorsInOrder,
 	isCurrentReactionRequest,
+	reactionCellLifecycleAction,
 	ReactionUserCache,
 	type Reactor,
 	reactionAvatarExtraWidth,
@@ -104,10 +105,16 @@ describe('reaction avatar state', () => {
 		expect(isCurrentReactionRequest('previous', 'reaction', 5, 5)).toBe(false);
 	});
 
-	test('ignores selected-channel notifications without an actual channel change', () => {
+	test('ignores selected-channel notifications without a selected channel change', () => {
 		expect(shouldHandleChannelChange('channel', 'channel')).toBe(false);
 		expect(shouldHandleChannelChange('channel', 'another-channel')).toBe(true);
-		expect(shouldHandleChannelChange('channel', undefined)).toBe(true);
+		expect(shouldHandleChannelChange('channel', undefined)).toBe(false);
+	});
+
+	test('preserves detached reaction surfaces until cell reuse', () => {
+		expect(reactionCellLifecycleAction(false, false)).toBe('preserve');
+		expect(reactionCellLifecycleAction(true, false)).toBe('render');
+		expect(reactionCellLifecycleAction(false, true)).toBe('dispose');
 	});
 
 	test('passes avatar order and max count to the Vencord summary component', () => {

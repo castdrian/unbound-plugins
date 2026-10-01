@@ -90,6 +90,7 @@ const {
 	ROLE_SYMBOL_METRICS,
 	selectMentionLabel,
 	shouldHandleChannelChange,
+	mentionCellLifecycleAction,
 } = await import('@mention-avatars/index');
 
 afterEach(() => {
@@ -167,12 +168,20 @@ describe('mention image decisions', () => {
 describe('mention channel lifecycle', () => {
 	test('ignores store notifications that keep the selected channel', () => {
 		expect(shouldHandleChannelChange('channel', 'channel')).toBe(false);
+		expect(shouldHandleChannelChange('channel', undefined)).toBe(false);
 	});
 
-	test('handles transitions to a different or unavailable channel', () => {
+	test('handles transitions to a different selected channel', () => {
 		expect(shouldHandleChannelChange('channel', 'another-channel')).toBe(true);
-		expect(shouldHandleChannelChange('channel', undefined)).toBe(true);
 		expect(shouldHandleChannelChange(undefined, 'channel')).toBe(true);
+	});
+});
+
+describe('mention cell lifecycle', () => {
+	test('preserves detached cells and renders only when they are attached', () => {
+		expect(mentionCellLifecycleAction(false, false)).toBe('preserve');
+		expect(mentionCellLifecycleAction(true, false)).toBe('render');
+		expect(mentionCellLifecycleAction(false, true)).toBe('reset');
 	});
 });
 

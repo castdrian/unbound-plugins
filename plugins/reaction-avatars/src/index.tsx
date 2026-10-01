@@ -12,6 +12,7 @@ import {
 	reactionAvatarReservedSlotCount,
 	reactionAvatarSelection,
 	reactionAvatarStackWidth,
+	reactionCellLifecycleAction,
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
@@ -1578,15 +1579,16 @@ function installNativeHooks(): boolean {
 		installed.push(
 			objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
 				after: ({ self }: { self: NativeObjectHandle }) => {
-					if (!nativeCall(self, 'window')) cleanupCellReactions(nativeKey(self), true);
-					else scheduleCell(self, true);
+					const action = reactionCellLifecycleAction(Boolean(nativeCall(self, 'window')), false);
+					if (action === 'render') scheduleCell(self, true);
 				},
 			}),
 		);
 		installed.push(
 			objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
 				after: ({ self }: { self: NativeObjectHandle }) => {
-					cleanupCellReactions(nativeKey(self));
+					const action = reactionCellLifecycleAction(false, true);
+					if (action === 'dispose') cleanupCellReactions(nativeKey(self));
 					scheduleCell(self, true);
 				},
 			}),

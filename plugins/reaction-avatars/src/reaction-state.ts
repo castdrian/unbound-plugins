@@ -86,7 +86,15 @@ export function shouldHandleChannelChange(
 	previousChannelId: string | undefined,
 	nextChannelId: string | undefined,
 ): boolean {
-	return previousChannelId !== nextChannelId;
+	return Boolean(nextChannelId) && previousChannelId !== nextChannelId;
+}
+
+export function reactionCellLifecycleAction(
+	attached: boolean,
+	reused: boolean,
+): 'dispose' | 'preserve' | 'render' {
+	if (reused) return 'dispose';
+	return attached ? 'render' : 'preserve';
 }
 
 export function reactionAvatarPresentation<T extends Reactor>(

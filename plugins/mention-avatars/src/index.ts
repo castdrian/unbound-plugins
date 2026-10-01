@@ -85,7 +85,15 @@ export function shouldHandleChannelChange(
 	previousChannelId: string | undefined,
 	nextChannelId: string | undefined,
 ): boolean {
-	return previousChannelId !== nextChannelId;
+	return Boolean(nextChannelId) && previousChannelId !== nextChannelId;
+}
+
+export function mentionCellLifecycleAction(
+	attached: boolean,
+	reused: boolean,
+): 'preserve' | 'render' | 'reset' {
+	if (reused) return 'reset';
+	return attached ? 'render' : 'preserve';
 }
 
 export function roleImageSource(role: {
@@ -960,14 +968,18 @@ function onSelectedChannelChange(): void {
 function installNativeHooks(): void {
 	if (!objc) return;
 	const lifecycle = objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
-		after: ({ self }) => scheduleCellRender(self),
+		after: ({ self }) => {
+			const action = mentionCellLifecycleAction(Boolean(nativeCall(self, 'window')), false);
+			if (action === 'render') scheduleCellRender(self);
+		},
 	});
 	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
 		after: ({ self }) => scheduleCellRender(self),
 	});
 	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
 		after: ({ self }) => {
-			resetCell(self);
+			const action = mentionCellLifecycleAction(false, true);
+			if (action === 'reset') resetCell(self);
 			scheduleCellRender(self);
 		},
 	});
