@@ -47,3 +47,5 @@ export function bunPathAliases() {
 		},
 	};
 }
+
+export { hermesExpressionEntrypoint } from './entrypoint.mjs';
