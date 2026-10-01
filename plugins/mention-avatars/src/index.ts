@@ -1,10 +1,10 @@
+import { metro, patcher, storage } from '@unbound-app/api';
 import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
 	PluginContext,
 } from '@unbound-app/api/native';
-import { metro, patcher, storage } from '@unbound-app/api';
 
 export type MentionType = 'role' | 'user';
 
@@ -81,6 +81,13 @@ export function imageCacheAction(
 	return 'load';
 }
 
+export function shouldHandleChannelChange(
+	previousChannelId: string | undefined,
+	nextChannelId: string | undefined,
+): boolean {
+	return previousChannelId !== nextChannelId;
+}
+
 export function roleImageSource(role: {
 	color?: number;
 	icon?: string | null;
@@ -103,6 +110,10 @@ export function roleIconColorSource(
 	if (foregroundColor) return 'foreground';
 	if (roleColorValue !== undefined && roleColorValue > 0) return 'role';
 	return 'label';
+}
+
+export function roleSymbolTransformScale(imageScale: number): number {
+	return imageScale > 0 ? ROLE_SYMBOL_METRICS.rasterScale / imageScale : 1;
 }
 
 export function cellRenderDecision(
@@ -137,6 +148,9 @@ const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);
 const MENTION_PLACEHOLDER = '\uFFFC';
 const ROLE_IMAGE_NAME = 'person.2.fill';
+export const ROLE_SYMBOL_METRICS = { pointSize: 14, rasterScale: 2, tx: 4, ty: 5.375 } as const;
+const MAX_VISIBLE_CELL_SCAN_DEPTH = 40;
+const MAX_VISIBLE_CELL_SCAN_NODES = 1_600;
 
 type NativeValue = any;
 
@@ -159,6 +173,13 @@ type CollectedMentions = {
 	mentions: Mention[];
 };
 
+type SelectedChannel = {
+	addChangeListener?: (listener: () => void) => void;
+	getChannelId?: () => string | undefined;
+	getLastSelectedChannelId?: () => string | undefined;
+	removeChangeListener?: (listener: () => void) => void;
+};
+
 type TextViewState = {
 	messageID: string;
 	original: NativeValue;
@@ -173,6 +194,7 @@ let members: {
 let channels: {
 	getChannel?: (channelId: string) => { guild_id?: string; guildId?: string } | undefined;
 } | null = null;
+let selectedChannel: SelectedChannel | null = null;
 let roles: {
 	getRole?: (
 		guildId: string,
@@ -182,7 +204,7 @@ let roles: {
 } | null = null;
 let objc: NativeObjCBridge | null = null;
 let hookTokens: NativeHookToken[] = [];
-let activeCells = new Map<string, NativeValue>();
+const activeCells = new Map<string, NativeValue>();
 const pendingCells = new Set<string>();
 const pendingCellRefs = new Map<string, NativeValue>();
 const imageCache = new Map<string, ImageCacheEntry>();
@@ -191,6 +213,8 @@ const unresolvedMessageIDs = new Set<string>();
 const textViewStates = new Map<string, TextViewState>();
 let hydratedMessageKey: string | null = null;
 let lifecycleToken = 0;
+let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
+let currentChannelId: string | undefined;
 
 function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
 	if (!objc) return null;
@@ -331,7 +355,13 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 	const imageClass = objc.getClass('UIImage');
 	const configurationClass = objc.getClass('UIImageSymbolConfiguration');
 	const configuration = configurationClass
-		? nativeCall(configurationClass, 'configurationWithPointSize:weight:scale:', 14, 0, 1)
+		? nativeCall(
+				configurationClass,
+				'configurationWithPointSize:weight:scale:',
+				ROLE_SYMBOL_METRICS.pointSize,
+				0,
+				1,
+			)
 		: null;
 	const image = imageClass
 		? configuration && objc.respondsTo(imageClass, 'systemImageNamed:withConfiguration:')
@@ -393,13 +423,14 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 				nativeCall(matrix, 'setValue:forKey:', alpha, 'inputAVector');
 				nativeCall(matrix, 'setValue:forKey:', bias, 'inputBiasVector');
 				const output = nativeCall(matrix, 'outputImage');
+				const transformScale = roleSymbolTransformScale(asNumber(nativeCall(image, 'scale')));
 				const transform = objc.struct('CGAffineTransform', {
-					a: 1,
+					a: transformScale,
 					b: 0,
 					c: 0,
-					d: 1,
-					tx: 4,
-					ty: 5.375,
+					d: transformScale,
+					tx: ROLE_SYMBOL_METRICS.tx,
+					ty: ROLE_SYMBOL_METRICS.ty,
 				});
 				const centered = output ? nativeCall(output, 'imageByApplyingTransform:', transform) : null;
 				const context = nativeCall(contextClass, 'contextWithOptions:', null);
@@ -851,13 +882,79 @@ function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {
 
 function scheduleVisibleCells(view: NativeValue): void {
 	if (!objc) return;
-	if (objc.className(view) === 'DCDMessageTableViewCell') {
-		scheduleCellRender(view);
+	const queue = [{ depth: 0, view }];
+	for (let index = 0; index < queue.length && index < MAX_VISIBLE_CELL_SCAN_NODES; index++) {
+		const node = queue[index];
+		if (!node) continue;
+		const className = objc.className(node.view) ?? '';
+		if (className.includes('DCDMessageTableViewCell')) {
+			if (nativeCall(node.view, 'window')) {
+				scheduleCellRender(node.view);
+			}
+			continue;
+		}
+		if (node.depth >= MAX_VISIBLE_CELL_SCAN_DEPTH) continue;
+		const children = nativeCall(node.view, 'subviews');
+		if (Array.isArray(children)) {
+			for (const child of children) queue.push({ depth: node.depth + 1, view: child });
+			continue;
+		}
+		if (!children || typeof children !== 'object') continue;
+		try {
+			for (const child of objc.array(children)) queue.push({ depth: node.depth + 1, view: child });
+		} catch {
+			continue;
+		}
 	}
-	if (!objc.respondsTo(view, 'subviews')) return;
-	const children = nativeCall(view, 'subviews');
-	if (!Array.isArray(children)) return;
-	for (const child of children) scheduleVisibleCells(child);
+}
+
+function scanVisibleMessageCells(): void {
+	if (!objc) return;
+	const applicationClass = objc.getClass('UIApplication');
+	const application = applicationClass ? nativeCall(applicationClass, 'sharedApplication') : null;
+	if (!application) return;
+	const windows = nativeCall(application, 'windows');
+	if (Array.isArray(windows)) {
+		for (const window of windows) scheduleVisibleCells(window);
+		return;
+	}
+	if (!windows || typeof windows !== 'object') return;
+	try {
+		const windowList = objc.array(windows);
+		for (const window of windowList) scheduleVisibleCells(window);
+	} catch {
+		return;
+	}
+}
+
+function scheduleVisibleCellScans(): void {
+	for (const timeout of channelScanTimeouts) clearTimeout(timeout);
+	channelScanTimeouts = [];
+	const token = lifecycleToken;
+	for (const delay of [0, 100, 500, 1_500, 3_000]) {
+		const timeout = setTimeout(() => {
+			channelScanTimeouts = channelScanTimeouts.filter((candidate) => candidate !== timeout);
+			if (token !== lifecycleToken || !objc) return;
+			scanVisibleMessageCells();
+		}, delay);
+		channelScanTimeouts.push(timeout);
+	}
+}
+
+function onSelectedChannelChange(): void {
+	const nextChannelId =
+		selectedChannel?.getChannelId?.() ?? selectedChannel?.getLastSelectedChannelId?.();
+	if (!shouldHandleChannelChange(currentChannelId, nextChannelId)) return;
+	currentChannelId = nextChannelId;
+	for (const cell of [...activeCells.values()]) clearCell(cell);
+	activeCells.clear();
+	pendingCells.clear();
+	pendingCellRefs.clear();
+	textViewStates.clear();
+	messageMentionIndex.clear();
+	unresolvedMessageIDs.clear();
+	hydratedMessageKey = null;
+	scheduleVisibleCellScans();
 }
 
 function installNativeHooks(): void {
@@ -884,6 +981,9 @@ function start(context?: PluginContext): void {
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
 	channels = metro.findByProps('getChannel');
+	selectedChannel = metro.findByProps('getChannelId', 'getLastSelectedChannelId');
+	currentChannelId =
+		selectedChannel?.getChannelId?.() ?? selectedChannel?.getLastSelectedChannelId?.();
 	roles = metro.find(
 		(module) =>
 			typeof module?.getRole === 'function' && typeof module?.getSortedRoles === 'function',
@@ -894,11 +994,10 @@ function start(context?: PluginContext): void {
 	unpatch = patcher.after(target, 'generateMessageRowData', (ctx) => {
 		addMentions(ctx.args[0]?.message);
 	});
+	selectedChannel?.addChangeListener?.(onSelectedChannelChange);
 	hydrateMentions();
 	installNativeHooks();
-	const windowClass = objc.getClass('UIWindow');
-	const keyWindow = windowClass ? nativeCall(windowClass, 'keyWindow') : null;
-	if (keyWindow) scheduleVisibleCells(keyWindow);
+	scheduleVisibleCellScans();
 }
 
 function stop(): void {
@@ -907,6 +1006,11 @@ function stop(): void {
 	unpatch = null;
 	for (const token of hookTokens) token.remove();
 	hookTokens = [];
+	selectedChannel?.removeChangeListener?.(onSelectedChannelChange);
+	selectedChannel = null;
+	currentChannelId = undefined;
+	for (const timeout of channelScanTimeouts) clearTimeout(timeout);
+	channelScanTimeouts = [];
 	for (const cell of activeCells.values()) clearCell(cell);
 	activeCells.clear();
 	pendingCellRefs.clear();
