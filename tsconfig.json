@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@reaction-avatars/*": [
+				"plugins/reaction-avatars/src/*"
+			],
 			"@aussie-speech/*": [
 				"plugins/aussie-speech/src/*"
 			],

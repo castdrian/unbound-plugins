@@ -6,7 +6,7 @@ import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
-import { bunPathAliases } from '@unbound-plugins/rollup-path-aliases';
+import { bunPathAliases, hermesExpressionEntrypoint } from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -27,21 +27,6 @@ function pluginAlias() {
 		resolveId(source) {
 			if (!source.startsWith('@force-owner-crown/')) return null;
 			return resolveModule(source);
-		},
-	};
-}
-
-function hermesExpressionEntrypoint() {
-	return {
-		name: 'hermes-expression-entrypoint',
-		generateBundle(_outputOptions, bundle) {
-			for (const chunk of Object.values(bundle)) {
-				if (chunk.type !== 'chunk') continue;
-				let code = chunk.code.trim();
-				code = code.replace(/^var\s+[A-Za-z_$][\w$]*\s*=\s*/, '');
-				code = code.replace(/;\s*$/, '');
-				chunk.code = `({__plugin:null,__load(){if(this.__plugin)return this.__plugin;this.__plugin=${code};return this.__plugin;},start(){const plugin=this.__load();if(plugin&&typeof plugin.start==='function')return plugin.start();},stop(){const plugin=this.__load();if(plugin&&typeof plugin.stop==='function')return plugin.stop();},getSettingsPanel(){const plugin=this.__load();return plugin&&typeof plugin.getSettingsPanel==='function'?plugin.getSettingsPanel():null;}})`;
-			}
 		},
 	};
 }
