@@ -20,6 +20,7 @@ import {
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
 	reflowReactionItems,
+	shouldHandleChannelChange,
 	shouldMeasureReactionAvatarWidth,
 	shouldRenderReactionAvatars,
 } from '@reaction-avatars/reaction-state';
@@ -101,6 +102,12 @@ describe('reaction avatar state', () => {
 		expect(isCurrentReactionRequest('reaction', 'reaction', 4, 4)).toBe(true);
 		expect(isCurrentReactionRequest('reaction', 'reaction', 4, 5)).toBe(false);
 		expect(isCurrentReactionRequest('previous', 'reaction', 5, 5)).toBe(false);
+	});
+
+	test('ignores selected-channel notifications without an actual channel change', () => {
+		expect(shouldHandleChannelChange('channel', 'channel')).toBe(false);
+		expect(shouldHandleChannelChange('channel', 'another-channel')).toBe(true);
+		expect(shouldHandleChannelChange('channel', undefined)).toBe(true);
 	});
 
 	test('passes avatar order and max count to the Vencord summary component', () => {

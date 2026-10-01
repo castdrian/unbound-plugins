@@ -82,6 +82,13 @@ export function isCurrentReactionRequest(
 	return requestKey === currentKey && requestGeneration === currentGeneration;
 }
 
+export function shouldHandleChannelChange(
+	previousChannelId: string | undefined,
+	nextChannelId: string | undefined,
+): boolean {
+	return previousChannelId !== nextChannelId;
+}
+
 export function reactionAvatarPresentation<T extends Reactor>(
 	users: T[],
 	totalCount: number = users.length,

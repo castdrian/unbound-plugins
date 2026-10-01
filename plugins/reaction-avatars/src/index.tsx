@@ -16,6 +16,7 @@ import {
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
 	reflowReactionItems,
+	shouldHandleChannelChange,
 	shouldMeasureReactionAvatarWidth,
 	shouldRenderReactionAvatars,
 } from '@reaction-avatars/reaction-state';
@@ -238,6 +239,7 @@ let userSummaryItem: unknown = null;
 let moduleListenerCleanup: (() => boolean) | null = null;
 let surfaceModuleName = '';
 let lifecycle = 0;
+let currentSelectedChannelId: string | undefined;
 let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
 let nextNativeId = 0;
 let activated = false;
@@ -1521,6 +1523,9 @@ function onConnectionOpen(): void {
 }
 
 function onSelectedChannelChange(): void {
+	const nextChannelId = selectedChannelId();
+	if (!shouldHandleChannelChange(currentSelectedChannelId, nextChannelId)) return;
+	currentSelectedChannelId = nextChannelId;
 	for (const timeout of channelScanTimeouts) clearTimeout(timeout);
 	channelScanTimeouts = [];
 	for (const timeout of reactionLayoutRefreshes.values()) clearTimeout(timeout);
@@ -1550,6 +1555,7 @@ function onSelectedChannelChange(): void {
 function installReactionEventListeners(): void {
 	for (const event of REACTION_EVENTS) dispatcher?.subscribe?.(event, onReactionChange);
 	dispatcher?.subscribe?.('CONNECTION_OPEN', onConnectionOpen);
+	currentSelectedChannelId = selectedChannelId();
 	selectedChannel?.addChangeListener?.(onSelectedChannelChange);
 }
 
@@ -1723,6 +1729,7 @@ function stop(): void {
 	users = null;
 	channels = null;
 	selectedChannel = null;
+	currentSelectedChannelId = undefined;
 	userSummaryItem = null;
 	objc = null;
 	fabric = null;
