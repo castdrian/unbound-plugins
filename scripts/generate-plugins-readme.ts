@@ -1,10 +1,24 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { execFileSync } from 'child_process';
-import { resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const pluginsDir = resolve(repoRoot, 'plugins');
+const iconsDir = resolve(pluginsDir, 'icons');
+const catalogPath = resolve(pluginsDir, 'catalog.svg');
+const readmePath = resolve(pluginsDir, 'README.md');
+const catalogInset = 30;
+const pluginColumnWidth = 300;
+const descriptionColumnWidth = 560;
+const versionColumnWidth = 100;
+const authorColumnWidth = 180;
+const catalogWidth =
+	catalogInset * 2 +
+	pluginColumnWidth +
+	descriptionColumnWidth +
+	versionColumnWidth +
+	authorColumnWidth;
+const rowStart = 82;
 
 interface PluginAuthor {
 	name: string;
@@ -13,7 +27,7 @@ interface PluginAuthor {
 
 interface PluginManifest {
 	id: string;
-	icon?: string;
+	icon: string;
 	name: string;
 	description: string;
 	version: string;
@@ -23,97 +37,185 @@ interface PluginManifest {
 interface PluginInfo {
 	folder: string;
 	manifest: PluginManifest;
-	hasReadme: boolean;
-	iconPreview: string | null;
 }
 
-function createIconPreview(icon: string | undefined): string | null {
-	if (!icon) return null;
-
-	const pngPath = resolve(pluginsDir, 'icons', `${icon}.png`);
-	if (!existsSync(pngPath)) return null;
-
-	const svgPath = resolve(pluginsDir, 'icons', `${icon}.svg`);
-	const png = readFileSync(pngPath).toString('base64');
-	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><rect width="28" height="28" rx="6" fill="#313338"/><image href="data:image/png;base64,${png}" x="2" y="2" width="24" height="24"/></svg>\n`;
-
-	if (!existsSync(svgPath) || readFileSync(svgPath, 'utf8') !== svg) writeFileSync(svgPath, svg);
-	return `icons/${encodeURIComponent(icon)}.svg`;
+interface CatalogRow {
+	plugin: PluginInfo;
+	descriptionLines: string[];
+	authorLines: string[];
+	height: number;
+	y: number;
 }
 
-function getPublishedFolders(): Set<string> | null {
-	try {
-		const output = execFileSync('git', ['ls-files', '--', 'plugins/*/manifest.json'], {
-			cwd: repoRoot,
-			encoding: 'utf8',
-		});
+function escapeXml(value: string): string {
+	return value.replace(/[<>&"']/g, (character) => {
+		const escaped: Record<string, string> = {
+			'&': '&amp;',
+			'<': '&lt;',
+			'>': '&gt;',
+			'"': '&quot;',
+			"'": '&apos;',
+		};
 
-		return new Set(
-			output
-				.split('\n')
-				.filter(Boolean)
-				.map((path) => path.split('/')[1]),
-		);
-	} catch {
-		return null;
+		return escaped[character];
+	});
+}
+
+function wrapText(value: string, limit: number): string[] {
+	const lines: string[] = [];
+	let line = '';
+
+	for (const word of value.split(/\s+/)) {
+		const candidate = line ? `${line} ${word}` : word;
+		if (candidate.length > limit && line) {
+			lines.push(line);
+			line = word;
+			continue;
+		}
+
+		line = candidate;
 	}
+
+	if (line) lines.push(line);
+	return lines;
 }
 
 function readPluginManifests(): PluginInfo[] {
-	const published = getPublishedFolders();
+	const plugins: PluginInfo[] = [];
 
-	return readdirSync(pluginsDir, { withFileTypes: true })
-		.filter((entry) => entry.isDirectory())
-		.filter((entry) => published === null || published.has(entry.name))
-		.map((entry): PluginInfo | null => {
-			const manifestPath = resolve(pluginsDir, entry.name, 'manifest.json');
-			if (!existsSync(manifestPath)) return null;
+	for (const entry of readdirSync(pluginsDir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
 
-			const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PluginManifest;
-			const hasReadme = existsSync(resolve(pluginsDir, entry.name, 'README.md'));
+		const folder = entry.name;
+		const manifestPath = resolve(pluginsDir, folder, 'manifest.json');
+		if (!existsSync(manifestPath)) continue;
 
-			return {
-				folder: entry.name,
-				manifest,
-				hasReadme,
-				iconPreview: createIconPreview(manifest.icon),
-			};
-		})
-		.filter((plugin): plugin is PluginInfo => plugin !== null)
-		.sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
+		const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PluginManifest;
+		if (!manifest.icon) throw new Error(`Plugin ${manifest.id} is missing a manifest icon.`);
+		if (!/^[A-Za-z0-9_-]+$/.test(manifest.icon))
+			throw new Error(`Plugin ${manifest.id} has an invalid icon name: ${manifest.icon}.`);
+
+		plugins.push({ folder, manifest });
+	}
+
+	return plugins.sort((first, second) => first.manifest.name.localeCompare(second.manifest.name));
 }
 
-function renderTable(plugins: PluginInfo[]): string {
-	const header = '| Plugin | Description | Version | Authors |\n| --- | --- | --- | --- |';
-	const rows = plugins.map(({ folder, manifest, hasReadme, iconPreview }) => {
-		const authors = manifest.authors.map((author) => author.name).join(', ');
-		const name = hasReadme ? `[${manifest.name}](${folder}/README.md)` : manifest.name;
-		const icon = iconPreview
-			? `<img src="${iconPreview}" alt="${manifest.icon}" width="24" height="24">`
-			: manifest.icon
-				? `\`${manifest.icon}\``
-				: '';
-		return `| ${icon} ${name} | ${manifest.description} | ${manifest.version} | ${authors} |`;
+function readIconData(plugins: PluginInfo[]): Map<string, string> {
+	const icons = new Map<string, string>();
+
+	for (const { manifest } of plugins) {
+		if (icons.has(manifest.icon)) continue;
+
+		const iconPath = resolve(iconsDir, `${manifest.icon}.png`);
+		if (!existsSync(iconPath))
+			throw new Error(
+				`Plugin icon ${manifest.icon} is missing; sync icons from the latest loader IPA.`,
+			);
+
+		icons.set(manifest.icon, readFileSync(iconPath).toString('base64'));
+	}
+
+	return icons;
+}
+
+function createRows(plugins: PluginInfo[]): CatalogRow[] {
+	let y = rowStart;
+
+	return plugins.map((plugin) => {
+		const authors = plugin.manifest.authors.map((author) => author.name).join(', ');
+		const descriptionLines = wrapText(plugin.manifest.description, 72);
+		const authorLines = wrapText(authors, 23);
+		const lineCount = Math.max(descriptionLines.length, authorLines.length, 1);
+		const height = Math.max(52, 20 + lineCount * 18);
+		const row = { plugin, descriptionLines, authorLines, height, y };
+		y += height;
+		return row;
+	});
+}
+
+function renderLines(
+	lines: string[],
+	x: number,
+	centerY: number,
+	fontSize: number,
+	fill: string,
+	fontWeight: number = 400,
+	textAnchor: 'start' | 'middle' = 'start',
+): string[] {
+	const lineHeight = 18;
+	const firstY = centerY - ((lines.length - 1) * lineHeight) / 2;
+
+	return lines.map(
+		(line, index) =>
+			`<text x="${x}" y="${firstY + index * lineHeight}" text-anchor="${textAnchor}" dominant-baseline="middle" fill="${fill}" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(line)}</text>`,
+	);
+}
+
+function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): string {
+	const rows = createRows(plugins);
+	const height = rows.reduce((total, row) => total + row.height, rowStart + 20);
+	const descriptionX = catalogInset + pluginColumnWidth;
+	const versionX = descriptionX + descriptionColumnWidth;
+	const authorX = versionX + versionColumnWidth;
+	const rowMarkup = rows.flatMap((row, index) => {
+		const { plugin, descriptionLines, authorLines, height: rowHeight, y } = row;
+		const centerY = y + rowHeight / 2;
+		const iconBase64 = icons.get(plugin.manifest.icon);
+		if (!iconBase64) throw new Error(`Plugin icon ${plugin.manifest.icon} has no image data.`);
+
+		const pluginLink = `https://github.com/castdrian/unbound-plugins/tree/main/plugins/${plugin.folder}`;
+		const rowFill = index % 2 === 0 ? '#17181c' : '#121316';
+		const rowElements = [
+			`<rect x="16" y="${y}" width="1168" height="${rowHeight}" rx="8" fill="${rowFill}"/>`,
+			`<rect x="${catalogInset + 10}" y="${centerY - 15}" width="30" height="30" rx="7" fill="#313338"/>`,
+			`<image x="${catalogInset + 13}" y="${centerY - 12}" width="24" height="24" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${iconBase64}"/>`,
+			`<a href="${escapeXml(pluginLink)}">${renderLines([plugin.manifest.name], catalogInset + 50, centerY, 15, '#f5f5f7', 600).join('')}</a>`,
+			...renderLines(descriptionLines, descriptionX + 16, centerY, 13, '#c6c6cc'),
+			...renderLines(
+				[plugin.manifest.version],
+				versionX + versionColumnWidth / 2,
+				centerY,
+				13,
+				'#c6c6cc',
+				400,
+				'middle',
+			),
+			...renderLines(authorLines, authorX + 12, centerY, 13, '#98989f'),
+			`<line x1="${catalogInset}" y1="${y + rowHeight}" x2="${catalogWidth - catalogInset}" y2="${y + rowHeight}" stroke="#2a2d33" stroke-width="1"/>`,
+		];
+
+		return rowElements;
 	});
 
-	return [header, ...rows].join('\n');
+	const headerLines = [
+		`<text x="${catalogInset + 12}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">PLUGIN</text>`,
+		`<text x="${descriptionX + 16}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">DESCRIPTION</text>`,
+		`<text x="${versionX + versionColumnWidth / 2}" y="65" text-anchor="middle" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">VERSION</text>`,
+		`<text x="${authorX + 12}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">AUTHORS</text>`,
+		`<line x1="${catalogInset}" y1="82" x2="${catalogWidth - catalogInset}" y2="82" stroke="#2a2d33" stroke-width="1"/>`,
+	];
+
+	return [
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${catalogWidth}" height="${height}" viewBox="0 0 ${catalogWidth} ${height}" role="img" aria-labelledby="title description">`,
+		`<title id="title">Unbound plugin catalog</title>`,
+		`<desc id="description">${plugins.length} Unbound plugins with their descriptions, versions, authors, and Discord icons.</desc>`,
+		`<rect width="100%" height="100%" rx="24" fill="#121316" stroke="#2a2d33" stroke-width="2"/>`,
+		...headerLines,
+		...rowMarkup,
+		`</svg>`,
+		'',
+	].join('\n');
 }
 
 function generate(): void {
 	const plugins = readPluginManifests();
+	const icons = readIconData(plugins);
+	const catalog = renderCatalog(plugins, icons);
+	const readme = `# Plugins\n\n${plugins.length} plugins in this workspace.\n\n<p align="center"><img src="catalog.svg" alt="Unbound plugin catalog" width="100%"></p>\n`;
 
-	const readme = `# Plugins
-
-${plugins.length} plugin${plugins.length === 1 ? '' : 's'} in this workspace.
-
-<!-- AUTO-GENERATED: this table is built from each plugin's manifest.json. Do not edit by hand. -->
-
-${renderTable(plugins)}
-
-<!-- END AUTO-GENERATED -->
-`;
-
-	writeFileSync(resolve(pluginsDir, 'README.md'), readme);
+	writeFileSync(catalogPath, catalog);
+	writeFileSync(readmePath, readme);
 }
 
 generate();

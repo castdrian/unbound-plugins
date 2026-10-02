@@ -1,0 +1,64 @@
+name: Plugin Catalog
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugin-catalog-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Rebase on the latest branch commit
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin "$GITHUB_REF_NAME"
+          git rebase FETCH_HEAD
+      - name: Download the latest loader IPA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          releases="$(curl --fail --silent --show-error --retry 3 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            'https://api.github.com/repos/unbound-app/loader-ios/releases?per_page=20')"
+          ipa_url="$(printf '%s' "$releases" | jq -er '[.[] | select(.draft == false) | .assets[] | select(.name == "Unbound.ipa")][0].browser_download_url')"
+          curl --fail --location --silent --show-error --retry 3 "$ipa_url" -o "$RUNNER_TEMP/Unbound.ipa"
+          echo "LOADER_IPA=$RUNNER_TEMP/Unbound.ipa" >> "$GITHUB_ENV"
+      - name: Sync plugin icons from the loader IPA
+        run: bun scripts/sync-plugin-icons.ts "$LOADER_IPA"
+      - name: Generate plugin catalog
+        run: bun scripts/generate-plugins-readme.ts
+      - name: Commit generated catalog
+        if: github.event_name == 'push'
+        run: |
+          git add plugins/README.md plugins/catalog.svg plugins/icons
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'chore: refresh plugin catalog'
+          git push origin "HEAD:$GITHUB_REF_NAME"
+      - name: Upload pull request preview
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-catalog-preview
+          path: |
+            plugins/README.md
+            plugins/catalog.svg
+            plugins/icons/*.png

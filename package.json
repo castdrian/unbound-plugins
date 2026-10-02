@@ -13,9 +13,8 @@
 		"dev": "ubd dev",
 		"build": "ubd build",
 		"check:native": "bun scripts/check-native-migration.ts",
-		"format": "biome format --write plugins",
-		"format:check": "biome format plugins",
-		"postbuild": "bun scripts/generate-plugins-readme.ts"
+		"format": "biome format --write plugins scripts",
+		"format:check": "biome format plugins scripts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",
