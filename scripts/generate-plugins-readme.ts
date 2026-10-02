@@ -13,6 +13,7 @@ interface PluginAuthor {
 
 interface PluginManifest {
 	id: string;
+	icon?: string;
 	name: string;
 	description: string;
 	version: string;
@@ -23,6 +24,21 @@ interface PluginInfo {
 	folder: string;
 	manifest: PluginManifest;
 	hasReadme: boolean;
+	iconPreview: string | null;
+}
+
+function createIconPreview(icon: string | undefined): string | null {
+	if (!icon) return null;
+
+	const pngPath = resolve(pluginsDir, 'icons', `${icon}.png`);
+	if (!existsSync(pngPath)) return null;
+
+	const svgPath = resolve(pluginsDir, 'icons', `${icon}.svg`);
+	const png = readFileSync(pngPath).toString('base64');
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><rect width="28" height="28" rx="6" fill="#313338"/><image href="data:image/png;base64,${png}" x="2" y="2" width="24" height="24"/></svg>\n`;
+
+	if (!existsSync(svgPath) || readFileSync(svgPath, 'utf8') !== svg) writeFileSync(svgPath, svg);
+	return `icons/${encodeURIComponent(icon)}.svg`;
 }
 
 function getPublishedFolders(): Set<string> | null {
@@ -56,7 +72,12 @@ function readPluginManifests(): PluginInfo[] {
 			const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PluginManifest;
 			const hasReadme = existsSync(resolve(pluginsDir, entry.name, 'README.md'));
 
-			return { folder: entry.name, manifest, hasReadme };
+			return {
+				folder: entry.name,
+				manifest,
+				hasReadme,
+				iconPreview: createIconPreview(manifest.icon),
+			};
 		})
 		.filter((plugin): plugin is PluginInfo => plugin !== null)
 		.sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
@@ -64,10 +85,15 @@ function readPluginManifests(): PluginInfo[] {
 
 function renderTable(plugins: PluginInfo[]): string {
 	const header = '| Plugin | Description | Version | Authors |\n| --- | --- | --- | --- |';
-	const rows = plugins.map(({ folder, manifest, hasReadme }) => {
+	const rows = plugins.map(({ folder, manifest, hasReadme, iconPreview }) => {
 		const authors = manifest.authors.map((author) => author.name).join(', ');
 		const name = hasReadme ? `[${manifest.name}](${folder}/README.md)` : manifest.name;
-		return `| ${name} | ${manifest.description} | ${manifest.version} | ${authors} |`;
+		const icon = iconPreview
+			? `<img src="${iconPreview}" alt="${manifest.icon}" width="24" height="24">`
+			: manifest.icon
+				? `\`${manifest.icon}\``
+				: '';
+		return `| ${icon} ${name} | ${manifest.description} | ${manifest.version} | ${authors} |`;
 	});
 
 	return [header, ...rows].join('\n');

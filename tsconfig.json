@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@character-counter/*": [
+				"plugins/character-counter/src/*"
+			],
 			"@reaction-avatars/*": [
 				"plugins/reaction-avatars/src/*"
 			],
