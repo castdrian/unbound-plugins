@@ -45,7 +45,7 @@ jobs:
       - name: Commit generated catalog
         if: github.event_name == 'push'
         run: |
-          git add plugins/README.md plugins/catalog.svg plugins/icons
+          git add plugins/README.md plugins/catalog.svg icons
           if git diff --cached --quiet; then
             exit 0
           fi
@@ -61,4 +61,4 @@ jobs:
           path: |
             plugins/README.md
             plugins/catalog.svg
-            plugins/icons/*.png
+            icons/*.png

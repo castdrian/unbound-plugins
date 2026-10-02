@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const pluginsDir = resolve(repoRoot, 'plugins');
-const iconsDir = resolve(pluginsDir, 'icons');
+const iconsDir = resolve(repoRoot, 'icons');
 const iconRoots = [
 	'Payload/Discord.app/assets/design/components/Icon/native/redesign/generated/images/',
 	'Payload/Discord.app/assets/images/native/icons/',

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const pluginsDir = resolve(repoRoot, 'plugins');
-const iconsDir = resolve(pluginsDir, 'icons');
+const iconsDir = resolve(repoRoot, 'icons');
 const catalogPath = resolve(pluginsDir, 'catalog.svg');
 const readmePath = resolve(pluginsDir, 'README.md');
 const catalogInset = 30;
