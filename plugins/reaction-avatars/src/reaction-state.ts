@@ -153,7 +153,7 @@ export function shouldMeasureReactionAvatarWidth(
 	currentWidth: number,
 	nextWidth: number,
 ): boolean {
-	return !measured && Math.abs(currentWidth - nextWidth) < 0.5;
+	return !measured && nextWidth >= currentWidth - 0.5;
 }
 
 export function reactionAvatarSummaryProps<T extends Reactor>(

@@ -371,6 +371,7 @@ describe('reaction avatar state', () => {
 
 	test('commits the first measured width even when it matches the predicted width', () => {
 		expect(shouldMeasureReactionAvatarWidth(false, 33, 33)).toBe(true);
+		expect(shouldMeasureReactionAvatarWidth(false, 33, 34)).toBe(true);
 		expect(shouldMeasureReactionAvatarWidth(true, 33, 33)).toBe(false);
 		expect(shouldMeasureReactionAvatarWidth(true, 33, 34)).toBe(false);
 	});
