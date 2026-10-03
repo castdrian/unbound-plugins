@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,6 +60,15 @@ function escapeXml(value: string): string {
 
 		return escaped[character];
 	});
+}
+
+function repositoryTitle(): string {
+	const repository =
+		process.env.GITHUB_REPOSITORY ??
+		execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repoRoot, encoding: 'utf8' });
+	const match = /(?:^|[:/])([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(repository.trim());
+	if (!match) throw new Error('Could not determine the repository owner and name.');
+	return `${match[1]}@${match[2]}`;
 }
 
 function wrapText(value: string, limit: number): string[] {
@@ -153,6 +163,7 @@ function renderLines(
 }
 
 function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): string {
+	const title = escapeXml(repositoryTitle());
 	const rows = createRows(plugins);
 	const height = rows.reduce((total, row) => total + row.height, rowStart + 20);
 	const descriptionX = catalogInset + pluginColumnWidth;
@@ -198,10 +209,10 @@ function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): strin
 
 	return [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${catalogWidth}" height="${height}" viewBox="0 0 ${catalogWidth} ${height}" role="img" aria-labelledby="title description">`,
-		`<title id="title">Unbound plugin catalog</title>`,
+		`<title id="title">${title} plugin catalog</title>`,
 		`<desc id="description">${plugins.length} Unbound plugins with their descriptions, versions, authors, and Discord icons.</desc>`,
 		`<rect width="100%" height="100%" rx="24" fill="#121316" stroke="#2a2d33" stroke-width="2"/>`,
-		`<text x="${catalogInset + 12}" y="47" dominant-baseline="middle" fill="#f5f5f7" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="27" font-weight="700">Plugins</text>`,
+		`<text x="${catalogInset + 12}" y="47" dominant-baseline="middle" fill="#f5f5f7" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="27" font-weight="700">${title}</text>`,
 		`<text x="${catalogInset + 12}" y="80" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14">${plugins.length} plugins in this workspace.</text>`,
 		...headerLines,
 		...rowMarkup,
