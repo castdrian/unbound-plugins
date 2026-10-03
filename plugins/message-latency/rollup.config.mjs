@@ -36,7 +36,7 @@ function manifestToDist() {
 export default {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
-	plugins: [bunPathAliases(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
+	plugins: [bunPathAliases(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint({ hasSettingsPanel: true }), manifestToDist()],
 	output: {
 		dir: 'dist',
 		entryFileNames: 'index.js',

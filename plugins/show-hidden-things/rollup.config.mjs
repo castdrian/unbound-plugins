@@ -41,5 +41,5 @@ export default {
 		globals,
 	},
 	external: Object.keys(globals),
-	plugins: [bunPathAliases(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
+	plugins: [bunPathAliases(), nodeResolve(), json(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint({ hasSettingsPanel: true }), manifestToDist()],
 };

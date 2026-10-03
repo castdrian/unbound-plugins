@@ -47,7 +47,7 @@ export default {
 		json(),
 		swc({ tsconfig: false }),
 		iife(),
-		hermesExpressionEntrypoint(),
+		hermesExpressionEntrypoint({ hasSettingsPanel: true }),
 		manifestToDist(),
 	],
 };
