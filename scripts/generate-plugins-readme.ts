@@ -68,7 +68,7 @@ function repositoryTitle(): string {
 		execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repoRoot, encoding: 'utf8' });
 	const match = /(?:^|[:/])([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(repository.trim());
 	if (!match) throw new Error('Could not determine the repository owner and name.');
-	return `${match[1]}@${match[2]}`;
+	return `${match[1]}/${match[2]}`;
 }
 
 function wrapText(value: string, limit: number): string[] {
