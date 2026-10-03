@@ -5,9 +5,21 @@ let nativeHookSelector: string | null = null;
 let nativeHookSelectors: string[] = [];
 let nativeHookRemoveCount = 0;
 let findByFilePathCount = 0;
+let clipboardText: string | null = null;
+let clipboardFailure = false;
+let shownToasts: Array<{ title: string; content: string }> = [];
 
 mock.module('@unbound-app/api', () => ({
 	metro: {
+		common: {
+			Clipboard: {
+				setString(text: string) {
+					if (clipboardFailure) return Promise.reject(new Error('Clipboard unavailable'));
+					clipboardText = text;
+					return Promise.resolve();
+				},
+			},
+		},
 		findByProps: () => null,
 		findByFilePath: () => {
 			findByFilePathCount++;
@@ -36,12 +48,14 @@ const {
 	codeBlockLayout,
 	codeScrollHeight,
 	codeSurfaceMatchesCell,
+	copyCodeToClipboard,
 	default: plugin,
 	getCodeBlockTokens,
 	getTokens,
 	locateCodeBlocks,
 	matchCodeBlock,
 	parseFencedCodeBlocks,
+	resolveMessageContent,
 	resolveLanguage,
 	scanVisibleLabels,
 	shouldCorrectRow,
@@ -58,6 +72,9 @@ afterEach(() => {
 	nativeHookSelectors = [];
 	nativeHookRemoveCount = 0;
 	findByFilePathCount = 0;
+	clipboardText = null;
+	clipboardFailure = false;
+	shownToasts = [];
 });
 
 describe('language aliases', () => {
@@ -226,6 +243,34 @@ describe('native fenced code matching', () => {
 		expect(rendered.slice(placements[0].end)).toBe('After');
 	});
 
+	test('loads cross-channel embedded code from the linked message channel', () => {
+		const store = {
+			getMessage(channelId: string, messageId: string) {
+				return channelId === 'linked-channel' && messageId === 'linked-message'
+					? { content: '```ts\nconst linked = true;\n```' }
+					: null;
+			},
+		};
+
+		expect(resolveMessageContent(store, 'linked-message', 'linked-channel', 'open-channel')).toBe(
+			'```ts\nconst linked = true;\n```',
+		);
+	});
+
+	test('falls back to the visible channel when a native message has no channel ID', () => {
+		const store = {
+			getMessage(channelId: string, messageId: string) {
+				return channelId === 'open-channel' && messageId === 'open-message'
+					? { content: '```ts\nconst open = true;\n```' }
+					: null;
+			},
+		};
+
+		expect(resolveMessageContent(store, 'open-message', undefined, 'open-channel')).toBe(
+			'```ts\nconst open = true;\n```',
+		);
+	});
+
 	test('locates repeated code in separate fences without merging their ranges', () => {
 		const blocks = parseFencedCodeBlocks(
 			'```ts\nconst same = true;\n```\nBetween\n```ts\nconst same = true;\n```',
@@ -246,6 +291,26 @@ describe('native fenced code matching', () => {
 });
 
 describe('native syntax rendering', () => {
+	test('copies the exact code and confirms it with an Unbound toast', async () => {
+		const code = 'const answer = 42;\nconsole.log(answer);';
+
+		expect(await copyCodeToClipboard(code, (toast) => shownToasts.push(toast))).toBe(true);
+		expect(clipboardText).toBe(code);
+		expect(shownToasts).toEqual([
+			{ title: 'Shiki Codeblocks', content: 'Code copied to clipboard.' },
+		]);
+	});
+
+	test('does not claim the copy succeeded when clipboard access fails', async () => {
+		clipboardFailure = true;
+
+		expect(
+			await copyCodeToClipboard('const answer = 42;', (toast) => shownToasts.push(toast)),
+		).toBe(false);
+		expect(clipboardText).toBeNull();
+		expect(shownToasts).toEqual([{ title: 'Shiki Codeblocks', content: 'Could not copy code.' }]);
+	});
+
 	test('renders Highlight.js keywords in the numbered code card', () => {
 		const tokens = highlightCodeToTokens('const value = 42;\nreturn value;', 'javascript', false);
 		const markup = buildNativeCodeMarkup(tokens, false);

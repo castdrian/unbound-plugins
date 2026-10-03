@@ -26,7 +26,7 @@ import typescript from '@shikijs/langs/typescript';
 import yaml from '@shikijs/langs/yaml';
 import darkPlus from '@shikijs/themes/dark-plus';
 import lightPlus from '@shikijs/themes/light-plus';
-import { metro, storage } from '@unbound-app/api';
+import * as unbound from '@unbound-app/api';
 import type {
 	NativeHookToken,
 	NativeObjCBridge,
@@ -56,6 +56,7 @@ import {
 } from './highlight-js';
 
 const ADDON_ID = 'unbound.shiki-codeblocks';
+const { metro, storage } = unbound;
 const MAX_CODE_LENGTH = 6000;
 const MAX_CACHE_ENTRIES = 96;
 const MAX_SURFACES = 96;
@@ -90,6 +91,8 @@ type TokenLines = ThemedToken[][];
 type CodeBlockFence = { code: string; language: LanguageId; sourceLanguage?: string };
 type CodeBlockPlacement = { block: CodeBlockFence; start: number; end: number };
 type RawMessage = { content?: unknown };
+type CopyToast = { title: string; content: string };
+type NativeMessageIdentity = { messageId: string; sourceChannelId?: string };
 type MessageStore = {
 	getMessage?: (channelId: string, messageId: string) => RawMessage | null;
 };
@@ -102,6 +105,7 @@ type NativeCodePart = {
 	code: string;
 	copyButton: NativeObjectHandle;
 	copyHook: NativeHookToken | null;
+	copyTarget: NativeObjectHandle;
 	header: NativeObjectHandle;
 	height: number;
 	host: NativeObjectHandle;
@@ -146,6 +150,7 @@ type NativeCodeMarkup = { spans: NativeColorSpan[]; text: string };
 type NativeCodeHost = {
 	codeLabel: NativeObjectHandle;
 	copyButton: NativeObjectHandle;
+	copyTarget: NativeObjectHandle;
 	header: NativeObjectHandle;
 	host: NativeObjectHandle;
 	iconView: NativeObjectHandle | null;
@@ -420,14 +425,16 @@ function nativeCellForLabel(label: NativeObjectHandle): NativeObjectHandle | nul
 	return null;
 }
 
-function messageIdForCell(cell: NativeObjectHandle): string | undefined {
+function messageIdentityForCell(cell: NativeObjectHandle): NativeMessageIdentity | undefined {
 	if (!objc) return;
 	try {
 		const viewModel = objc.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
 		if (!viewModel || !objc.respondsTo(viewModel, 'message')) return;
 		const message = nativeCall(viewModel, 'message') as NativeObjectHandle | null;
 		if (!message) return;
-		return nativeString(nativeCall(message, 'id'));
+		const messageId = nativeString(nativeCall(message, 'id'));
+		if (!messageId) return;
+		return { messageId, sourceChannelId: nativeString(nativeCall(message, 'channelID')) };
 	} catch {
 		return;
 	}
@@ -437,9 +444,35 @@ function currentChannelId(): string | undefined {
 	return selectedChannel?.getChannelId?.() ?? selectedChannel?.getLastSelectedChannelId?.();
 }
 
-function messageContent(channelId: string, messageId: string): string | undefined {
-	const content = messageStore?.getMessage?.(channelId, messageId)?.content;
+export function resolveMessageContent(
+	store: MessageStore | null,
+	messageId: string,
+	sourceChannelId: string | undefined,
+	visibleChannelId: string,
+): string | undefined {
+	const content = store?.getMessage?.(sourceChannelId ?? visibleChannelId, messageId)?.content;
 	return typeof content === 'string' ? content : undefined;
+}
+
+export async function copyCodeToClipboard(
+	code: string,
+	showToast: (toast: CopyToast) => unknown = unbound.toasts.showToast,
+): Promise<boolean> {
+	const clipboard = metro.common.Clipboard as
+		| { setString?: (text: string) => Promise<void> | void }
+		| undefined;
+	if (typeof clipboard?.setString !== 'function') {
+		showToast({ title: 'Shiki Codeblocks', content: 'Could not copy code.' });
+		return false;
+	}
+	try {
+		await clipboard.setString(code);
+	} catch {
+		showToast({ title: 'Shiki Codeblocks', content: 'Could not copy code.' });
+		return false;
+	}
+	showToast({ title: 'Shiki Codeblocks', content: 'Code copied to clipboard.' });
+	return true;
 }
 
 function nativeRange(location: number, length: number): unknown {
@@ -683,6 +716,7 @@ function createNativeHost(
 		nativeCall(languageLabel, 'setFont:', nativeFont(11, 0.3, false));
 		nativeCall(header, 'addSubview:', languageLabel);
 		const copyButton = objc.alloc('UIButton');
+		const copyTarget = objc.alloc('UIView');
 		nativeCall(copyButton, 'setFrame:', nativePositionedFrame(width - 70, 0, 58, 34));
 		nativeCall(copyButton, 'setTitle:forState:', 'Copy', 0);
 		nativeCall(
@@ -693,7 +727,7 @@ function createNativeHost(
 		);
 		const titleLabel = nativeCall(copyButton, 'titleLabel') as NativeObjectHandle | null;
 		if (titleLabel) nativeCall(titleLabel, 'setFont:', nativeFont(11, 0.2, false));
-		nativeCall(copyButton, 'addTarget:action:forControlEvents:', copyButton, 'setNeedsDisplay', 64);
+		nativeCall(copyButton, 'addTarget:action:forControlEvents:', copyTarget, 'setNeedsDisplay', 64);
 		nativeCall(header, 'addSubview:', copyButton);
 		const codeLabel = objc.alloc('UILabel');
 		const viewportWidth = width - 24;
@@ -733,7 +767,7 @@ function createNativeHost(
 		} else {
 			nativeCall(host, 'addSubview:', codeLabel);
 		}
-		return { codeLabel, copyButton, header, host, iconView, languageLabel };
+		return { codeLabel, copyButton, copyTarget, header, host, iconView, languageLabel };
 	} catch {
 		return null;
 	}
@@ -831,7 +865,7 @@ function codeSurfaceIsCurrent(state: NativeCodeBlockState): boolean {
 			codeSurfaceMatchesCell(
 				state,
 				state.channelId,
-				messageIdForCell(state.cell) ?? '',
+				messageIdentityForCell(state.cell)?.messageId ?? '',
 				nativeLabelKey(state.cell),
 			) &&
 			nativeCall(state.label, 'isDescendantOfView:', state.cell),
@@ -1156,6 +1190,7 @@ function mountNativeCodeBlock(
 			codeLabel: nativeHost.codeLabel,
 			copyButton: nativeHost.copyButton,
 			copyHook: null,
+			copyTarget: nativeHost.copyTarget,
 			header: nativeHost.header,
 			height: layout.height,
 			host: nativeHost.host,
@@ -1208,21 +1243,15 @@ function mountNativeCodeBlock(
 	for (const part of parts) {
 		try {
 			part.copyHook = objc.hook(
-				'UIButton',
-				'sendActionsForControlEvents:',
+				'UIView',
+				'setNeedsDisplay',
 				{
-					after: ({ args }) => {
-						if (!(Number(args[0]) & 64) || surfacesByLabel.get(key) !== state) return;
-						const pasteboardClass = objc?.getClass('UIPasteboard');
-						if (!pasteboardClass) return;
-						const pasteboard = nativeCall(
-							pasteboardClass,
-							'generalPasteboard',
-						) as NativeObjectHandle | null;
-						if (pasteboard) nativeCall(pasteboard, 'setString:', part.code);
+					after: () => {
+						if (surfacesByLabel.get(key) !== state) return;
+						void copyCodeToClipboard(part.code);
 					},
 				},
-				{ instance: part.copyButton },
+				{ instance: part.copyTarget },
 			);
 		} catch {
 			nativeCall(part.copyButton, 'setHidden:', true);
@@ -1250,14 +1279,15 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 		if (previous) removeNativeSurface(previous, false);
 		return;
 	}
-	const messageId = messageIdForCell(cell);
+	const identity = messageIdentityForCell(cell);
 	const channelId = currentChannelId();
-	if (!messageId || !channelId) return;
+	if (!identity || !channelId) return;
+	const { messageId, sourceChannelId } = identity;
 	if (previous && !codeSurfaceMatchesCell(previous, channelId, messageId, nativeLabelKey(cell))) {
 		removeNativeSurface(previous, false);
 	}
 	if (rendered === surfacesByLabel.get(key)?.renderedText) return;
-	const content = messageContent(channelId, messageId);
+	const content = resolveMessageContent(messageStore, messageId, sourceChannelId, channelId);
 	if (content === undefined) return;
 	const placements = locateCodeBlocks(parseFencedCodeBlocks(content), rendered);
 	if (!placements.length || placements.some((item) => item.block.code.length > MAX_CODE_LENGTH)) {
