@@ -152,6 +152,7 @@ let embeddedAnimationSupport: ReturnType<typeof installEmbeddedAnimationSupport>
 let moduleListenerCleanup: (() => boolean) | null = null;
 let messageStoreListener: (() => void) | null = null;
 let messageSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let hooks: NativeHookToken[] = [];
 let lifecycle = 0;
 let surfaceModuleName = '';
@@ -344,6 +345,27 @@ function visibleMessageCellsInCell(cell: NativeObjectHandle): NativeObjectHandle
 	} catch {
 		return [];
 	}
+}
+
+function visibleMessageCells(): NativeObjectHandle[] {
+	if (!objc) return [];
+	const application = objc.getClass('UIApplication');
+	if (!application) return [];
+	const shared = nativeCall(application, 'sharedApplication') as NativeObjectHandle | null;
+	const window = shared ? (nativeCall(shared, 'keyWindow') as NativeObjectHandle | null) : null;
+	if (!window) return [];
+	const pending = [window];
+	let inspected = 0;
+	while (pending.length && inspected < 800) {
+		const view = pending.pop();
+		if (!view) continue;
+		inspected++;
+		if ((objc.className(view) ?? '').includes('DCDMessageTableViewCell')) {
+			return visibleMessageCellsInCell(view);
+		}
+		pending.push(...nativeChildren(view));
+	}
+	return [];
 }
 
 function textForView(view: NativeObjectHandle): string | undefined {
@@ -899,7 +921,11 @@ function registerSurface(): boolean {
 		window?.RN$AppRegistry ??
 		metro.findByProps('registerComponent', 'runApplication');
 	if (!registry || typeof registry.registerComponent !== 'function') return false;
-	surfaceModuleName = `${SURFACE_MODULE_PREFIX}${lifecycle}`;
+	const registered =
+		typeof registry.getAppKeys === 'function' ? (registry.getAppKeys() as string[]) : [];
+	let surfaceIndex = lifecycle;
+	while (registered.includes(`${SURFACE_MODULE_PREFIX}${surfaceIndex}`)) surfaceIndex++;
+	surfaceModuleName = `${SURFACE_MODULE_PREFIX}${surfaceIndex}`;
 	try {
 		registry.registerComponent(surfaceModuleName, () => MessageSurface);
 		return true;
@@ -1261,6 +1287,11 @@ function installNativeHooks(): void {
 		},
 	});
 	hooks = [initialScan, visibility, reuse];
+	initialScanTimer = setTimeout(() => {
+		initialScanTimer = null;
+		if (!objc || hooks.length === 0) return;
+		for (const cell of visibleMessageCells()) scheduleCell(cell);
+	}, 300);
 }
 
 function dependenciesReady(): boolean {
@@ -1356,6 +1387,8 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycle++;
+	if (initialScanTimer) clearTimeout(initialScanTimer);
+	initialScanTimer = null;
 	removeMessageStoreListener();
 	for (const token of hooks) token.remove();
 	hooks = [];
