@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,7 +18,7 @@ const catalogWidth =
 	descriptionColumnWidth +
 	versionColumnWidth +
 	authorColumnWidth;
-const rowStart = 82;
+const rowStart = 150;
 
 interface PluginAuthor {
 	name: string;
@@ -189,11 +189,11 @@ function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): strin
 	});
 
 	const headerLines = [
-		`<text x="${catalogInset + 12}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">PLUGIN</text>`,
-		`<text x="${descriptionX + 16}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">DESCRIPTION</text>`,
-		`<text x="${versionX + versionColumnWidth / 2}" y="65" text-anchor="middle" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">VERSION</text>`,
-		`<text x="${authorX + 12}" y="65" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">AUTHORS</text>`,
-		`<line x1="${catalogInset}" y1="82" x2="${catalogWidth - catalogInset}" y2="82" stroke="#2a2d33" stroke-width="1"/>`,
+		`<text x="${catalogInset + 12}" y="${rowStart - 18}" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">PLUGIN</text>`,
+		`<text x="${descriptionX + 16}" y="${rowStart - 18}" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">DESCRIPTION</text>`,
+		`<text x="${versionX + versionColumnWidth / 2}" y="${rowStart - 18}" text-anchor="middle" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">VERSION</text>`,
+		`<text x="${authorX + 12}" y="${rowStart - 18}" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing="1">AUTHORS</text>`,
+		`<line x1="${catalogInset}" y1="${rowStart}" x2="${catalogWidth - catalogInset}" y2="${rowStart}" stroke="#2a2d33" stroke-width="1"/>`,
 	];
 
 	return [
@@ -201,6 +201,8 @@ function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): strin
 		`<title id="title">Unbound plugin catalog</title>`,
 		`<desc id="description">${plugins.length} Unbound plugins with their descriptions, versions, authors, and Discord icons.</desc>`,
 		`<rect width="100%" height="100%" rx="24" fill="#121316" stroke="#2a2d33" stroke-width="2"/>`,
+		`<text x="${catalogInset + 12}" y="47" dominant-baseline="middle" fill="#f5f5f7" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="27" font-weight="700">Plugins</text>`,
+		`<text x="${catalogInset + 12}" y="80" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14">${plugins.length} plugins in this workspace.</text>`,
 		...headerLines,
 		...rowMarkup,
 		`</svg>`,
@@ -212,7 +214,8 @@ function generate(): void {
 	const plugins = readPluginManifests();
 	const icons = readIconData(plugins);
 	const catalog = renderCatalog(plugins, icons);
-	const readme = `# Plugins\n\n${plugins.length} plugins in this workspace.\n\n<p align="center"><img src="catalog.svg" alt="Unbound plugin catalog" width="100%"></p>\n`;
+	const readme =
+		'<p align="center"><img src="catalog.svg" alt="Unbound plugin catalog" width="100%"></p>\n';
 
 	writeFileSync(catalogPath, catalog);
 	writeFileSync(readmePath, readme);
