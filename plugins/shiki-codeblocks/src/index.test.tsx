@@ -118,6 +118,16 @@ describe('native fenced code matching', () => {
 		]);
 	});
 
+	test('leaves long fences alone when Discord splits their native rendering', () => {
+		const blocks = parseFencedCodeBlocks(
+			'Long fence parser test.\n\n````ts\nconst fence = "```";\n```\nconst kept = true;\n````\n\nThis sentence must stay below the one card.',
+		);
+		const rendered =
+			'Long fence parser test.\n\n\n`ts\nconst fence = "\n\n";\n\nconst kept = true;\n\n`\n\nThis sentence must stay below the one card.';
+
+		expect(locateCodeBlocks(blocks, rendered)).toEqual([]);
+	});
+
 	test('locates a fenced block between ordinary text without replacing the text', () => {
 		const blocks = parseFencedCodeBlocks(
 			'Before the code block.\n\n```ts\nconst answer = 42;\n```\n\nAfter the code block.',
