@@ -88,7 +88,12 @@ const LANGUAGES = [
 type LanguageId = string;
 type ThemeName = string;
 type TokenLines = ThemedToken[][];
-type CodeBlockFence = { code: string; language: LanguageId; sourceLanguage?: string };
+type CodeBlockFence = {
+	code: string;
+	language: LanguageId;
+	originalCode?: string;
+	sourceLanguage?: string;
+};
 type CodeBlockPlacement = { block: CodeBlockFence; start: number; end: number };
 type RawMessage = { content?: unknown };
 type CopyToast = { title: string; content: string };
@@ -103,6 +108,7 @@ type SelectedChannel = {
 type NativeCodePart = {
 	codeLabel: NativeObjectHandle;
 	code: string;
+	copyCode: string;
 	copyButton: NativeObjectHandle;
 	copyHook: NativeHookToken | null;
 	copyTarget: NativeObjectHandle;
@@ -337,9 +343,12 @@ export function parseFencedCodeBlocks(content: string): CodeBlockFence[] {
 		if (closingIndex >= lines.length) break;
 		const sourceLanguage = opening[2].trim().split(/[\t ]+/, 1)[0];
 		const language = resolveLanguage(sourceLanguage) ?? 'plain';
+		const originalCode = lines.slice(lineIndex + 1, closingIndex).join('\n');
+		const code = normalizeCode(originalCode);
 		blocks.push({
-			code: normalizeCode(lines.slice(lineIndex + 1, closingIndex).join('\n')),
+			code,
 			language,
+			...(code !== originalCode ? { originalCode } : {}),
 			...(language === 'plain' && hasHighlightLanguage(sourceLanguage) ? { sourceLanguage } : {}),
 		});
 		lineIndex = closingIndex;
@@ -1158,6 +1167,12 @@ function mountNativeCodeBlock(
 	) {
 		previous.original = original;
 		previous.cell = cell;
+		for (let index = 0; index < previous.parts.length; index++) {
+			const part = previous.parts[index];
+			const placement = placements[index];
+			part.copyCode = placement.block.originalCode ?? placement.block.code;
+			part.placement = placement;
+		}
 		applyNativeSurface(previous, false);
 		return;
 	}
@@ -1189,6 +1204,7 @@ function mountNativeCodeBlock(
 			code,
 			codeLabel: nativeHost.codeLabel,
 			copyButton: nativeHost.copyButton,
+			copyCode: placement.block.originalCode ?? code,
 			copyHook: null,
 			copyTarget: nativeHost.copyTarget,
 			header: nativeHost.header,
@@ -1248,7 +1264,7 @@ function mountNativeCodeBlock(
 				{
 					after: () => {
 						if (surfacesByLabel.get(key) !== state) return;
-						void copyCodeToClipboard(part.code);
+						void copyCodeToClipboard(part.copyCode);
 					},
 				},
 				{ instance: part.copyTarget },

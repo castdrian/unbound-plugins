@@ -143,6 +143,15 @@ describe('native fenced code matching', () => {
 		]);
 	});
 
+	test('copies blank lines inside a fence without changing native matching', async () => {
+		const [block] = parseFencedCodeBlocks('```ts\n\nconst answer = 42;\n\n```');
+		const rendered = '\nconst answer = 42;\n';
+
+		expect(locateCodeBlocks([block], rendered)).toHaveLength(1);
+		await copyCodeToClipboard(block.originalCode ?? block.code, (toast) => shownToasts.push(toast));
+		expect(clipboardText).toBe('\nconst answer = 42;\n');
+	});
+
 	test('matches native text after newline normalization and retains unsupported blocks', () => {
 		const blocks = parseFencedCodeBlocks(
 			'```brainfuck\n++++\n```\n~~~js\r\nconsole.log(1);\r\n~~~',
