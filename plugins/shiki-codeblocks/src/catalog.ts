@@ -1,4 +1,6 @@
 import { languageNames } from '@shikijs/langs';
+import type { ParseError } from 'jsonc-parser';
+import { parse } from 'jsonc-parser';
 
 export const DEFAULT_THEME = 'dark-plus';
 export const SHIKI_ASSET_COMMIT = 'bc5436518111d87ea58eb56d97b3f9bec30e6b83';
@@ -77,6 +79,22 @@ export type LanguageMetadata = {
 	scopeName: string;
 };
 
+type ThemeDefinition = {
+	[key: string]: unknown;
+	colors?: Record<string, string>;
+	include?: string;
+	tokenColors?: unknown[];
+	type?: 'dark' | 'light';
+};
+
+type ThemeFetchResponse = {
+	ok: boolean;
+	status: number;
+	text(): Promise<string>;
+};
+
+type ThemeFetcher = (url: string) => Promise<ThemeFetchResponse>;
+
 const knownLanguages = new Set<string>(languageNames);
 const languages = new Map<string, LanguageMetadata>();
 const aliases = new Map<string, string>();
@@ -96,6 +114,51 @@ export function themeUrl(name: string): string {
 
 export function themeLabel(name: string): string {
 	return name.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export async function loadThemeDefinition(
+	url: string,
+	fetchTheme: ThemeFetcher = fetch,
+): Promise<ThemeDefinition> {
+	const definition = await resolveThemeDefinition(url, fetchTheme, new Set());
+	return { ...definition, type: definition.type ?? 'dark' };
+}
+
+async function resolveThemeDefinition(
+	url: string,
+	fetchTheme: ThemeFetcher,
+	visiting: Set<string>,
+): Promise<ThemeDefinition> {
+	const resolved = new URL(url);
+	if (resolved.protocol !== 'https:') throw new Error(`Theme URL must use HTTPS: ${url}`);
+	if (visiting.has(resolved.href)) throw new Error(`Theme include cycle: ${resolved.href}`);
+	if (visiting.size >= 8) throw new Error(`Theme include depth exceeded: ${resolved.href}`);
+	visiting.add(resolved.href);
+	try {
+		const response = await fetchTheme(resolved.href);
+		if (!response.ok) throw new Error(`Theme ${resolved.href} returned ${response.status}`);
+		const errors: ParseError[] = [];
+		const parsed = parse(await response.text(), errors, { allowTrailingComma: true });
+		if (errors.length || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			throw new Error(`Theme ${resolved.href} is not valid JSON with comments`);
+		}
+		const definition = parsed as ThemeDefinition;
+		if (!definition.include) return definition;
+		const included = await resolveThemeDefinition(
+			new URL(definition.include, resolved).href,
+			fetchTheme,
+			visiting,
+		);
+		const { include, ...current } = definition;
+		return {
+			...included,
+			...current,
+			colors: { ...included.colors, ...current.colors },
+			tokenColors: [...(included.tokenColors ?? []), ...(current.tokenColors ?? [])],
+		};
+	} finally {
+		visiting.delete(resolved.href);
+	}
 }
 
 export function resolveCatalogLanguage(value: unknown): string | null {

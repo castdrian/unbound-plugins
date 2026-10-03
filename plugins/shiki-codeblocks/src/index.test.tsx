@@ -64,6 +64,7 @@ const {
 const { highlightCodeToTokens, highlightLanguageLabel, shouldUseHighlightJs } = await import(
 	'@shiki-codeblocks/highlight-js'
 );
+const { loadThemeDefinition } = await import('@shiki-codeblocks/catalog');
 
 afterEach(() => {
 	plugin.stop();
@@ -87,6 +88,50 @@ describe('language aliases', () => {
 	test('does not resolve unsupported and unlabelled language names', () => {
 		expect(resolveLanguage('brainfuck')).toBeNull();
 		expect(resolveLanguage(undefined)).toBeNull();
+	});
+});
+
+describe('remote themes', () => {
+	test('defaults VS Code themes without a declared type to dark', async () => {
+		const theme = await loadThemeDefinition('https://themes.example/theme.json', async () => ({
+			ok: true,
+			status: 200,
+			text: async () => '{"colors":{"editor.background":"#161616"},"tokenColors":[]}',
+		}));
+
+		expect(theme.type).toBe('dark');
+	});
+
+	test('loads JSON with comments and inherits a relative base theme', async () => {
+		const definitions = new Map([
+			[
+				'https://themes.example/material.json',
+				'{\n// Theme metadata\n"include":"./dark_vs.json",\n"colors":{"editor.foreground":"#eeeeee"},\n"tokenColors":[{"scope":"keyword","settings":{"foreground":"#ff0000"}}],\n}',
+			],
+			[
+				'https://themes.example/dark_vs.json',
+				'{"type":"dark","colors":{"editor.background":"#101010","editor.foreground":"#aaaaaa"},"tokenColors":[{"scope":"string","settings":{"foreground":"#00ff00"}}]}',
+			],
+		]);
+		const fetched: string[] = [];
+		const theme = await loadThemeDefinition('https://themes.example/material.json', async (url) => {
+			fetched.push(url);
+			return { ok: true, status: 200, text: async () => definitions.get(url) ?? '' };
+		});
+
+		expect(fetched).toEqual([
+			'https://themes.example/material.json',
+			'https://themes.example/dark_vs.json',
+		]);
+		expect(theme.type).toBe('dark');
+		expect(theme.colors).toEqual({
+			'editor.background': '#101010',
+			'editor.foreground': '#eeeeee',
+		});
+		expect(theme.tokenColors).toEqual([
+			{ scope: 'string', settings: { foreground: '#00ff00' } },
+			{ scope: 'keyword', settings: { foreground: '#ff0000' } },
+		]);
 	});
 });
 

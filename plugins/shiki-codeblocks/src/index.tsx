@@ -42,6 +42,7 @@ import {
 	getLanguageMetadata,
 	grammarUrl,
 	loadLanguageCatalog,
+	loadThemeDefinition,
 	resolveCatalogLanguage,
 	THEME_IDS,
 	themeLabel,
@@ -1513,12 +1514,13 @@ async function loadTheme(highlighter: HighlighterCore, theme: ThemeName): Promis
 	if (highlighter.getLoadedThemes().includes(theme)) return;
 	let pending = pendingThemes.get(theme);
 	if (!pending) {
-		pending = fetch(themeUrl(theme))
-			.then((response) => {
-				if (!response.ok) throw new Error(`Theme ${theme} returned ${response.status}`);
-				return response.json();
-			})
-			.then((definition) => highlighter.loadTheme({ ...definition, name: theme }))
+		pending = loadThemeDefinition(themeUrl(theme))
+			.then((definition) =>
+				highlighter.loadTheme({
+					...definition,
+					name: theme,
+				} as Parameters<HighlighterCore['loadTheme']>[0]),
+			)
 			.finally(() => pendingThemes.delete(theme));
 		pendingThemes.set(theme, pending);
 	}
