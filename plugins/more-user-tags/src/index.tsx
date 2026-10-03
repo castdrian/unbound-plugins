@@ -240,44 +240,24 @@ export default {
 				const { colors } = appearance;
 				const background = colors[0];
 				const { processColor } = metro.common.ReactNative;
-				if (result.opTagText) {
-					const opTagText = `${result.opTagText} · ${tag.displayName}`;
+				const useOpTagStyle = STORE.get('useOpTagStyle', false);
+				const tagText = result.opTagText
+					? `${result.opTagText} · ${tag.displayName}`
+					: tag.displayName;
+				if (useOpTagStyle) {
 					const tagged = {
 						...result,
 						tagText: null,
-						tagAccessibilityLabel: opTagText,
+						tagAccessibilityLabel: tagText,
 						tagVerified: false,
 						tagTextColor: null,
 						tagBackgroundColor: null,
 						tagType: null,
 						tagIconUrl: null,
-						opTagText,
+						opTagText: tagText,
 					};
-					tagGradientRenderer?.setAppearance([opTagText], appearance);
+					tagGradientRenderer?.setAppearance([tagText], appearance);
 					if (!background) return tagged;
-					return {
-						...tagged,
-						opTagBackgroundColor: processColor(background),
-						opTagTextColor: processColor(getContrastingTextColor(colors)),
-					};
-				}
-				tagGradientRenderer?.setAppearance([tag.displayName], appearance);
-				if (STORE.get('useOpTagStyle', false)) {
-					const opTagText = tag.displayName;
-					const tagged = {
-						...result,
-						tagText: null,
-						tagAccessibilityLabel: opTagText,
-						tagVerified: false,
-						tagTextColor: null,
-						tagBackgroundColor: null,
-						tagType: null,
-						tagIconUrl: null,
-						opTagText,
-					};
-
-					if (!background) return tagged;
-
 					return {
 						...tagged,
 						opTagBackgroundColor: processColor(background),
@@ -286,10 +266,14 @@ export default {
 				}
 				const tagged = {
 					...result,
-					tagText: tag.displayName,
-					tagAccessibilityLabel: tag.displayName,
+					opTagText: null,
+					opTagBackgroundColor: null,
+					opTagTextColor: null,
+					tagText,
+					tagAccessibilityLabel: tagText,
 					tagVerified: false,
 				};
+				tagGradientRenderer?.setAppearance([tagText], appearance);
 				if (!background) return tagged;
 
 				return {

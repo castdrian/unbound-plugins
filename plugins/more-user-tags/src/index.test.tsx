@@ -91,3 +91,42 @@ test('combines Discord OP and custom tags with the resolved role color', () => {
 	expect(patched.tagAccessibilityLabel).toBe('OP · Staff');
 	expect(classLookups).not.toContain('CIColor');
 });
+
+test('keeps a combined OP and custom tag in the normal tag style when selected', () => {
+	useOpTagStyle = false;
+	plugin.start({
+		native: {
+			objc: {
+				getClass: (name: string) => {
+					classLookups.push(name);
+					return null;
+				},
+			},
+		},
+	} as any);
+	const nativeTag = {
+		opTagText: 'OP',
+		opTagBackgroundColor: 111,
+		opTagTextColor: 222,
+	};
+
+	const patched = afterHandler?.({
+		args: [
+			{
+				message: {
+					author: { id: 'author', bot: false },
+					channel_id: 'thread',
+				},
+			},
+		],
+		result: nativeTag,
+	});
+
+	expect(patched.opTagText).toBeNull();
+	expect(patched.opTagBackgroundColor).toBeNull();
+	expect(patched.opTagTextColor).toBeNull();
+	expect(patched.tagText).toBe('OP · Staff');
+	expect(patched.tagAccessibilityLabel).toBe('OP · Staff');
+	expect(patched.tagBackgroundColor).toBe('#248046');
+	expect(patched.tagTextColor).toBe('#ffffff');
+});

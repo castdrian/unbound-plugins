@@ -109,21 +109,6 @@ export function roleImageSource(role: {
 	};
 }
 
-export type RoleIconColorSource = 'foreground' | 'label' | 'role';
-
-export function roleIconColorSource(
-	foregroundColor: unknown,
-	roleColorValue: number | undefined,
-): RoleIconColorSource {
-	if (foregroundColor) return 'foreground';
-	if (roleColorValue !== undefined && roleColorValue > 0) return 'role';
-	return 'label';
-}
-
-export function roleSymbolTransformScale(imageScale: number): number {
-	return imageScale > 0 ? ROLE_SYMBOL_METRICS.rasterScale / imageScale : 1;
-}
-
 export function cellRenderDecision(
 	messageID: string | undefined,
 	messageHydrated: boolean,
@@ -156,7 +141,7 @@ const ADDON_ID = 'unbound.mention-avatars';
 const STORE = storage.getStore(ADDON_ID);
 const MENTION_PLACEHOLDER = '\uFFFC';
 const ROLE_IMAGE_NAME = 'person.2.fill';
-export const ROLE_SYMBOL_METRICS = { pointSize: 14, rasterScale: 2, tx: 4, ty: 5.375 } as const;
+export const ROLE_SYMBOL_METRICS = { pointSize: 14 } as const;
 const MAX_VISIBLE_CELL_SCAN_DEPTH = 40;
 const MAX_VISIBLE_CELL_SCAN_NODES = 1_600;
 
@@ -358,7 +343,18 @@ function roleColor(value: number | undefined): NativeValue | null {
 	);
 }
 
-function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
+export function tintRoleSymbol(image: NativeValue, tint: NativeValue): NativeValue {
+	if (!objc || !tint) return image;
+	if (objc.respondsTo(image, 'imageWithTintColor:renderingMode:')) {
+		return nativeCall(image, 'imageWithTintColor:renderingMode:', tint, 1) ?? image;
+	}
+	if (objc.respondsTo(image, 'imageWithTintColor:')) {
+		return nativeCall(image, 'imageWithTintColor:', tint) ?? image;
+	}
+	return image;
+}
+
+function roleImage(metadata: Mention): NativeValue | null {
 	if (!objc) return null;
 	const imageClass = objc.getClass('UIImage');
 	const configurationClass = objc.getClass('UIImageSymbolConfiguration');
@@ -383,82 +379,12 @@ function roleImage(metadata: Mention, color: NativeValue): NativeValue | null {
 		: null;
 	if (!image) return null;
 	const colorClass = objc.getClass('UIColor');
-	const tintSource = roleIconColorSource(color, metadata.roleColor);
-	const tint =
-		tintSource === 'foreground'
-			? color
-			: tintSource === 'role'
-				? roleColor(metadata.roleColor)
-				: colorClass
-					? nativeCall(colorClass, 'labelColor')
-					: null;
-	if (!tint || !objc.respondsTo(image, 'imageWithTintColor:')) return image;
-	const ciImageClass = objc.getClass('CIImage');
-	const ciColorClass = objc.getClass('CIColor');
-	const contextClass = objc.getClass('CIContext');
-	const filterClass = objc.getClass('CIFilter');
-	const vectorClass = objc.getClass('CIVector');
-	const sourceCGImage = nativeCall(image, 'CGImage');
-	const cgColor = nativeCall(tint, 'CGColor');
-	if (
-		ciImageClass &&
-		ciColorClass &&
-		contextClass &&
-		filterClass &&
-		vectorClass &&
-		sourceCGImage &&
-		cgColor
-	) {
-		const source = nativeCall(ciImageClass, 'imageWithCGImage:', sourceCGImage);
-		const ciColor = nativeCall(ciColorClass, 'colorWithCGColor:', cgColor);
-		const matrix = nativeCall(filterClass, 'filterWithName:', 'CIColorMatrix');
-		if (source && ciColor && matrix) {
-			const zero = nativeCall(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 0);
-			const alpha = nativeCall(vectorClass, 'vectorWithX:Y:Z:W:', 0, 0, 0, 1);
-			const bias = nativeCall(
-				vectorClass,
-				'vectorWithX:Y:Z:W:',
-				asNumber(nativeCall(ciColor, 'red')),
-				asNumber(nativeCall(ciColor, 'green')),
-				asNumber(nativeCall(ciColor, 'blue')),
-				0,
-			);
-			if (zero && alpha && bias) {
-				nativeCall(matrix, 'setValue:forKey:', source, 'inputImage');
-				nativeCall(matrix, 'setValue:forKey:', zero, 'inputRVector');
-				nativeCall(matrix, 'setValue:forKey:', zero, 'inputGVector');
-				nativeCall(matrix, 'setValue:forKey:', zero, 'inputBVector');
-				nativeCall(matrix, 'setValue:forKey:', alpha, 'inputAVector');
-				nativeCall(matrix, 'setValue:forKey:', bias, 'inputBiasVector');
-				const output = nativeCall(matrix, 'outputImage');
-				const transformScale = roleSymbolTransformScale(asNumber(nativeCall(image, 'scale')));
-				const transform = objc.struct('CGAffineTransform', {
-					a: transformScale,
-					b: 0,
-					c: 0,
-					d: transformScale,
-					tx: ROLE_SYMBOL_METRICS.tx,
-					ty: ROLE_SYMBOL_METRICS.ty,
-				});
-				const centered = output ? nativeCall(output, 'imageByApplyingTransform:', transform) : null;
-				const context = nativeCall(contextClass, 'contextWithOptions:', null);
-				const rect = objc.struct('CGRect', {
-					origin: { x: 0, y: 0 },
-					size: { width: 32, height: 32 },
-				});
-				const cgImage =
-					centered && context && nativeCall(context, 'createCGImage:fromRect:', centered, rect);
-				if (cgImage)
-					return (
-						nativeCall(imageClass, 'imageWithCGImage:scale:orientation:', cgImage, 2, 0) ?? image
-					);
-			}
-		}
-	}
-	if (objc.respondsTo(image, 'imageWithTintColor:renderingMode:')) {
-		return nativeCall(image, 'imageWithTintColor:renderingMode:', tint, 1) ?? image;
-	}
-	return nativeCall(image, 'imageWithTintColor:', tint) ?? image;
+	const tint = metadata.roleColor
+		? roleColor(metadata.roleColor)
+		: colorClass
+			? nativeCall(colorClass, 'labelColor')
+			: null;
+	return tintRoleSymbol(image, tint);
 }
 
 function roundedImage(image: NativeValue): NativeValue | null {
@@ -581,11 +507,11 @@ function nextMentionRange(
 	return null;
 }
 
-function imageForMention(metadata: Mention, color: NativeValue): NativeValue | null {
+function imageForMention(metadata: Mention): NativeValue | null {
 	if (!objc) return null;
 	if (!metadata.avatarURL) {
 		if (metadata.type !== 'role') return null;
-		return roleImage(metadata, color);
+		return roleImage(metadata);
 	}
 
 	const cached = imageCache.get(metadata.avatarURL);
@@ -714,7 +640,7 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 			searchIndex = mentionIndex + mentionText.length;
 			continue;
 		}
-		const image = imageForMention(metadata, values.NSColor);
+		const image = imageForMention(metadata);
 		if (!image) {
 			searchIndex = mentionIndex + mentionText.length;
 			continue;

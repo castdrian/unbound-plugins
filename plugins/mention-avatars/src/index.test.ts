@@ -4,6 +4,8 @@ const removed: string[] = [];
 const hooks: string[] = [];
 const nativeCalls: string[] = [];
 const channelListeners = new Set<() => void>();
+const tintableSelectors = new Set<string>();
+let tintedImage: unknown = { name: 'tinted-image' };
 
 const selectedChannel = {
 	addChangeListener: (listener: () => void) => channelListeners.add(listener),
@@ -23,6 +25,7 @@ const native = {
 		getIvar: () => null,
 		invoke: (target: { name?: string }, selector: string) => {
 			nativeCalls.push(`${target.name}:${selector}`);
+			if (target.name === 'image' && selector.startsWith('imageWithTintColor:')) return tintedImage;
 			if (target.name === 'UIApplication' && selector === 'sharedApplication')
 				return { name: 'application' };
 			if (target.name === 'application' && selector === 'windows') return [{ name: 'window' }];
@@ -40,6 +43,7 @@ const native = {
 			};
 		},
 		respondsTo: (target: { name?: string }, selector: string) =>
+			(target.name === 'image' && tintableSelectors.has(selector)) ||
 			(target.name === 'cell' && selector === 'hash') ||
 			((target.name === 'window' || target.name === 'cell') && selector === 'subviews'),
 		struct: (name: string, fields: unknown) => ({ name, fields }),
@@ -84,9 +88,8 @@ const {
 	extractMentionTokens,
 	imageCacheAction,
 	mentionImageMetrics,
-	roleIconColorSource,
 	roleImageSource,
-	roleSymbolTransformScale,
+	tintRoleSymbol,
 	ROLE_SYMBOL_METRICS,
 	selectMentionLabel,
 	shouldHandleChannelChange,
@@ -99,6 +102,8 @@ afterEach(() => {
 	removed.length = 0;
 	nativeCalls.length = 0;
 	channelListeners.clear();
+	tintableSelectors.clear();
+	tintedImage = { name: 'tinted-image' };
 });
 
 describe('mention token matching', () => {
@@ -129,14 +134,8 @@ describe('mention token matching', () => {
 });
 
 describe('mention image decisions', () => {
-	test('matches the verified SE role symbol size and crop offset', () => {
-		expect(ROLE_SYMBOL_METRICS).toEqual({ pointSize: 14, rasterScale: 2, tx: 4, ty: 5.375 });
-	});
-
-	test('normalizes SF Symbol raster scale across device pixel densities', () => {
-		expect(roleSymbolTransformScale(2)).toBe(1);
-		expect(roleSymbolTransformScale(3)).toBeCloseTo(2 / 3);
-		expect(roleSymbolTransformScale(0)).toBe(1);
+	test('retains the verified SE role symbol size', () => {
+		expect(ROLE_SYMBOL_METRICS).toEqual({ pointSize: 14 });
 	});
 
 	test('uses the original role and user attachment metrics', () => {
@@ -151,10 +150,16 @@ describe('mention image decisions', () => {
 		});
 	});
 
-	test('prefers the attributed foreground color for role icons', () => {
-		expect(roleIconColorSource({}, 0x336699)).toBe('foreground');
-		expect(roleIconColorSource(null, 0x336699)).toBe('role');
-		expect(roleIconColorSource(null, undefined)).toBe('label');
+	test('uses the UIImage tint API without passing CGColor pointers through the bridge', () => {
+		tintableSelectors.add('imageWithTintColor:renderingMode:');
+		plugin.start?.({ native } as never);
+
+		const image = { name: 'image' };
+		const tint = { name: 'tint' };
+
+		expect(tintRoleSymbol(image, tint)).toBe(tintedImage);
+		expect(nativeCalls).toContain('image:imageWithTintColor:renderingMode:');
+		expect(nativeCalls).not.toContain('tint:CGColor');
 	});
 
 	test('does not start duplicate image requests while pending or in retry delay', () => {
