@@ -213,7 +213,7 @@ function renderCatalog(plugins: PluginInfo[], icons: Map<string, string>): strin
 		`<desc id="description">${plugins.length} Unbound plugins with their descriptions, versions, authors, and Discord icons.</desc>`,
 		`<rect width="100%" height="100%" rx="24" fill="#121316" stroke="#2a2d33" stroke-width="2"/>`,
 		`<text x="${catalogInset + 12}" y="47" dominant-baseline="middle" fill="#f5f5f7" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="27" font-weight="700">${title}</text>`,
-		`<text x="${catalogInset + 12}" y="80" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14">${plugins.length} plugins in this workspace.</text>`,
+		`<text x="${catalogInset + 12}" y="80" dominant-baseline="middle" fill="#98989f" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="14">${plugins.length} plugins in this workspace</text>`,
 		...headerLines,
 		...rowMarkup,
 		`</svg>`,
