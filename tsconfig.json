@@ -72,6 +72,9 @@
 			"@message-link-embeds/*": [
 				"plugins/message-link-embeds/src/*"
 			],
+			"@message-latency/*": [
+				"plugins/message-latency/src/*"
+			],
 			"@scripts/*": [
 				"scripts/*"
 			]

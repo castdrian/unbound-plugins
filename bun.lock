@@ -146,6 +146,22 @@
         "rollup-plugin-swc3": "^0.12.1",
       },
     },
+    "plugins/message-latency": {
+      "name": "message-latency",
+      "version": "1.0.0",
+      "devDependencies": {
+        "@rollup/plugin-json": "^6.1.0",
+        "@rollup/plugin-node-resolve": "^16.0.3",
+        "@types/bun": "latest",
+        "@types/react": "^19.2.7",
+        "@unbound-app/api": "latest",
+        "@unbound-plugins/rollup-path-aliases": "workspace:*",
+        "react-native": "^0.83.0",
+        "rollup": "^4.62.2",
+        "rollup-plugin-iife": "^0.8.0",
+        "rollup-plugin-swc3": "^0.12.1",
+      },
+    },
     "plugins/message-link-embeds": {
       "name": "message-link-embeds",
       "version": "1.0.0",
@@ -1019,6 +1035,8 @@
 
     "merge-stream": ["merge-stream@2.0.0", "", {}, "sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w=="],
 
+    "message-latency": ["message-latency@workspace:plugins/message-latency"],
+
     "message-link-embeds": ["message-link-embeds@workspace:plugins/message-link-embeds"],
 
     "metro": ["metro@0.83.7", "", { "dependencies": { "@babel/code-frame": "^7.29.0", "@babel/core": "^7.25.2", "@babel/generator": "^7.29.1", "@babel/parser": "^7.29.0", "@babel/template": "^7.28.6", "@babel/traverse": "^7.29.0", "@babel/types": "^7.29.0", "accepts": "^2.0.0", "ci-info": "^2.0.0", "connect": "^3.6.5", "debug": "^4.4.0", "error-stack-parser": "^2.0.6", "flow-enums-runtime": "^0.0.6", "graceful-fs": "^4.2.4", "hermes-parser": "0.35.0", "image-size": "^1.0.2", "invariant": "^2.2.4", "jest-worker": "^29.7.0", "jsc-safe-url": "^0.2.2", "lodash.throttle": "^4.1.1", "metro-babel-transformer": "0.83.7", "metro-cache": "0.83.7", "metro-cache-key": "0.83.7", "metro-config": "0.83.7", "metro-core": "0.83.7", "metro-file-map": "0.83.7", "metro-resolver": "0.83.7", "metro-runtime": "0.83.7", "metro-source-map": "0.83.7", "metro-symbolicate": "0.83.7", "metro-transform-plugins": "0.83.7", "metro-transform-worker": "0.83.7", "mime-types": "^3.0.1", "nullthrows": "^1.1.1", "serialize-error": "^2.1.0", "source-map": "^0.5.6", "throat": "^5.0.0", "ws": "^7.5.10", "yargs": "^17.6.2" }, "bin": { "metro": "src/cli.js" } }, "sha512-SPaPEyvTsTmd0LpT7RaZciQyDw2i/JB7+iY9L5VfBo72+psescFxBqpI1TL9dnL+pmnfkU+l/J1mEEGLeF65EQ=="],
@@ -1360,6 +1378,8 @@
     "lighthouse-logger/debug": ["debug@2.6.9", "", { "dependencies": { "ms": "2.0.0" } }, "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA=="],
 
     "mention-avatars/@unbound-app/api": ["@unbound-app/api@0.5.3", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-avQKeqnRIl9whRwYEb9oVclD3KPQXpWAi4IRTGtXu9sTw4B/NXAeDlwcILTtdpJLDYy1b3sJ3yvGjzCOuEv5+A=="],
+
+    "message-latency/@unbound-app/api": ["@unbound-app/api@0.5.3", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-avQKeqnRIl9whRwYEb9oVclD3KPQXpWAi4IRTGtXu9sTw4B/NXAeDlwcILTtdpJLDYy1b3sJ3yvGjzCOuEv5+A=="],
 
     "message-link-embeds/@unbound-app/api": ["@unbound-app/api@0.5.3", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-avQKeqnRIl9whRwYEb9oVclD3KPQXpWAi4IRTGtXu9sTw4B/NXAeDlwcILTtdpJLDYy1b3sJ3yvGjzCOuEv5+A=="],
 
