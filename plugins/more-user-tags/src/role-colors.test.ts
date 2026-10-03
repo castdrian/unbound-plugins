@@ -6,6 +6,7 @@ import {
 	getRoleColorAppearance,
 	getRoleColorStops,
 	getRoleGradientKey,
+	parseNativeColorDescription,
 } from '@more-user-tags/role-colors';
 
 describe('role color stops', () => {
@@ -102,5 +103,19 @@ describe('role gradient keys', () => {
 	test('converts native color components into role hex values', () => {
 		expect(colorComponentsToHex(0.12549, 0.00392157, 0.980392)).toBe('#2001fa');
 		expect(colorComponentsToHex(-1, 0, 0)).toBeNull();
+	});
+
+	test('reads native color descriptions without dereferencing CGColor pointers', () => {
+		expect(
+			parseNativeColorDescription('UIExtendedSRGBColorSpace 0.141176 0.501961 0.274510 1'),
+		).toEqual({
+			hex: '#248046',
+			alpha: 1,
+		});
+		expect(parseNativeColorDescription('UIExtendedGrayColorSpace 0 0')).toEqual({
+			hex: '#000000',
+			alpha: 0,
+		});
+		expect(parseNativeColorDescription('UIDynamicSystemColor 0x123')).toBeNull();
 	});
 });

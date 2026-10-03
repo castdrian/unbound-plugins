@@ -240,6 +240,27 @@ export default {
 				const { colors } = appearance;
 				const background = colors[0];
 				const { processColor } = metro.common.ReactNative;
+				if (result.opTagText) {
+					const opTagText = `${result.opTagText} · ${tag.displayName}`;
+					const tagged = {
+						...result,
+						tagText: null,
+						tagAccessibilityLabel: opTagText,
+						tagVerified: false,
+						tagTextColor: null,
+						tagBackgroundColor: null,
+						tagType: null,
+						tagIconUrl: null,
+						opTagText,
+					};
+					tagGradientRenderer?.setAppearance([opTagText], appearance);
+					if (!background) return tagged;
+					return {
+						...tagged,
+						opTagBackgroundColor: processColor(background),
+						opTagTextColor: processColor(getContrastingTextColor(colors)),
+					};
+				}
 				tagGradientRenderer?.setAppearance([tag.displayName], appearance);
 				if (STORE.get('useOpTagStyle', false)) {
 					const opTagText = tag.displayName;

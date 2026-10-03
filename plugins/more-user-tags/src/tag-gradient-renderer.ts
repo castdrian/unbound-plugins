@@ -1,6 +1,6 @@
 import {
-	colorComponentsToHex,
 	getRoleGradientKey,
+	parseNativeColorDescription,
 	type RoleColorAppearance,
 	type RoleColorStyle,
 } from '@more-user-tags/role-colors';
@@ -8,21 +8,19 @@ import type {
 	NativeAssociationKey,
 	NativeClassHandle,
 	NativeObjectHandle,
-	NativePointer,
 	PluginContext,
 } from '@unbound-app/api/native';
 
 type NativeObjC = PluginContext['native']['objc'];
 
-interface NativeColorComponents {
-	hex: string;
-	alpha: number;
-}
-
 interface TagGradientRecord {
 	id: string;
 	label: NativeObjectHandle;
 	layer: NativeObjectHandle;
+	frameSignature: string;
+	cornerRadius: number | null;
+	sheenFrameSignature: string;
+	sheenCornerRadius: number | null;
 	originalBackground: NativeObjectHandle | null;
 	originalOpaque: boolean;
 	labelName: string;
@@ -37,6 +35,18 @@ interface TagGradientRenderer {
 	stop(): void;
 }
 
+interface NativeRectFields {
+	origin: { x: number; y: number };
+	size: { width: number; height: number };
+}
+
+function rectSignature(rect: unknown): string | null {
+	const value = (rect as { value?: NativeRectFields } | null)?.value;
+	if (!value) return null;
+	const coordinates = [value.origin.x, value.origin.y, value.size.width, value.size.height];
+	return coordinates.every(Number.isFinite) ? coordinates.join(':') : null;
+}
+
 function invoke(
 	objc: NativeObjC,
 	target: NativeObjectHandle,
@@ -46,43 +56,14 @@ function invoke(
 	return objc.invoke(target, selector, args, { thread: 'main' });
 }
 
-function readColorComponents(
+function gradientColorObject(
 	objc: NativeObjC,
-	ciColorClass: NativeObjectHandle,
-	color: NativeObjectHandle | null,
-): NativeColorComponents | null {
-	if (!color) return null;
-
-	try {
-		const cgColor = invoke(objc, color, 'CGColor') as NativeObjectHandle | null;
-		if (!cgColor) return null;
-
-		const ciColor = invoke(objc, ciColorClass, 'colorWithCGColor:', [
-			cgColor,
-		]) as NativeObjectHandle | null;
-		if (!ciColor) return null;
-
-		const hex = colorComponentsToHex(
-			Number(invoke(objc, ciColor, 'red')),
-			Number(invoke(objc, ciColor, 'green')),
-			Number(invoke(objc, ciColor, 'blue')),
-		);
-		if (!hex) return null;
-
-		return { hex, alpha: Number(invoke(objc, ciColor, 'alpha')) };
-	} catch {
-		return null;
-	}
-}
-
-function gradientColor(
-	objc: NativeObjC,
+	arrayClass: NativeClassHandle,
 	uiColorClass: NativeObjectHandle,
 	color: string,
 	alpha: number = 1,
-): NativePointer | null {
+): NativeObjectHandle | null {
 	if (!/^#[\da-f]{6}$/i.test(color)) return null;
-
 	const value = Number.parseInt(color.slice(1), 16);
 	const red = ((value >> 16) & 0xff) / 255;
 	const green = ((value >> 8) & 0xff) / 255;
@@ -96,24 +77,8 @@ function gradientColor(
 			alpha,
 		]) as NativeObjectHandle | null;
 		if (!uiColor) return null;
-
-		return invoke(objc, uiColor, 'CGColor') as NativePointer | null;
-	} catch {
-		return null;
-	}
-}
-
-function gradientColorObject(
-	objc: NativeObjC,
-	arrayClass: NativeClassHandle,
-	uiColorClass: NativeObjectHandle,
-	color: string,
-	alpha: number = 1,
-): NativeObjectHandle | null {
-	const pointer = gradientColor(objc, uiColorClass, color, alpha);
-	if (!pointer) return null;
-
-	try {
+		const pointer = invoke(objc, uiColor, 'CGColor');
+		if (!pointer) return null;
 		const colors = invoke(objc, arrayClass, 'arrayWithObject:', [pointer]);
 		if (!Array.isArray(colors)) return null;
 
@@ -190,16 +155,8 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	const timingFunctionClass = objc.getClass('CAMediaTimingFunction');
 	const accessibilityClass = objc.getClass('UIAccessibility');
 	const uiColorClass = objc.getClass('UIColor');
-	const ciColorClass = objc.getClass('CIColor');
 
-	if (
-		!tagViewClass ||
-		!labelClass ||
-		!gradientLayerClass ||
-		!arrayClass ||
-		!uiColorClass ||
-		!ciColorClass
-	) {
+	if (!tagViewClass || !labelClass || !gradientLayerClass || !arrayClass || !uiColorClass) {
 		return null;
 	}
 	const resolvedTagViewClass: NativeObjectHandle = tagViewClass;
@@ -209,7 +166,6 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	const resolvedTimingFunctionClass: NativeObjectHandle | null = timingFunctionClass;
 	const resolvedAccessibilityClass: NativeObjectHandle | null = accessibilityClass;
 	const resolvedUIColorClass: NativeObjectHandle = uiColorClass;
-	const resolvedCIColorClass: NativeObjectHandle = ciColorClass;
 	const clearColor = (() => {
 		try {
 			return invoke(objc, resolvedUIColorClass, 'clearColor') as NativeObjectHandle | null;
@@ -241,7 +197,10 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	})();
 
 	function isTransparent(color: NativeObjectHandle | null): boolean {
-		return readColorComponents(objc, resolvedCIColorClass, color)?.alpha === 0;
+		if (!color) return false;
+		if (Boolean(invoke(objc, color, 'isEqual:', [clearColor]))) return true;
+		const description = invoke(objc, color, 'description');
+		return typeof description === 'string' && parseNativeColorDescription(description)?.alpha === 0;
 	}
 
 	function removeRecord(record: TagGradientRecord, restoreBackground: boolean): void {
@@ -280,14 +239,28 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	function updateFrame(record: TagGradientRecord): void {
 		const labelLayer = invoke(objc, record.label, 'layer') as NativeObjectHandle;
 		const frame = invoke(objc, record.label, 'frame');
+		const signature = rectSignature(frame);
 		const radius = Number(invoke(objc, labelLayer, 'cornerRadius'));
-		invoke(objc, record.layer, 'setFrame:', [frame]);
-		invoke(objc, record.layer, 'setCornerRadius:', [radius]);
+		if (signature && signature !== record.frameSignature) {
+			invoke(objc, record.layer, 'setFrame:', [frame]);
+			record.frameSignature = signature;
+		}
+		if (Number.isFinite(radius) && radius !== record.cornerRadius) {
+			invoke(objc, record.layer, 'setCornerRadius:', [radius]);
+			record.cornerRadius = radius;
+		}
 
 		if (record.sheenLayer) {
 			const layerBounds = invoke(objc, record.layer, 'bounds');
-			invoke(objc, record.sheenLayer, 'setFrame:', [layerBounds]);
-			invoke(objc, record.sheenLayer, 'setCornerRadius:', [radius]);
+			const sheenSignature = rectSignature(layerBounds);
+			if (sheenSignature && sheenSignature !== record.sheenFrameSignature) {
+				invoke(objc, record.sheenLayer, 'setFrame:', [layerBounds]);
+				record.sheenFrameSignature = sheenSignature;
+			}
+			if (Number.isFinite(radius) && radius !== record.sheenCornerRadius) {
+				invoke(objc, record.sheenLayer, 'setCornerRadius:', [radius]);
+				record.sheenCornerRadius = radius;
+			}
 		}
 	}
 
@@ -354,6 +327,8 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 		if (!sheenLayer) return;
 		attempt(() => invoke(objc, sheenLayer, 'removeFromSuperlayer'));
 		record.sheenLayer = null;
+		record.sheenFrameSignature = '';
+		record.sheenCornerRadius = null;
 	}
 
 	function applyAppearance(record: TagGradientRecord, appearance: RoleColorAppearance): boolean {
@@ -431,6 +406,10 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 				id,
 				label,
 				layer,
+				frameSignature: '',
+				cornerRadius: null,
+				sheenFrameSignature: '',
+				sheenCornerRadius: null,
 				originalBackground,
 				originalOpaque,
 				labelName,
@@ -475,9 +454,10 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 		if (!labelName) return null;
 
 		const background = invoke(objc, label, 'backgroundColor') as NativeObjectHandle | null;
-		const color = readColorComponents(objc, resolvedCIColorClass, background);
-		const backgroundColor = color && color.alpha > 0 ? color.hex : (record?.primaryColor ?? null);
-		const appearance = appearanceForLabel(appearances, labelName, backgroundColor);
+		const description = background ? invoke(objc, background, 'description') : null;
+		const color = typeof description === 'string' ? parseNativeColorDescription(description) : null;
+		const primaryColor = color && color.alpha > 0 ? color.hex : (record?.primaryColor ?? null);
+		const appearance = appearanceForLabel(appearances, labelName, primaryColor);
 		return appearance ? { labelName, ...appearance } : null;
 	}
 

@@ -28,6 +28,29 @@ export function colorComponentsToHex(red: number, green: number, blue: number): 
 		.join('')}`;
 }
 
+export function parseNativeColorDescription(
+	description: string,
+): { hex: string; alpha: number } | null {
+	const [space, ...values] = description.trim().split(/\s+/);
+	const components = values.map(Number);
+	let channels: number[];
+	let alpha: number;
+
+	if (space === 'UIExtendedSRGBColorSpace' && components.length === 4) {
+		channels = components.slice(0, 3);
+		alpha = components[3];
+	} else if (space === 'UIExtendedGrayColorSpace' && components.length === 2) {
+		channels = [components[0], components[0], components[0]];
+		alpha = components[1];
+	} else {
+		return null;
+	}
+
+	if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) return null;
+	const hex = colorComponentsToHex(channels[0], channels[1], channels[2]);
+	return hex ? { hex, alpha } : null;
+}
+
 export function getRoleGradientKey(label: string, color: string): string {
 	return `${label.trim().toLowerCase()}:${color.toLowerCase()}`;
 }
