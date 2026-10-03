@@ -1335,7 +1335,7 @@ function initialize(): void {
 	}
 	captureInitializedModules();
 	if (!chatItem) {
-		const module = metro.findByFilePath(CHAT_ITEM_PATH, { cacheOnly: true, interop: false });
+		const module = metro.findByFilePath(CHAT_ITEM_PATH, { cacheOnly: false, interop: false });
 		if (module) {
 			chatItem = resolveChatItem((module as AnyRecord).default) ?? resolveChatItem(module);
 		}
