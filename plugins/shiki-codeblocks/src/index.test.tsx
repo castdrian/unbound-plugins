@@ -40,6 +40,7 @@ const {
 	matchCodeBlock,
 	parseFencedCodeBlocks,
 	resolveLanguage,
+	scanVisibleLabels,
 	shouldCorrectRow,
 } = await import('@shiki-codeblocks/index');
 
@@ -65,6 +66,23 @@ describe('language aliases', () => {
 });
 
 describe('native fenced code matching', () => {
+	test('scans a Fabric message label nested inside an outer text label', () => {
+		type ViewNode = { children?: ViewNode[]; label?: string };
+		const tree: ViewNode = {
+			children: [{ label: 'outer', children: [{ children: [{ label: 'embedded' }] }] }],
+		};
+		const visited: string[] = [];
+
+		scanVisibleLabels(
+			tree,
+			(view) => view.children ?? [],
+			(view) => Boolean(view.label),
+			(view) => visited.push(view.label ?? ''),
+		);
+
+		expect(visited).toEqual(['outer', 'embedded']);
+	});
+
 	test('parses supported blocks and preserves indentation', () => {
 		const blocks = parseFencedCodeBlocks(
 			'Before\n```ts title=example.ts\nconst answer = 42;\n    return answer;\n```\nAfter',

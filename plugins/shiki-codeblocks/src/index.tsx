@@ -1223,6 +1223,27 @@ function nativeSubviews(view: NativeObjectHandle): NativeObjectHandle[] {
 	}
 }
 
+export function scanVisibleLabels<T extends object>(
+	root: T,
+	children: (view: T) => T[],
+	isLabel: (view: T) => boolean,
+	render: (view: T) => void,
+	limit: number = 800,
+): number {
+	const pending = [root];
+	let inspected = 0;
+	while (pending.length && inspected < limit) {
+		const view = pending.pop();
+		if (!view) continue;
+		inspected++;
+		if (isLabel(view)) {
+			render(view);
+		}
+		pending.push(...children(view));
+	}
+	return inspected;
+}
+
 function renderVisibleCodeBlocks(): void {
 	if (!objc || !currentChannelId()) return;
 	const applicationClass = objc.getClass('UIApplication');
@@ -1235,19 +1256,15 @@ function renderVisibleCodeBlocks(): void {
 		? (nativeCall(application, 'keyWindow') as NativeObjectHandle | null)
 		: null;
 	if (!window) return;
-	const pending = [window];
-	let inspected = 0;
-	while (pending.length && inspected < 800) {
-		const view = pending.pop();
-		if (!view) continue;
-		inspected++;
-		if ((objc.className(view) ?? '').includes('DCDReusableYYLabel')) {
+	scanVisibleLabels(
+		window,
+		nativeSubviews,
+		(view) => (objc?.className(view) ?? '').includes('DCDReusableYYLabel'),
+		(view) => {
 			const attributed = nativeCall(view, 'attributedText') as NativeObjectHandle | null;
 			if (attributed) renderNativeCodeBlock(view, attributed);
-			continue;
-		}
-		pending.push(...nativeSubviews(view));
-	}
+		},
+	);
 }
 
 function installNativeRenderer(context?: PluginContext): void {
@@ -1308,7 +1325,7 @@ function installNativeRenderer(context?: PluginContext): void {
 	});
 	initialScanTimer = setTimeout(() => {
 		initialScanTimer = null;
-		if (nativeCodeHook?.active && surfacesByLabel.size === 0) renderVisibleCodeBlocks();
+		if (nativeCodeHook?.active) renderVisibleCodeBlocks();
 	}, 300);
 }
 
