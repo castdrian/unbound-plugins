@@ -9,6 +9,7 @@ import {
 	reactionAvatarExtraWidth,
 	reactionAvatarFrame,
 	reactionAvatarKey,
+	reactionAvatarReservedExtraWidth,
 	reactionAvatarReservedSlotCount,
 	reactionAvatarSelection,
 	reactionAvatarStackWidth,
@@ -871,6 +872,11 @@ function createReactionState(
 	const baseFrame = fabric?.measure(view) ?? { height: 0, width: 0, x: 0, y: 0 };
 	const totalCount = reactionAvatarSelection(context.reaction, context.reactionType).count;
 	const avatarWidth = reactionAvatarStackWidth(reactionAvatarReservedSlotCount(totalCount));
+	const extraWidth = reactionAvatarReservedExtraWidth(
+		totalCount,
+		AVATAR_LEADING_INSET,
+		AVATAR_TRAILING_PADDING,
+	);
 	return {
 		avatarWidth,
 		baseFrame,
@@ -879,7 +885,7 @@ function createReactionState(
 		context,
 		emptyResultRetryCount: 0,
 		emptyResultRetryTimer: null,
-		extraWidth: 0,
+		extraWidth,
 		guildId: channels?.getChannel?.(context.channelId)?.guild_id,
 		itemIndex,
 		layoutKey,
@@ -1040,14 +1046,11 @@ function syncReactionView(
 		if (existing.totalCount !== totalCount) {
 			existing.totalCount = totalCount;
 			existing.avatarWidth = reactionAvatarStackWidth(reactionAvatarReservedSlotCount(totalCount));
-			existing.extraWidth = existing.users.length
-				? reactionAvatarExtraWidth(
-						existing.avatarWidth,
-						AVATAR_LEADING_INSET,
-						AVATAR_TRAILING_PADDING,
-						true,
-					)
-				: 0;
+			existing.extraWidth = reactionAvatarReservedExtraWidth(
+				totalCount,
+				AVATAR_LEADING_INSET,
+				AVATAR_TRAILING_PADDING,
+			);
 			existing.widthMeasured = false;
 			setReactionLayoutExtraWidth(existing, existing.extraWidth);
 			if (existing.users.length > 0) updateSurface(existing);

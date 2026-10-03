@@ -3,7 +3,6 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
 	hydrateReactorsInOrder,
 	isCurrentReactionRequest,
-	reactionCellLifecycleAction,
 	ReactionUserCache,
 	type Reactor,
 	reactionAvatarExtraWidth,
@@ -11,11 +10,13 @@ import {
 	reactionAvatarKey,
 	reactionAvatarPrefix,
 	reactionAvatarPresentation,
+	reactionAvatarReservedExtraWidth,
 	reactionAvatarReservedSlotCount,
 	reactionAvatarSelection,
 	reactionAvatarStackPositions,
 	reactionAvatarStackWidth,
 	reactionAvatarSummaryProps,
+	reactionCellLifecycleAction,
 	reactionCellWidth,
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
@@ -359,15 +360,24 @@ describe('reaction avatar state', () => {
 		expect(reactionAvatarStackWidth(6)).toBe(43);
 	});
 
-	test('does not reserve avatar width until the surface reports its measured width', () => {
+	test('reserves the avatar width before the asynchronous surface measurement', () => {
 		expect(reactionAvatarExtraWidth(33, 4, 4, false)).toBe(0);
 		expect(reactionAvatarExtraWidth(33, 4, 4, true)).toBe(33);
+		expect(reactionAvatarReservedExtraWidth(0, 4, 4)).toBe(0);
+		expect(reactionAvatarReservedExtraWidth(1, 4, 4)).toBe(18);
+		expect(reactionAvatarReservedExtraWidth(5, 4, 4)).toBe(38);
+		expect(reactionAvatarReservedExtraWidth(6, 4, 4)).toBe(43);
 	});
 
 	test('commits the first measured width even when it matches the predicted width', () => {
 		expect(shouldMeasureReactionAvatarWidth(false, 33, 33)).toBe(true);
 		expect(shouldMeasureReactionAvatarWidth(true, 33, 33)).toBe(false);
-		expect(shouldMeasureReactionAvatarWidth(true, 33, 34)).toBe(true);
+		expect(shouldMeasureReactionAvatarWidth(true, 33, 34)).toBe(false);
+	});
+
+	test('does not let native layout measurements shrink the reserved avatar width', () => {
+		expect(shouldMeasureReactionAvatarWidth(false, 43, 38)).toBe(false);
+		expect(shouldMeasureReactionAvatarWidth(true, 43, 38)).toBe(false);
 	});
 
 	test('keeps avatar summaries enabled on high-reaction messages', () => {
@@ -425,6 +435,27 @@ describe('reaction avatar state', () => {
 			{ height: 34, index: 0, width: 67.5, x: 0, y: 0 },
 			{ height: 34, index: 1, width: 38, x: 67.5, y: 0 },
 		]);
+		expect(frames[0].x + frames[0].width).toBeLessThanOrEqual(frames[1].x);
+	});
+
+	test('keeps the add-reaction cell clear when a message gets its first reaction', () => {
+		const frames = reflowReactionItems(
+			[
+				{
+					extraWidth: reactionAvatarReservedExtraWidth(1, 4, 4),
+					height: 34,
+					index: 0,
+					width: 49.5,
+					x: 0,
+					y: 0,
+				},
+				{ height: 34, index: 1, width: 34, x: 49.5, y: 0 },
+			],
+			291,
+		);
+
+		expect(frames[0].width).toBe(67.5);
+		expect(frames[1].x).toBe(67.5);
 		expect(frames[0].x + frames[0].width).toBeLessThanOrEqual(frames[1].x);
 	});
 

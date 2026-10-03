@@ -118,6 +118,15 @@ export function reactionAvatarReservedSlotCount(totalCount: number): number {
 	return Math.min(count, REACTION_AVATAR_LIMIT) + Number(count > REACTION_AVATAR_LIMIT);
 }
 
+export function reactionAvatarReservedExtraWidth(
+	totalCount: number,
+	leadingInset: number,
+	trailingPadding: number,
+): number {
+	const width = reactionAvatarStackWidth(reactionAvatarReservedSlotCount(totalCount));
+	return reactionAvatarExtraWidth(width, leadingInset, trailingPadding, totalCount > 0);
+}
+
 export function reactionAvatarStackWidth(slotCount: number): number {
 	return REACTION_AVATAR_SIZE + Math.max(0, slotCount - 1) * REACTION_AVATAR_STEP;
 }
@@ -144,7 +153,7 @@ export function shouldMeasureReactionAvatarWidth(
 	currentWidth: number,
 	nextWidth: number,
 ): boolean {
-	return !measured || Math.abs(currentWidth - nextWidth) >= 1;
+	return !measured && Math.abs(currentWidth - nextWidth) < 0.5;
 }
 
 export function reactionAvatarSummaryProps<T extends Reactor>(
