@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
@@ -39,6 +40,7 @@ export default {
 	plugins: [
 		bunPathAliases(),
 		nodeResolve(),
+		commonjs(),
 		json(),
 		swc({ tsconfig: false }),
 		iife(),

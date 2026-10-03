@@ -37,6 +37,7 @@ const {
 	codeScrollHeight,
 	codeSurfaceMatchesCell,
 	default: plugin,
+	getCodeBlockTokens,
 	getTokens,
 	locateCodeBlocks,
 	matchCodeBlock,
@@ -44,7 +45,11 @@ const {
 	resolveLanguage,
 	scanVisibleLabels,
 	shouldCorrectRow,
+	shouldRebuildNativeSurface,
 } = await import('@shiki-codeblocks/index');
+const { highlightCodeToTokens, highlightLanguageLabel, shouldUseHighlightJs } = await import(
+	'@shiki-codeblocks/highlight-js'
+);
 
 afterEach(() => {
 	plugin.stop();
@@ -142,6 +147,12 @@ describe('native fenced code matching', () => {
 		expect(tokens?.[0].map((token) => token.content).join('')).toBe('plain value');
 	});
 
+	test('preserves a Highlight.js-only language when Shiki has no grammar', () => {
+		expect(parseFencedCodeBlocks('```php-template\n<?php echo 1; ?>\n```')).toEqual([
+			{ code: '<?php echo 1; ?>', language: 'plain', sourceLanguage: 'php-template' },
+		]);
+	});
+
 	test('rejects mismatched or too-short fences', () => {
 		expect(
 			parseFencedCodeBlocks('```ts\nconst value = 1;\n~~\n~~~ts\nconst value = 2;\n~~~'),
@@ -235,6 +246,58 @@ describe('native fenced code matching', () => {
 });
 
 describe('native syntax rendering', () => {
+	test('renders Highlight.js keywords in the numbered code card', () => {
+		const tokens = highlightCodeToTokens('const value = 42;\nreturn value;', 'javascript', false);
+		const markup = buildNativeCodeMarkup(tokens, false);
+
+		expect(markup.text).toBe(' 1 const value = 42;\n 2 return value;');
+		expect(markup.spans.some((span) => span.color !== '#c9d1d9' && span.location >= 3)).toBe(true);
+	});
+
+	test('preserves angle brackets and ampersands in unsupported Highlight.js code', () => {
+		const tokens = highlightCodeToTokens('<Tag>& unknown', 'unknown-language', false);
+
+		expect(tokens[0].map((token) => token.content).join('')).toBe('<Tag>& unknown');
+	});
+
+	test('labels a Highlight.js-only grammar by its language name', () => {
+		expect(highlightLanguageLabel('php-template')).toBe('PHP template');
+	});
+
+	test('chooses the Vencord highlighter preference without dropping the code card', () => {
+		expect(shouldUseHighlightJs('javascript', true, 'never')).toBe(false);
+		expect(shouldUseHighlightJs('javascript', true, 'secondary')).toBe(false);
+		expect(shouldUseHighlightJs('javascript', true, 'primary')).toBe(true);
+		expect(shouldUseHighlightJs('javascript', false, 'secondary')).toBe(true);
+		expect(shouldUseHighlightJs('unknown-language', false, 'primary')).toBe(false);
+		expect(shouldUseHighlightJs('', false, 'primary')).toBe(true);
+		expect(shouldUseHighlightJs('unknown-language', false, 'always')).toBe(true);
+	});
+
+	test('keeps the native card and line numbers when Highlight.js is preferred', async () => {
+		const code = 'const value = 42;';
+		const tokens = await getCodeBlockTokens(
+			{ code, language: 'javascript' },
+			'dark-plus',
+			'primary',
+		);
+		const markup = buildNativeCodeMarkup(tokens ?? [], false);
+
+		expect(markup.text).toBe(' 1 const value = 42;');
+		expect(markup.spans.some((span) => span.color === '#ff7b72')).toBe(true);
+	});
+
+	test('reuses Highlight.js tokens for repeated rows without mixing light and dark colors', async () => {
+		const block = { code: 'const value = 42;', language: 'javascript' };
+		const dark = await getCodeBlockTokens(block, 'dark-plus', 'primary');
+		const darkAgain = await getCodeBlockTokens(block, 'dark-plus', 'primary');
+		const light = await getCodeBlockTokens(block, 'light-plus', 'primary');
+
+		expect(darkAgain).toBe(dark);
+		expect(light).not.toBe(dark);
+		expect(light?.[0].some((token) => token.color === '#d73a49')).toBe(true);
+	});
+
 	test('does not reuse a code surface after its message cell is recycled', () => {
 		const surface = { cellKey: 'cell-1', channelId: 'channel-1', messageId: 'message-1' };
 
@@ -247,6 +310,12 @@ describe('native syntax rendering', () => {
 	test('corrects a cell when its label extends beyond the reported content height', () => {
 		expect(shouldCorrectRow(217.5, 217.5, 257.5)).toBe(true);
 		expect(shouldCorrectRow(257.5, 257.5, 257.5)).toBe(false);
+	});
+
+	test('does not rebuild embed geometry when only the highlighter changes', () => {
+		expect(shouldRebuildNativeSurface('tryHljs')).toBe(false);
+		expect(shouldRebuildNativeSurface('lineOverflow')).toBe(true);
+		expect(shouldRebuildNativeSurface('useDevIcon')).toBe(true);
 	});
 
 	test('loads and tokenizes a bundled grammar on demand', async () => {

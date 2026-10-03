@@ -37,7 +37,6 @@ import { useState } from 'react';
 import type { HighlighterCore, ThemedToken } from 'shiki';
 import { createHighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
-
 import {
 	DEFAULT_THEME,
 	getLanguageMetadata,
@@ -49,6 +48,12 @@ import {
 	themeUrl,
 } from './catalog';
 import devicons from './devicons.json';
+import {
+	hasHighlightLanguage,
+	highlightCodeToTokens,
+	highlightLanguageLabel,
+	shouldUseHighlightJs,
+} from './highlight-js';
 
 const ADDON_ID = 'unbound.shiki-codeblocks';
 const MAX_CODE_LENGTH = 6000;
@@ -82,7 +87,7 @@ const LANGUAGES = [
 type LanguageId = string;
 type ThemeName = string;
 type TokenLines = ThemedToken[][];
-type CodeBlockFence = { code: string; language: LanguageId };
+type CodeBlockFence = { code: string; language: LanguageId; sourceLanguage?: string };
 type CodeBlockPlacement = { block: CodeBlockFence; start: number; end: number };
 type RawMessage = { content?: unknown };
 type MessageStore = {
@@ -219,7 +224,6 @@ for (const registration of LANGUAGES) {
 }
 const DEVICON_LANGUAGES = devicons.languages as Record<string, string>;
 const DEVICON_IMAGES = devicons.images as Record<string, string>;
-const NATIVE_LANGUAGE_IDS = new Set(Object.values(LANGUAGE_ALIASES));
 const pendingLanguages = new Map<string, Promise<void>>();
 const pendingThemes = new Map<string, Promise<void>>();
 let started = false;
@@ -269,6 +273,10 @@ function currentOverflow(): 'wrap' | 'scroll' {
 function currentIconMode(): 'disabled' | 'greyscale' | 'colored' {
 	const mode = STORE.get('useDevIcon', 'greyscale');
 	return mode === 'disabled' || mode === 'colored' ? mode : 'greyscale';
+}
+
+export function shouldRebuildNativeSurface(settingKey: string): boolean {
+	return settingKey === 'lineOverflow' || settingKey === 'useDevIcon';
 }
 
 function isLightTheme(theme: ThemeName): boolean {
@@ -322,10 +330,12 @@ export function parseFencedCodeBlocks(content: string): CodeBlockFence[] {
 			break;
 		}
 		if (closingIndex >= lines.length) break;
-		const language = resolveLanguage(opening[2].trim().split(/[\t ]+/, 1)[0]) ?? 'plain';
+		const sourceLanguage = opening[2].trim().split(/[\t ]+/, 1)[0];
+		const language = resolveLanguage(sourceLanguage) ?? 'plain';
 		blocks.push({
 			code: normalizeCode(lines.slice(lineIndex + 1, closingIndex).join('\n')),
 			language,
+			...(language === 'plain' && hasHighlightLanguage(sourceLanguage) ? { sourceLanguage } : {}),
 		});
 		lineIndex = closingIndex;
 	}
@@ -664,7 +674,10 @@ function createNativeHost(
 		nativeCall(
 			languageLabel,
 			'setText:',
-			getLanguageMetadata(language)?.displayName ?? LANGUAGE_LABELS[language] ?? language,
+			getLanguageMetadata(language)?.displayName ??
+				LANGUAGE_LABELS[language] ??
+				highlightLanguageLabel(language) ??
+				language,
 		);
 		nativeCall(languageLabel, 'setTextColor:', nativeColor(lightTheme ? '#333333' : '#d4d4d4'));
 		nativeCall(languageLabel, 'setFont:', nativeFont(11, 0.3, false));
@@ -1050,10 +1063,12 @@ function applyNativeTheme(state: NativeCodeBlockState, theme: ThemeName): void {
 	paintNativeTheme(state);
 	void Promise.all(
 		state.parts.map((part) =>
-			getTokens(part.code, part.language, theme).catch((error) => {
-				console.error(`Failed to tokenize ${part.language} code block:`, error);
-				return null;
-			}),
+			getCodeBlockTokens(part.placement.block, theme, STORE.get('tryHljs', 'secondary')).catch(
+				(error) => {
+					console.error(`Failed to tokenize ${part.language} code block:`, error);
+					return null;
+				},
+			),
 		),
 	)
 		.then((tokensByPart) => {
@@ -1127,7 +1142,7 @@ function mountNativeCodeBlock(
 			width,
 			layout.height,
 			code,
-			language,
+			placement.block.sourceLanguage ?? language,
 			lightTheme,
 			opacity,
 			overflow,
@@ -1250,16 +1265,6 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 		if (previous) removeNativeSurface(previous, false);
 		return;
 	}
-	const fallback = STORE.get('tryHljs', 'secondary');
-	if (
-		fallback === 'always' ||
-		(fallback === 'primary' &&
-			placements.some((item) => NATIVE_LANGUAGE_IDS.has(item.block.language)))
-	) {
-		const previous = surfacesByLabel.get(key);
-		if (previous) removeNativeSurface(previous, false);
-		return;
-	}
 	mountNativeCodeBlock(label, cell, original, placements, channelId, messageId);
 }
 
@@ -1334,7 +1339,7 @@ function installNativeRenderer(context?: PluginContext): void {
 				payload.key,
 			),
 		(payload) => {
-			if (payload.key === 'lineOverflow' || payload.key === 'useDevIcon') {
+			if (shouldRebuildNativeSurface(payload.key)) {
 				for (const state of [...surfacesByLabel.values()]) {
 					removeNativeSurface(state, false);
 					mountNativeCodeBlock(
@@ -1345,13 +1350,6 @@ function installNativeRenderer(context?: PluginContext): void {
 						state.channelId,
 						state.messageId,
 					);
-				}
-				return;
-			}
-			if (payload.key === 'tryHljs') {
-				for (const state of [...surfacesByLabel.values()]) {
-					removeNativeSurface(state, true);
-					renderNativeCodeBlock(state.label, state.original);
 				}
 				return;
 			}
@@ -1515,6 +1513,24 @@ export async function getTokens(
 	return tokens;
 }
 
+export async function getCodeBlockTokens(
+	block: CodeBlockFence,
+	theme: ThemeName,
+	setting: string,
+): Promise<TokenLines | null> {
+	const language = block.sourceLanguage ?? (block.language === 'plain' ? '' : block.language);
+	if (shouldUseHighlightJs(language, block.language !== 'plain', setting)) {
+		const light = themeAppearance(theme).light;
+		const key = cacheKey(block.code, `hljs:${language}`, light ? 'light' : 'dark');
+		const cached = tokenCache.get(key);
+		if (cached) return cached;
+		const tokens = highlightCodeToTokens(block.code, language, light);
+		rememberTokens(key, tokens);
+		return tokens;
+	}
+	return getTokens(block.code, block.language, theme);
+}
+
 function ShikiSettings() {
 	const state = STORE.useSettingsStore();
 	const ReactNative = metro.common.ReactNative;
@@ -1529,8 +1545,8 @@ function ShikiSettings() {
 	const fallbackOptions = [
 		{ label: 'Never', value: 'never' },
 		{ label: 'Prefer Shiki', value: 'secondary' },
-		{ label: 'Prefer Discord highlighting', value: 'primary' },
-		{ label: 'Always use Discord highlighting', value: 'always' },
+		{ label: 'Prefer Highlight.js', value: 'primary' },
+		{ label: 'Always use Highlight.js', value: 'always' },
 	];
 	const visibleThemes = THEME_IDS.filter((theme) =>
 		themeLabel(theme).toLowerCase().includes(themeQuery.toLowerCase()),
@@ -1641,7 +1657,7 @@ function ShikiSettings() {
 				/>
 				<SettingsRow
 					label='Highlighting preference'
-					description='Choose when Discord’s built-in highlighter takes priority.'
+					description='Choose when Highlight.js takes priority over Shiki.'
 					trailing={fallbackOptions.find((option) => option.value === selectedFallback)?.label}
 					onPress={() => setFallbackPickerOpen(!fallbackPickerOpen)}
 				/>
