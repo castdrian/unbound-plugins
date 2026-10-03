@@ -12,6 +12,7 @@ const settingsPlugins = [
 	'no-reply-mention',
 	'pronoundb',
 	'reviewdb',
+	'shiki-codeblocks',
 	'show-hidden-things',
 	'show-me-your-name',
 	'text-replace',

@@ -124,7 +124,7 @@ type NativeCodeBlockState = {
 	theme: ThemeName;
 	width: number;
 };
-type NativeColorSpan = { color: string; length: number; location: number };
+type NativeColorSpan = { color: string; fontStyle?: number; length: number; location: number };
 type NativeFrameValue = {
 	height?: number;
 	origin?: { x?: number; y?: number };
@@ -194,6 +194,7 @@ const LANGUAGE_LABELS: Record<LanguageId, string> = {
 	jsonc: 'JSONC',
 	kotlin: 'Kotlin',
 	markdown: 'Markdown',
+	plain: 'Text',
 	python: 'Python',
 	rust: 'Rust',
 	sql: 'SQL',
@@ -228,6 +229,7 @@ let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let messageStore: MessageStore | null = null;
 let selectedChannel: SelectedChannel | null = null;
 const nativeColors = new Map<string, NativeObjectHandle>();
+const nativeFonts = new Map<string, NativeObjectHandle>();
 const nativeImages = new Map<string, NativeObjectHandle>();
 const surfacesByLabel = new Map<string, NativeCodeBlockState>();
 const applyingLabels = new Set<string>();
@@ -300,19 +302,25 @@ function normalizeCode(code: string): string {
 }
 
 export function parseFencedCodeBlocks(content: string): CodeBlockFence[] {
-	const fences =
-		/(?:^|\n)[\t ]{0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n([\s\S]*?)\r?\n[\t ]{0,3}(`{3,}|~{3,})[\t ]*(?=\r?\n|$)/g;
+	const lines = content.split(/\r?\n/);
 	const blocks: CodeBlockFence[] = [];
-
-	for (;;) {
-		const match = fences.exec(content);
-		if (!match) break;
-		const opening = match[1];
-		const closing = match[4];
-		if (opening[0] !== closing[0] || closing.length < opening.length) continue;
-		const language = resolveLanguage(match[2].trim().split(/[\t ]+/, 1)[0]);
-		if (!language) continue;
-		blocks.push({ code: normalizeCode(match[3]), language });
+	for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+		const opening = /^[\t ]{0,3}(`{3,}|~{3,})(.*)$/.exec(lines[lineIndex]);
+		if (!opening) continue;
+		const fence = opening[1];
+		let closingIndex = lineIndex + 1;
+		for (; closingIndex < lines.length; closingIndex++) {
+			const closing = /^[\t ]{0,3}(`{3,}|~{3,})[\t ]*$/.exec(lines[closingIndex]);
+			if (!closing || closing[1][0] !== fence[0] || closing[1].length < fence.length) continue;
+			break;
+		}
+		if (closingIndex >= lines.length) break;
+		const language = resolveLanguage(opening[2].trim().split(/[\t ]+/, 1)[0]) ?? 'plain';
+		blocks.push({
+			code: normalizeCode(lines.slice(lineIndex + 1, closingIndex).join('\n')),
+			language,
+		});
+		lineIndex = closingIndex;
 	}
 
 	return blocks;
@@ -481,13 +489,18 @@ function nativeColor(hex: string, alpha: number = 1): NativeObjectHandle | null 
 
 function nativeFont(size: number, weight: number, monospaced: boolean): NativeObjectHandle | null {
 	if (!objc) return null;
+	const key = `${size}:${weight}:${monospaced}`;
+	const cached = nativeFonts.get(key);
+	if (cached) return cached;
 	const fontClass = objc.getClass('UIFont');
 	if (!fontClass) return null;
 	const selector = monospaced ? 'monospacedSystemFontOfSize:weight:' : 'systemFontOfSize:weight:';
 	try {
-		return objc.invoke(fontClass, selector, [size, weight], {
+		const font = objc.invoke(fontClass, selector, [size, weight], {
 			thread: 'main',
 		}) as NativeObjectHandle | null;
+		if (font) nativeFonts.set(key, font);
+		return font;
 	} catch {
 		return null;
 	}
@@ -870,13 +883,17 @@ export function buildNativeCodeMarkup(tokens: TokenLines, lightTheme: boolean): 
 	const parts: string[] = [];
 	const spans: NativeColorSpan[] = [];
 	let location = 0;
-	function append(content: string, color: string): void {
+	function append(content: string, color: string, fontStyle: number = 0): void {
 		if (!content) return;
 		const previous = spans[spans.length - 1];
-		if (previous?.color === color && previous.location + previous.length === location) {
+		if (
+			previous?.color === color &&
+			(previous.fontStyle ?? 0) === fontStyle &&
+			previous.location + previous.length === location
+		) {
 			previous.length += content.length;
 		} else {
-			spans.push({ color, length: content.length, location });
+			spans.push({ color, length: content.length, location, ...(fontStyle ? { fontStyle } : {}) });
 		}
 		parts.push(content);
 		location += content.length;
@@ -885,7 +902,11 @@ export function buildNativeCodeMarkup(tokens: TokenLines, lightTheme: boolean): 
 	for (let lineIndex = 0; lineIndex < tokens.length; lineIndex++) {
 		append(`${String(lineIndex + 1).padStart(2, ' ')} `, lightTheme ? '#8a8a8a' : '#858585');
 		for (const token of tokens[lineIndex]) {
-			append(token.content, token.color ?? (lightTheme ? '#333333' : '#d4d4d4'));
+			append(
+				token.content,
+				token.color ?? (lightTheme ? '#333333' : '#d4d4d4'),
+				token.fontStyle ?? 0,
+			);
 		}
 		if (lineIndex < tokens.length - 1) {
 			parts.push('\n');
@@ -933,13 +954,30 @@ function nativeCodeAttributedString(
 			);
 		}
 		for (const span of spans) {
+			const range = nativeRange(span.location, span.length);
+			const style = span.fontStyle ?? 0;
 			nativeCall(
 				attributedText,
 				'addAttribute:value:range:',
 				'NSColor',
 				nativeColor(span.color),
-				nativeRange(span.location, span.length),
+				range,
 			);
+			if (style & 2) {
+				nativeCall(
+					attributedText,
+					'addAttribute:value:range:',
+					'NSFont',
+					nativeFont(12, 0.4, true),
+					range,
+				);
+			}
+			if (style & 1) {
+				nativeCall(attributedText, 'addAttribute:value:range:', 'NSObliqueness', 0.2, range);
+			}
+			if (style & 4) {
+				nativeCall(attributedText, 'addAttribute:value:range:', 'NSUnderlineStyle', 1, range);
+			}
 		}
 		return attributedText;
 	} catch {
@@ -1222,6 +1260,7 @@ function installNativeRenderer(context?: PluginContext): void {
 	) as SelectedChannel | null;
 	removeSettingsListener = STORE.addListener(
 		(payload) =>
+			typeof payload.key === 'string' &&
 			['theme', 'customTheme', 'bgOpacity', 'lineOverflow', 'tryHljs', 'useDevIcon'].includes(
 				payload.key,
 			),
@@ -1361,6 +1400,13 @@ export async function getTokens(
 	const key = cacheKey(code, language, theme);
 	const cached = tokenCache.get(key);
 	if (cached) return cached;
+	if (language === 'plain') {
+		const tokens: TokenLines = code
+			.split('\n')
+			.map((line) => [{ content: line, offset: 0, fontStyle: 0 }]);
+		rememberTokens(key, tokens);
+		return tokens;
+	}
 
 	const highlighter = await createHighlighter();
 	if (!highlighter) return null;
@@ -1549,6 +1595,7 @@ export default {
 		loadedHighlighter = null;
 		tokenCache.clear();
 		nativeColors.clear();
+		nativeFonts.clear();
 		nativeImages.clear();
 	},
 	getSettingsPanel: () => <ShikiSettings />,

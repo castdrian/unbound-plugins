@@ -76,6 +76,9 @@ mock.module('@unbound-app/api', () => ({
 	storage: { getStore: () => ({ get: (_key: string, fallback: unknown) => fallback }) },
 }));
 mock.module('@shared/settings-ui', () => ({
+	getSettingsColors: () => ({}),
+	SettingsCard: () => null,
+	SettingsRow: () => null,
 	SettingsScrollView: () => null,
 	SettingsSection: () => null,
 	SettingsSwitchRow: () => null,

@@ -92,6 +92,8 @@ mock.module('@unbound-app/api', () => ({
 	},
 }));
 mock.module('@shared/settings-ui', () => ({
+	getSettingsColors: () => ({}),
+	SettingsCard: () => null,
 	SettingsScrollView: () => null,
 	SettingsSection: () => null,
 	SettingsRow: () => null,

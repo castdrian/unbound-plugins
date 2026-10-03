@@ -27,6 +27,7 @@ mock.module('@shared/settings-ui', () => ({
 	SettingsRow: () => null,
 	SettingsScrollView: () => null,
 	SettingsSection: () => null,
+	SettingsSwitchRow: () => null,
 }));
 
 const {
@@ -57,7 +58,7 @@ describe('language aliases', () => {
 		expect(resolveLanguage(' yml ')).toBe('yaml');
 	});
 
-	test('leaves unsupported and unlabelled blocks native', () => {
+	test('does not resolve unsupported and unlabelled language names', () => {
 		expect(resolveLanguage('brainfuck')).toBeNull();
 		expect(resolveLanguage(undefined)).toBeNull();
 	});
@@ -77,20 +78,44 @@ describe('native fenced code matching', () => {
 		]);
 	});
 
-	test('matches native text after newline normalization and ignores unsupported blocks', () => {
+	test('matches native text after newline normalization and retains unsupported blocks', () => {
 		const blocks = parseFencedCodeBlocks(
 			'```brainfuck\n++++\n```\n~~~js\r\nconsole.log(1);\r\n~~~',
 		);
 
-		expect(blocks).toEqual([{ code: 'console.log(1);', language: 'javascript' }]);
-		expect(matchCodeBlock(blocks, '\nconsole.log(1);\n\n')).toEqual(blocks[0]);
+		expect(blocks).toEqual([
+			{ code: '++++', language: 'plain' },
+			{ code: 'console.log(1);', language: 'javascript' },
+		]);
+		expect(matchCodeBlock(blocks, '\nconsole.log(1);\n\n')).toEqual(blocks[1]);
 		expect(matchCodeBlock(blocks, 'console.log(2);')).toBeUndefined();
+	});
+
+	test('renders an unlabelled fence as a plain code card', async () => {
+		const blocks = parseFencedCodeBlocks('Before\n```\nplain value\n```\nAfter');
+		const tokens = await getTokens('plain value', blocks[0].language, 'dark-plus');
+
+		expect(blocks).toEqual([{ code: 'plain value', language: 'plain' }]);
+		expect(tokens?.[0].map((token) => token.content).join('')).toBe('plain value');
 	});
 
 	test('rejects mismatched or too-short fences', () => {
 		expect(
 			parseFencedCodeBlocks('```ts\nconst value = 1;\n~~\n~~~ts\nconst value = 2;\n~~~'),
 		).toEqual([]);
+	});
+
+	test('keeps shorter fence lines inside a longer fenced block', () => {
+		const blocks = parseFencedCodeBlocks(
+			'````ts\nconst text = "```";\n```\nconst after = true;\n````',
+		);
+
+		expect(blocks).toEqual([
+			{
+				code: 'const text = "```";\n```\nconst after = true;',
+				language: 'typescript',
+			},
+		]);
 	});
 
 	test('locates a fenced block between ordinary text without replacing the text', () => {
@@ -224,6 +249,25 @@ describe('native syntax rendering', () => {
 
 		expect(markup.spans[0]).toEqual({ color: '#8a8a8a', location: 0, length: 3 });
 		expect(markup.spans[1]).toEqual({ color: '#0000ff', location: 3, length: 16 });
+	});
+
+	test('preserves Shiki italic, bold, and underline token styles', () => {
+		const markup = buildNativeCodeMarkup(
+			[
+				[
+					{ content: 'alpha', offset: 0, color: '#ffffff', fontStyle: 1 },
+					{ content: 'beta', offset: 5, color: '#ffffff', fontStyle: 2 },
+					{ content: 'gamma', offset: 9, color: '#ffffff', fontStyle: 4 },
+				],
+			],
+			false,
+		);
+
+		expect(markup.spans.slice(1)).toEqual([
+			{ color: '#ffffff', location: 3, length: 5, fontStyle: 1 },
+			{ color: '#ffffff', location: 8, length: 4, fontStyle: 2 },
+			{ color: '#ffffff', location: 12, length: 5, fontStyle: 4 },
+		]);
 	});
 });
 
