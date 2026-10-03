@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 
 let nativeHookClass: string | null = null;
 let nativeHookSelector: string | null = null;
+let nativeHookSelectors: string[] = [];
 let nativeHookRemoveCount = 0;
 let findByFilePathCount = 0;
 
@@ -48,6 +49,7 @@ afterEach(() => {
 	plugin.stop();
 	nativeHookClass = null;
 	nativeHookSelector = null;
+	nativeHookSelectors = [];
 	nativeHookRemoveCount = 0;
 	findByFilePathCount = 0;
 });
@@ -81,6 +83,28 @@ describe('native fenced code matching', () => {
 		);
 
 		expect(visited).toEqual(['outer', 'embedded']);
+	});
+
+	test('reaches nested preview labels beyond a large channel hierarchy', () => {
+		type ViewNode = { children?: ViewNode[]; label?: string };
+		const root: ViewNode = { children: [] };
+		let current = root;
+		for (let index = 0; index < 1100; index++) {
+			const child: ViewNode = { children: [] };
+			current.children = [child];
+			current = child;
+		}
+		current.label = 'embedded';
+		const visited: string[] = [];
+
+		scanVisibleLabels(
+			root,
+			(view) => view.children ?? [],
+			(view) => Boolean(view.label),
+			(view) => visited.push(view.label ?? ''),
+		);
+
+		expect(visited).toEqual(['embedded']);
 	});
 
 	test('parses supported blocks and preserves indentation', () => {
@@ -306,6 +330,7 @@ describe('plugin lifecycle', () => {
 				hook(className: string, selector: string) {
 					nativeHookClass = className;
 					nativeHookSelector = selector;
+					nativeHookSelectors.push(selector);
 					return { remove: () => nativeHookRemoveCount++ };
 				},
 			},
@@ -315,9 +340,10 @@ describe('plugin lifecycle', () => {
 		plugin.start({ native } as never);
 
 		expect(nativeHookClass).toBe('DCDReusableYYLabel');
-		expect(nativeHookSelector).toBe('setAttributedText:');
+		expect(nativeHookSelector).toBe('didMoveToWindow');
+		expect(nativeHookSelectors).toEqual(['setAttributedText:', 'didMoveToWindow']);
 		expect(findByFilePathCount).toBe(0);
 		plugin.stop();
-		expect(nativeHookRemoveCount).toBe(1);
+		expect(nativeHookRemoveCount).toBe(2);
 	});
 });

@@ -225,6 +225,7 @@ let loadedHighlighter: HighlighterCore | null = null;
 const tokenCache = new Map<string, TokenLines>();
 let objc: NativeObjCBridge | null = null;
 let nativeCodeHook: NativeHookToken | null = null;
+let nativeCodeMoveHook: NativeHookToken | null = null;
 let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let messageStore: MessageStore | null = null;
 let selectedChannel: SelectedChannel | null = null;
@@ -233,6 +234,7 @@ const nativeFonts = new Map<string, NativeObjectHandle>();
 const nativeImages = new Map<string, NativeObjectHandle>();
 const surfacesByLabel = new Map<string, NativeCodeBlockState>();
 const applyingLabels = new Set<string>();
+const pendingMoveTimers = new Set<ReturnType<typeof setTimeout>>();
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
 	if (!objc || !handle || args.some((argument) => argument === null || argument === undefined)) {
@@ -1228,7 +1230,7 @@ export function scanVisibleLabels<T extends object>(
 	children: (view: T) => T[],
 	isLabel: (view: T) => boolean,
 	render: (view: T) => void,
-	limit: number = 800,
+	limit: number = 3000,
 ): number {
 	const pending = [root];
 	let inspected = 0;
@@ -1323,6 +1325,21 @@ function installNativeRenderer(context?: PluginContext): void {
 			if (original) renderNativeCodeBlock(self, original);
 		},
 	});
+	try {
+		nativeCodeMoveHook = objc.hook('DCDReusableYYLabel', 'didMoveToWindow', {
+			after: ({ self }) => {
+				const timer = setTimeout(() => {
+					pendingMoveTimers.delete(timer);
+					if (!nativeCodeHook?.active || !nativeCall(self, 'window')) return;
+					const attributed = nativeCall(self, 'attributedText') as NativeObjectHandle | null;
+					if (attributed) renderNativeCodeBlock(self, attributed);
+				}, 16);
+				pendingMoveTimers.add(timer);
+			},
+		});
+	} catch {
+		nativeCodeMoveHook = null;
+	}
 	initialScanTimer = setTimeout(() => {
 		initialScanTimer = null;
 		if (nativeCodeHook?.active) renderVisibleCodeBlocks();
@@ -1600,6 +1617,10 @@ export default {
 		initialScanTimer = null;
 		nativeCodeHook?.remove();
 		nativeCodeHook = null;
+		nativeCodeMoveHook?.remove();
+		nativeCodeMoveHook = null;
+		for (const timer of pendingMoveTimers) clearTimeout(timer);
+		pendingMoveTimers.clear();
 		removeSettingsListener?.();
 		removeSettingsListener = null;
 		for (const state of surfacesByLabel.values()) removeNativeSurface(state, true);
