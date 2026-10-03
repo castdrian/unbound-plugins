@@ -108,10 +108,13 @@ type NativeCodePart = {
 type NativeCodeBlockState = {
 	cell: NativeObjectHandle;
 	cellHook: NativeHookToken | null;
+	cellKey: string;
+	channelId: string;
 	iconMode: 'disabled' | 'greyscale' | 'colored';
 	label: NativeObjectHandle;
 	labelKey: string;
 	lightTheme: boolean;
+	messageId: string;
 	opacity: number;
 	overflow: 'wrap' | 'scroll';
 	original: NativeObjectHandle;
@@ -145,6 +148,7 @@ type NativeCodeHost = {
 };
 type CodeBlockLayout = { contentHeight: number; contentWidth: number; height: number };
 type ThemeAppearance = { background: string; foreground: string; light: boolean };
+type CodeSurfaceIdentity = { cellKey: string; channelId: string; messageId: string };
 const LANGUAGE_ALIASES: Record<string, LanguageId> = {
 	bash: 'bash',
 	c: 'c',
@@ -226,6 +230,7 @@ const tokenCache = new Map<string, TokenLines>();
 let objc: NativeObjCBridge | null = null;
 let nativeCodeHook: NativeHookToken | null = null;
 let nativeCodeMoveHook: NativeHookToken | null = null;
+let nativeCodeReuseHook: NativeHookToken | null = null;
 let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let messageStore: MessageStore | null = null;
 let selectedChannel: SelectedChannel | null = null;
@@ -382,6 +387,17 @@ function nativeLabelKey(label: NativeObjectHandle): string {
 	const hash = nativeCall(label, 'hash');
 	if (hash !== null && hash !== undefined) return String(hash);
 	return nativeString(nativeCall(label, 'description')) ?? 'unknown';
+}
+
+export function codeSurfaceMatchesCell(
+	state: CodeSurfaceIdentity,
+	channelId: string,
+	messageId: string,
+	cellKey: string,
+): boolean {
+	return (
+		state.channelId === channelId && state.messageId === messageId && state.cellKey === cellKey
+	);
 }
 
 function nativeCellForLabel(label: NativeObjectHandle): NativeObjectHandle | null {
@@ -795,11 +811,29 @@ function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
 	return null;
 }
 
+function codeSurfaceIsCurrent(state: NativeCodeBlockState): boolean {
+	return Boolean(
+		objc &&
+			currentChannelId() === state.channelId &&
+			codeSurfaceMatchesCell(
+				state,
+				state.channelId,
+				messageIdForCell(state.cell) ?? '',
+				nativeLabelKey(state.cell),
+			) &&
+			nativeCall(state.label, 'isDescendantOfView:', state.cell),
+	);
+}
+
 function scheduleRowCorrection(state: NativeCodeBlockState, delay: number = 16): void {
 	if (state.rowTimer || state.rowRetries >= MAX_ROW_RETRIES) return;
 	state.rowTimer = setTimeout(() => {
 		state.rowTimer = null;
 		if (!objc || surfacesByLabel.get(state.labelKey) !== state) return;
+		if (!codeSurfaceIsCurrent(state)) {
+			removeNativeSurface(state, false);
+			return;
+		}
 		nativeCall(state.label, 'layoutIfNeeded');
 		nativeCall(state.cell, 'layoutIfNeeded');
 		const contentView = nativeCall(state.cell, 'contentView') as NativeObjectHandle | null;
@@ -828,7 +862,7 @@ function scheduleRowCorrection(state: NativeCodeBlockState, delay: number = 16):
 }
 
 function updateNativeRow(state: NativeCodeBlockState): void {
-	if (!objc) return;
+	if (!objc || !codeSurfaceIsCurrent(state)) return;
 	nativeCall(state.label, 'invalidateIntrinsicContentSize');
 	nativeCall(state.label, 'setNeedsLayout');
 	nativeCall(state.cell, 'setNeedsUpdateConstraints');
@@ -868,7 +902,7 @@ function removeNativeSurface(state: NativeCodeBlockState, restore: boolean): voi
 		part.copyHook?.remove();
 		part.copyHook = null;
 	}
-	if (restore && objc && state.rendered) {
+	if (restore && objc && state.rendered && codeSurfaceIsCurrent(state)) {
 		const current = nativeCall(state.label, 'attributedText') as NativeObjectHandle | null;
 		const currentText = current ? nativeString(nativeCall(current, 'string')) : undefined;
 		if (currentText === state.renderedText) {
@@ -1023,7 +1057,12 @@ function applyNativeTheme(state: NativeCodeBlockState, theme: ThemeName): void {
 		),
 	)
 		.then((tokensByPart) => {
-			if (surfacesByLabel.get(state.labelKey) !== state || state.theme !== theme) return;
+			if (
+				surfacesByLabel.get(state.labelKey) !== state ||
+				state.theme !== theme ||
+				!codeSurfaceIsCurrent(state)
+			)
+				return;
 			paintNativeTheme(state);
 			for (let index = 0; index < state.parts.length; index++) {
 				const tokens = tokensByPart[index];
@@ -1045,13 +1084,18 @@ function mountNativeCodeBlock(
 	cell: NativeObjectHandle,
 	original: NativeObjectHandle,
 	placements: CodeBlockPlacement[],
+	channelId: string,
+	messageId: string,
 ): void {
 	if (!objc) return;
 	const key = nativeLabelKey(label);
 	const previous = surfacesByLabel.get(key);
+	const cellKey = nativeLabelKey(cell);
 	const width = measureCodeBlockWidth(cell, label);
 	if (
-		previous?.parts.length === placements.length &&
+		previous &&
+		codeSurfaceMatchesCell(previous, channelId, messageId, cellKey) &&
+		previous.parts.length === placements.length &&
 		previous.parts.every(
 			(part, index) =>
 				part.code === placements[index].block.code &&
@@ -1109,10 +1153,13 @@ function mountNativeCodeBlock(
 	const state: NativeCodeBlockState = {
 		cell,
 		cellHook: null,
+		cellKey,
+		channelId,
 		iconMode,
 		label,
 		labelKey: key,
 		lightTheme,
+		messageId,
 		opacity,
 		overflow,
 		original,
@@ -1183,7 +1230,6 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 	const rendered = nativeString(nativeCall(original, 'string'));
 	if (rendered === undefined) return;
 	const previous = surfacesByLabel.get(key);
-	if (rendered === previous?.renderedText) return;
 	const cell = nativeCellForLabel(label);
 	if (!cell) {
 		if (previous) removeNativeSurface(previous, false);
@@ -1192,6 +1238,10 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 	const messageId = messageIdForCell(cell);
 	const channelId = currentChannelId();
 	if (!messageId || !channelId) return;
+	if (previous && !codeSurfaceMatchesCell(previous, channelId, messageId, nativeLabelKey(cell))) {
+		removeNativeSurface(previous, false);
+	}
+	if (rendered === surfacesByLabel.get(key)?.renderedText) return;
 	const content = messageContent(channelId, messageId);
 	if (content === undefined) return;
 	const placements = locateCodeBlocks(parseFencedCodeBlocks(content), rendered);
@@ -1210,7 +1260,7 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 		if (previous) removeNativeSurface(previous, false);
 		return;
 	}
-	mountNativeCodeBlock(label, cell, original, placements);
+	mountNativeCodeBlock(label, cell, original, placements, channelId, messageId);
 }
 
 function nativeSubviews(view: NativeObjectHandle): NativeObjectHandle[] {
@@ -1292,6 +1342,8 @@ function installNativeRenderer(context?: PluginContext): void {
 						state.cell,
 						state.original,
 						state.parts.map((part) => part.placement),
+						state.channelId,
+						state.messageId,
 					);
 				}
 				return;
@@ -1339,6 +1391,18 @@ function installNativeRenderer(context?: PluginContext): void {
 		});
 	} catch {
 		nativeCodeMoveHook = null;
+	}
+	try {
+		nativeCodeReuseHook = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
+			after: ({ self }) => {
+				const cellKey = nativeLabelKey(self);
+				for (const state of [...surfacesByLabel.values()]) {
+					if (state.cellKey === cellKey) removeNativeSurface(state, false);
+				}
+			},
+		});
+	} catch {
+		nativeCodeReuseHook = null;
 	}
 	initialScanTimer = setTimeout(() => {
 		initialScanTimer = null;
@@ -1619,6 +1683,8 @@ export default {
 		nativeCodeHook = null;
 		nativeCodeMoveHook?.remove();
 		nativeCodeMoveHook = null;
+		nativeCodeReuseHook?.remove();
+		nativeCodeReuseHook = null;
 		for (const timer of pendingMoveTimers) clearTimeout(timer);
 		pendingMoveTimers.clear();
 		removeSettingsListener?.();

@@ -35,6 +35,7 @@ const {
 	buildNativeCodeMarkup,
 	codeBlockLayout,
 	codeScrollHeight,
+	codeSurfaceMatchesCell,
 	default: plugin,
 	getTokens,
 	locateCodeBlocks,
@@ -234,6 +235,15 @@ describe('native fenced code matching', () => {
 });
 
 describe('native syntax rendering', () => {
+	test('does not reuse a code surface after its message cell is recycled', () => {
+		const surface = { cellKey: 'cell-1', channelId: 'channel-1', messageId: 'message-1' };
+
+		expect(codeSurfaceMatchesCell(surface, 'channel-1', 'message-1', 'cell-1')).toBe(true);
+		expect(codeSurfaceMatchesCell(surface, 'channel-1', 'message-2', 'cell-1')).toBe(false);
+		expect(codeSurfaceMatchesCell(surface, 'channel-2', 'message-1', 'cell-1')).toBe(false);
+		expect(codeSurfaceMatchesCell(surface, 'channel-1', 'message-1', 'cell-2')).toBe(false);
+	});
+
 	test('corrects a cell when its label extends beyond the reported content height', () => {
 		expect(shouldCorrectRow(217.5, 217.5, 257.5)).toBe(true);
 		expect(shouldCorrectRow(257.5, 257.5, 257.5)).toBe(false);
@@ -339,11 +349,15 @@ describe('plugin lifecycle', () => {
 		plugin.start({ native } as never);
 		plugin.start({ native } as never);
 
-		expect(nativeHookClass).toBe('DCDReusableYYLabel');
-		expect(nativeHookSelector).toBe('didMoveToWindow');
-		expect(nativeHookSelectors).toEqual(['setAttributedText:', 'didMoveToWindow']);
+		expect(nativeHookClass).toBe('DCDMessageTableViewCell');
+		expect(nativeHookSelector).toBe('prepareForReuse');
+		expect(nativeHookSelectors).toEqual([
+			'setAttributedText:',
+			'didMoveToWindow',
+			'prepareForReuse',
+		]);
 		expect(findByFilePathCount).toBe(0);
 		plugin.stop();
-		expect(nativeHookRemoveCount).toBe(2);
+		expect(nativeHookRemoveCount).toBe(3);
 	});
 });
