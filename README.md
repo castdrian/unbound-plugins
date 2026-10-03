@@ -2,6 +2,8 @@
 
 An [Unbound](https://unbound.rip) addon workspace scaffolded with `ubd create`.
 
+Most of these plugins are ports of [Vencord](https://github.com/Vendicated/Vencord) plugins.
+
 ## Development
 
 ```sh
