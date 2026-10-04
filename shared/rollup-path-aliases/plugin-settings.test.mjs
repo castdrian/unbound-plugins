@@ -7,6 +7,7 @@ import { expect, test } from 'bun:test';
 const pluginDirectory = resolve(import.meta.dir, '..', '..', 'plugins');
 const settingsPlugins = [
 	'character-counter',
+	'custom-commands',
 	'message-latency',
 	'more-user-tags',
 	'no-reply-mention',
