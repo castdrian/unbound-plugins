@@ -13,7 +13,17 @@ type ChatInputRegistry = {
 	getBestActiveInputForChannelId?: (channelId: string) => ChatInput | null;
 };
 
-let unpatch: (() => void) | null = null;
+type ReplyActions = {
+	deletePendingReply?: (channelId: string) => void;
+};
+
+type ReplyStore = {
+	getPendingReply?: (channelId: string) => unknown;
+};
+
+const pendingGifReplies = new Set<string>();
+let unpatchSend: (() => void) | null = null;
+let unpatchReply: (() => void) | null = null;
 
 function isGifPickerSelection(
 	args: unknown[],
@@ -33,8 +43,18 @@ function isGifPickerSelection(
 function start(): void {
 	const messages = metro.findByProps('sendMessage', 'editMessage') as MessageActions | null;
 	if (typeof messages?.sendMessage !== 'function') return;
+	const replies = metro.findByProps('deletePendingReply') as ReplyActions | null;
+	const replyStore = metro.findByProps('getPendingReply') as ReplyStore | null;
+	if (typeof replies?.deletePendingReply !== 'function') return;
+	if (typeof replyStore?.getPendingReply !== 'function') return;
 
-	unpatch = patcher.instead(messages, 'sendMessage', (ctx) => {
+	unpatchReply = patcher.instead(replies, 'deletePendingReply', (ctx) => {
+		const [channelId] = ctx.args;
+		if (typeof channelId === 'string' && pendingGifReplies.delete(channelId)) return;
+		return ctx.original.apply(ctx.this, ctx.args);
+	});
+
+	unpatchSend = patcher.instead(messages, 'sendMessage', (ctx) => {
 		if (!isGifPickerSelection(ctx.args)) return ctx.original.apply(ctx.this, ctx.args);
 
 		const [channelId, message] = ctx.args;
@@ -46,12 +66,19 @@ function start(): void {
 
 		input.insertText(`${message.content} `);
 		input.closeCustomKeyboard?.();
+		if (replyStore.getPendingReply?.(channelId)) {
+			pendingGifReplies.add(channelId);
+			Promise.resolve().then(() => pendingGifReplies.delete(channelId));
+		}
 	});
 }
 
 function stop(): void {
-	unpatch?.();
-	unpatch = null;
+	unpatchSend?.();
+	unpatchReply?.();
+	unpatchSend = null;
+	unpatchReply = null;
+	pendingGifReplies.clear();
 }
 
 export default { start, stop };
