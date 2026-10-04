@@ -16,3 +16,18 @@ export function hermesExpressionEntrypoint({ hasSettingsPanel = false } = {}) {
 		},
 	};
 }
+
+export function workerExpressionEntrypoint() {
+	return {
+		name: 'worker-expression-entrypoint',
+		generateBundle(_outputOptions, bundle) {
+			for (const chunk of Object.values(bundle)) {
+				if (chunk.type !== 'chunk') continue;
+				let code = chunk.code.trim();
+				code = code.replace(/^var\s+[A-Za-z_$][\w$]*\s*=\s*/, '');
+				code = code.replace(/;\s*$/, '');
+				chunk.code = `(()=>{const module=${code};return module?.default??module;})()`;
+			}
+		},
+	};
+}

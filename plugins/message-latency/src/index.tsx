@@ -11,15 +11,32 @@ import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeWorkerBridge,
 	PluginContext,
 } from '@unbound-app/api/native';
 import type { ReactNode } from 'react';
+import {
+	isLatencyDecision,
+	latencyDecision,
+	messageFromCreateEvent,
+} from '@message-latency/latency-decisions';
+import type {
+	LatencyDecision,
+	LatencyDecisionInput,
+	LatencyDetails,
+	LatencyMessage,
+	LatencyOptions,
+} from '@message-latency/latency-decisions';
+
+export {
+	formatLatency,
+	latencyDetails,
+	latencyTooltip,
+	messageFromCreateEvent,
+	snowflakeTimestamp,
+} from '@message-latency/latency-decisions';
 
 const ADDON_ID = 'unbound.message-latency';
-const ANDROID_NONCE_OFFSET = 1_471_228_928;
-const ANDROID_OFFSET_TOLERANCE = 86_400_000;
-const DISCORD_EPOCH = 1_420_070_400_000;
-const SNOWFLAKE_SHIFT = 4_194_304;
 const LATENCY_OPTIONS = [1, 2, 3, 5, 10];
 const LATENCY_ICON_WIDTH = 12;
 const LATENCY_ICON_HEIGHT = 12;
@@ -41,25 +58,9 @@ const MAX_CELL_NODES = 120;
 const MAX_CELL_DEPTH = 12;
 const STORE = storage.getStore(ADDON_ID);
 
-type LatencyColor = 'danger' | 'muted' | 'positive' | 'warning';
-type LatencyFill = [LatencyColor, LatencyColor, LatencyColor];
-
-interface LatencyMessage {
-	author?: { bot?: boolean; id?: string; username?: string };
-	id?: unknown;
-	nonce?: unknown;
-}
-
 interface Dispatcher {
 	subscribe?: (event: string, listener: (event: Record<string, unknown>) => void) => void;
 	unsubscribe?: (event: string, listener: (event: Record<string, unknown>) => void) => void;
-}
-
-interface LatencyOptions {
-	detectDiscordKotlin: boolean;
-	ignoreSelf: boolean;
-	latency: number;
-	showMillis: boolean;
 }
 
 interface ThemeModule {
@@ -74,14 +75,6 @@ interface ThemeStore {
 	addChangeListener?: (listener: () => void) => void;
 	removeChangeListener?: (listener: () => void) => void;
 	theme?: string;
-}
-
-interface LatencyDetails {
-	ahead: boolean;
-	androidClient: boolean;
-	delta: number;
-	displayDelta: string | null;
-	fill: LatencyFill;
 }
 
 interface MessageRowData {
@@ -163,6 +156,7 @@ let users: { getCurrentUser?: () => { id?: string } | null } | null = null;
 let themeStore: ThemeStore | null = null;
 let objc: NativeObjCBridge | null = null;
 let fabric: NativeFabricBridge | null = null;
+let worker: NativeWorkerBridge | null = null;
 let started = false;
 let activeTooltip: NativeObjectHandle | null = null;
 let activeTooltipSurface: NativeFabricSurface | null = null;
@@ -182,103 +176,6 @@ const activeCellMessageIds = new Map<string, string>();
 const cellsByMessageId = new Map<string, NativeObjectHandle>();
 const pendingCells = new Set<string>();
 const latencyViews = new Map<string, LatencyViewState>();
-
-export function snowflakeTimestamp(value: unknown): number | null {
-	if (typeof value === 'number' && !Number.isSafeInteger(value)) return null;
-	const digits = String(value);
-	if (!/^\d+$/.test(digits)) return null;
-
-	let remainder = 0;
-	let quotient = '';
-	for (const digit of digits) {
-		const current = remainder * 10 + Number(digit);
-		const next = Math.floor(current / SNOWFLAKE_SHIFT);
-		remainder = current % SNOWFLAKE_SHIFT;
-		if (quotient || next) quotient += String(next);
-	}
-
-	if (!quotient) return null;
-	const timestamp = DISCORD_EPOCH + Number(quotient);
-	return Number.isSafeInteger(timestamp) ? timestamp : null;
-}
-
-export function formatLatency(delta: number, showMillis: boolean): string {
-	const values: Array<[number, string]> = [
-		[Math.floor(delta / 86_400_000), 'days'],
-		[Math.floor((delta / 3_600_000) % 24), 'hours'],
-		[Math.floor((delta / 60_000) % 60), 'minutes'],
-		[Math.floor((delta / 1000) % 60), 'seconds'],
-		[Math.floor(delta % 1000), 'milliseconds'],
-	];
-	let result = '';
-
-	for (const [value, unit] of values) {
-		if (!value) continue;
-		const part = `${value} ${value > 1 ? unit : unit.slice(0, -1)}`;
-		if (result) {
-			const separator = showMillis ? unit === 'milliseconds' : unit === 'seconds';
-			result += separator ? ' and ' : ' ';
-		}
-		result += part;
-	}
-
-	return result || '0 seconds';
-}
-
-export function latencyDetails(
-	message: LatencyMessage,
-	currentUserId: string | undefined,
-	options: LatencyOptions,
-): LatencyDetails | null {
-	if (message.nonce == null || message.author?.bot) return null;
-	if (options.ignoreSelf && message.author?.id === currentUserId) return null;
-
-	const messageTimestamp = snowflakeTimestamp(message.id);
-	const nonceTimestamp = snowflakeTimestamp(message.nonce);
-	if (messageTimestamp == null || nonceTimestamp == null) return null;
-
-	let delta = messageTimestamp - nonceTimestamp;
-	if (!options.showMillis) delta = Math.round(delta / 1000) * 1000;
-
-	let androidClient = false;
-	if (-delta >= ANDROID_NONCE_OFFSET - ANDROID_OFFSET_TOLERANCE) {
-		androidClient = options.detectDiscordKotlin;
-		delta += ANDROID_NONCE_OFFSET;
-	}
-
-	const absoluteDelta = Math.abs(delta);
-	const ahead = absoluteDelta !== delta;
-	const displayDelta =
-		absoluteDelta >= options.latency * 1000
-			? formatLatency(absoluteDelta, options.showMillis)
-			: null;
-	const fill: LatencyFill = androidClient
-		? ['positive', 'positive', 'muted']
-		: delta >= 120_000 || ahead
-			? ['muted', 'muted', 'muted']
-			: delta >= options.latency * 2000
-				? ['danger', 'muted', 'muted']
-				: ['warning', 'warning', 'muted'];
-
-	if (displayDelta === null && !androidClient) return null;
-	return { ahead, androidClient, delta: absoluteDelta, displayDelta, fill };
-}
-
-export function latencyTooltip(details: LatencyDetails): string {
-	if (!details.displayDelta) return 'User is suspected to be on an old Discord Android client';
-	const message = details.ahead
-		? `This user's clock is ${details.displayDelta} ahead.`
-		: `This message was sent with a delay of ${details.displayDelta}.`;
-	return details.androidClient
-		? `${message} User is suspected to be on an old Discord Android client.`
-		: message;
-}
-
-export function messageFromCreateEvent(event: Record<string, unknown>): LatencyMessage | null {
-	const message = event.message;
-	if (!message || typeof message !== 'object') return null;
-	return message as LatencyMessage;
-}
 
 function currentOptions(): LatencyOptions {
 	return {
@@ -1035,12 +932,20 @@ function cacheLatency(
 	messageRow: MessageRowData | undefined,
 	message: LatencyMessage | undefined,
 	fallbackUsername: string = '',
+	decision?: LatencyDecision | null,
 ): void {
 	if (!message || message.id == null) return;
 	if (message.nonce == null) return;
 	const messageId = String(message.id);
-	const details = latencyDetails(message, users?.getCurrentUser?.()?.id, currentOptions());
-	if (!details) {
+	const result =
+		decision === undefined
+			? latencyDecision({
+					currentUserId: users?.getCurrentUser?.()?.id,
+					message,
+					options: currentOptions(),
+				})
+			: decision;
+	if (!result) {
 		if (latencyRecords.delete(messageId)) {
 			const cell = cellsByMessageId.get(messageId);
 			if (cell) scheduleCell(cell);
@@ -1054,11 +959,19 @@ function cacheLatency(
 		latencyRecords.get(messageId)?.username ||
 		'';
 	if (!username) return;
+	const previous = latencyRecords.get(messageId);
+	if (
+		previous?.username === username &&
+		previous.tooltip === result.tooltip &&
+		previous.details.delta === result.details.delta &&
+		previous.details.fill.every((color, index) => color === result.details.fill[index])
+	)
+		return;
 	latencyRecords.delete(messageId);
 	latencyRecords.set(messageId, {
-		details,
+		details: result.details,
 		messageId,
-		tooltip: latencyTooltip(details),
+		tooltip: result.tooltip,
 		username,
 	});
 	while (latencyRecords.size > MAX_LATENCY_RECORDS) {
@@ -1074,6 +987,24 @@ function onMessageCreate(event: Record<string, unknown>): void {
 	const message = messageFromCreateEvent(event);
 	if (!message) return;
 	cacheLatency(undefined, message, message.author?.username);
+	if (!worker || message.id == null || message.nonce == null) return;
+	const input: LatencyDecisionInput = {
+		currentUserId: users?.getCurrentUser?.()?.id,
+		message: {
+			author: message.author,
+			id: String(message.id),
+			nonce: String(message.nonce),
+		},
+		options: currentOptions(),
+	};
+	const requestLifecycle = lifecycle;
+	void worker.run('calculate', input, latencyDecision, isLatencyDecision).then(
+		(decision) => {
+			if (lifecycle !== requestLifecycle || !started) return;
+			cacheLatency(undefined, message, message.author?.username, decision);
+		},
+		() => undefined,
+	);
 }
 
 function subscribeToMessageCreate(): void {
@@ -1190,6 +1121,7 @@ function cleanup(): void {
 	started = false;
 	objc = null;
 	fabric = null;
+	worker = null;
 }
 
 export default {
@@ -1199,6 +1131,7 @@ export default {
 		lifecycle++;
 		objc = context?.native.objc ?? null;
 		fabric = context?.native.fabric ?? null;
+		worker = context?.native.worker ?? null;
 		waitForMessageRows();
 	},
 	stop() {

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 
-import { hermesExpressionEntrypoint } from './entrypoint.mjs';
+import { hermesExpressionEntrypoint, workerExpressionEntrypoint } from './entrypoint.mjs';
 
 afterEach(() => {
 	delete globalThis.__sharedPluginEntrypointCalls;
@@ -69,4 +69,15 @@ test('does not evaluate a plugin merely to check whether it has settings', () =>
 
 	expect(entry.getSettingsPanel).toBeUndefined();
 	expect(globalThis.__sharedPluginEntrypointCalls).toEqual([]);
+});
+
+test('evaluates a worker bundle to its task object', () => {
+	const chunk = {
+		code: 'var Worker=(function(){return {default:{double(input){return input*2;}}};})();',
+		type: 'chunk',
+	};
+	workerExpressionEntrypoint().generateBundle({}, { entry: chunk });
+	const worker = Function(`return ${chunk.code}`)();
+
+	expect(worker.double(21)).toBe(42);
 });

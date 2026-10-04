@@ -48,4 +48,4 @@ export function bunPathAliases() {
 	};
 }
 
-export { hermesExpressionEntrypoint } from './entrypoint.mjs';
+export { hermesExpressionEntrypoint, workerExpressionEntrypoint } from './entrypoint.mjs';

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { latencyDecision } from '@message-latency/latency-decisions';
+import workerTasks from '@message-latency/worker';
 
 const rowGenerator = { generateMessageRowData: () => undefined };
 interface TestMessage {
@@ -110,6 +112,29 @@ const {
 } = await import('@message-latency/index');
 
 const DISCORD_EPOCH = 1_420_070_400_000;
+
+test('worker and fallback latency decisions match', () => {
+	const message = {
+		author: { id: 'other', username: 'other' },
+		id: (BigInt(20_000) << 22n).toString(),
+		nonce: (BigInt(15_000) << 22n).toString(),
+	};
+	const input = {
+		currentUserId: 'self',
+		message,
+		options: {
+			detectDiscordKotlin: true,
+			ignoreSelf: false,
+			latency: 2,
+			showMillis: false,
+		},
+	};
+
+	expect(workerTasks.calculate(input)).toEqual(latencyDecision(input));
+	expect(workerTasks.calculate({ ...input, message: { ...message, nonce: null } })).toEqual(
+		latencyDecision({ ...input, message: { ...message, nonce: null } }),
+	);
+});
 
 afterEach(() => {
 	plugin.stop();
