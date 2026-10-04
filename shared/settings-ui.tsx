@@ -13,6 +13,8 @@ export type SettingsColors = {
 	danger: string;
 };
 
+export type SettingsTouchEvent = { target: unknown };
+
 export const SETTINGS_SPACING = {
 	outer: 16,
 	section: 24,
@@ -37,14 +39,22 @@ export function getSettingsColors(): SettingsColors {
 	};
 }
 
-export function SettingsScrollView({ children }: { children: ReactNode }) {
+export function SettingsScrollView({
+	children,
+	onTouchStart,
+}: {
+	children: ReactNode;
+	onTouchStart?: (event: SettingsTouchEvent) => void;
+}) {
 	const ReactNative = metro.common.ReactNative;
 	const colors = getSettingsColors();
 
 	return (
 		<ReactNative.ScrollView
 			contentContainerStyle={{ backgroundColor: colors.page, gap: SETTINGS_SPACING.section, padding: SETTINGS_SPACING.outer, paddingBottom: 32 }}
+			keyboardDismissMode={onTouchStart ? 'on-drag' : 'none'}
 			keyboardShouldPersistTaps="handled"
+			onTouchStart={onTouchStart}
 		>
 			{children}
 		</ReactNative.ScrollView>

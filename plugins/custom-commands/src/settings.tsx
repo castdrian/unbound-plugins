@@ -19,6 +19,7 @@ import {
 	SettingsCard,
 	SettingsScrollView,
 	SettingsSection,
+	type SettingsTouchEvent,
 } from '@shared/settings-ui';
 import { metro, storage, toasts } from '@unbound-app/api';
 import { useState } from 'react';
@@ -149,6 +150,14 @@ export function CustomCommandsSettings() {
 	const [busy, setBusy] = useState(false);
 	const [picking, setPicking] = useState(false);
 
+	function dismissKeyboardOutsideInput(event: SettingsTouchEvent): void {
+		const focusedInput = ReactNative.TextInput.State.currentlyFocusedInput();
+		if (!focusedInput) return;
+		const focusedField = ReactNative.TextInput.State.currentlyFocusedField();
+		if (event.target === focusedInput || Number(event.target) === focusedField) return;
+		ReactNative.Keyboard.dismiss();
+	}
+
 	function closeForm(): void {
 		setCreating(false);
 		setEditing(null);
@@ -254,7 +263,7 @@ export function CustomCommandsSettings() {
 	const detectedArguments = parseTagArguments(message);
 
 	return (
-		<SettingsScrollView>
+		<SettingsScrollView onTouchStart={dismissKeyboardOutsideInput}>
 			<ReactNative.Text style={{ color: colors.muted, fontSize: 15, lineHeight: 21 }}>
 				Create slash commands that send saved text, images, and videos.
 			</ReactNative.Text>
