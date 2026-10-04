@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "unbound": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": [
+        "@unbound-app/debugger"
+      ],
+      "env": {}
+    }
+  }
+}

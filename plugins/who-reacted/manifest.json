@@ -1,0 +1,13 @@
+{
+	"id": "unbound.who-reacted",
+	"name": "Who Reacted",
+	"description": "Shows the avatars of people who reacted to messages.",
+	"authors": [
+		{
+			"name": "Unbound Team",
+			"id": "0"
+		}
+	],
+	"version": "1.0.0",
+	"main": "index.tsx"
+}
