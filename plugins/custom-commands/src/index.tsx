@@ -1,4 +1,5 @@
 import { mediaUri, setMediaContext } from '@custom-commands/media';
+import { appendSavedCommands } from '@custom-commands/registration';
 import { CustomCommandsSettings } from '@custom-commands/settings';
 import {
 	type CommandOption,
@@ -199,13 +200,7 @@ function start(context: PluginContext): void {
 	if (!commands) throw new Error('Discord built-in commands are unavailable.');
 
 	unpatch = patcher.after(commands, 'getBuiltInCommands', (patch) => {
-		if (!String(patch.args[0] ?? '').includes(APPLICATION_ID)) return;
-		if (!Array.isArray(patch.result)) return;
-		for (const tag of getTags()) {
-			if (patch.result.some((command: BuiltInCommand) => command.displayName === tag.name))
-				continue;
-			patch.result.push(createCommand(tag));
-		}
+		appendSavedCommands(patch.args, patch.result, getTags, createCommand);
 	});
 }
 
