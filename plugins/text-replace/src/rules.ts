@@ -13,6 +13,7 @@ export type TextReplaceRuleset = {
 };
 
 const RULESET_VERSION = 1;
+const VARIABLE_TOKEN_PATTERN = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 let ruleIndex = 0;
 
@@ -99,6 +100,49 @@ function replaceNewlines(value: string): string {
 	return value.replaceAll('\\n', '\n');
 }
 
+type StringRuleMatcher = {
+	pattern: RegExp;
+	variables: string[];
+};
+
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function createStringRuleMatcher(find: string): StringRuleMatcher | undefined {
+	const tokens = [...find.matchAll(VARIABLE_TOKEN_PATTERN)];
+	if (tokens.length === 0) return;
+
+	const variables: string[] = [];
+	let source = '';
+	let cursor = 0;
+
+	for (const token of tokens) {
+		const index = token.index ?? 0;
+		const name = token[1];
+		source += escapeRegex(find.slice(cursor, index));
+
+		const existingIndex = variables.indexOf(name);
+		if (existingIndex >= 0) {
+			source += `\\${existingIndex + 1}`;
+		} else {
+			variables.push(name);
+			const hasLiteralAfterToken = index + token[0].length < find.length;
+			source += hasLiteralAfterToken ? '(\\S+?)' : '(\\S+)';
+		}
+
+		cursor = index + token[0].length;
+	}
+
+	source += escapeRegex(find.slice(cursor));
+	return { pattern: new RegExp(source, 'g'), variables };
+}
+
+function renderVariableReplacement(template: string, variables: string[], captures: string[]): string {
+	const values = new Map(variables.map((name, index) => [name, captures[index] ?? '']));
+	return replaceNewlines(template).replace(VARIABLE_TOKEN_PATTERN, (token, name: string) => values.get(name) ?? token);
+}
+
 export function applyRules(
 	content: string,
 	stringRules: TextReplaceRule[],
@@ -109,8 +153,19 @@ export function applyRules(
 	for (const rule of stringRules) {
 		if (!applies(rule, content)) continue;
 
+		const matcher = createStringRuleMatcher(rule.find);
+		if (!matcher) {
+			content = ` ${content} `
+				.replaceAll(rule.find, replaceNewlines(rule.replace))
+				.replace(/^\s|\s$/g, '');
+			continue;
+		}
+
 		content = ` ${content} `
-			.replaceAll(rule.find, replaceNewlines(rule.replace))
+			.replace(matcher.pattern, (match: string, ...args: unknown[]) => {
+				const captures = args.slice(0, matcher.variables.length).map((capture) => String(capture));
+				return renderVariableReplacement(rule.replace, matcher.variables, captures);
+			})
 			.replace(/^\s|\s$/g, '');
 	}
 

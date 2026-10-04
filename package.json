@@ -11,9 +11,13 @@
 		"prepare": "git config core.hooksPath .githooks || true",
 		"dev": "ubd dev",
 		"build": "ubd build",
+		"test:text-replace": "bun test plugins/text-replace scripts/text-replace-harness.test.ts scripts/extract-hermes-bundle.test.ts",
+		"extract:hermes": "bun scripts/extract-hermes-bundle.ts",
+		"package": "bun scripts/package-clean.ts",
 		"postbuild": "bun scripts/generate-plugins-readme.ts"
 	},
 	"devDependencies": {
-		"@unbound-app/cli": "latest"
+		"@unbound-app/cli": "latest",
+		"typescript": "6.0.3"
 	}
 }

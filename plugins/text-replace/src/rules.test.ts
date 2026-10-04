@@ -19,6 +19,26 @@ test('converts escaped newlines in replacements', () => {
 	expect(applyRules('hello', [rule('hello', 'hi\\nthere')], [])).toBe('hi\nthere');
 });
 
+test('passes named variables through string replacements', () => {
+	expect(
+		applyRules('>pk:pikachu', [rule('>pk:{pokemon}', 'https://embed.pkmn.dev/{pokemon}')], []),
+	).toBe('https://embed.pkmn.dev/pikachu');
+});
+
+test('reuses named variables across every matching token', () => {
+	expect(
+		applyRules(
+			'>pk:pikachu and >pk:eevee',
+			[rule('>pk:{pokemon}', 'https://embed.pkmn.dev/{pokemon}')],
+			[],
+		),
+	).toBe('https://embed.pkmn.dev/pikachu and https://embed.pkmn.dev/eevee');
+});
+
+test('leaves replacement placeholders literal when no variable was captured', () => {
+	expect(applyRules('hello', [rule('hello', 'Use {name}')], [])).toBe('Use {name}');
+});
+
 test('accepts slash-delimited regexes and deduplicates flags', () => {
 	expect(stringToRegex('/cat/ggi').flags).toBe('gi');
 	expect(applyRules('Cat cat', [], [rule('/cat/gi', 'dog')])).toBe('dog dog');
@@ -51,6 +71,18 @@ test('exports each replacement value independently from its find value', () => {
 			{ find: '<timer:seconds>', replace: '<timer:milliseconds>', onlyIfIncludes: '' },
 		],
 		regexRules: [],
+	});
+});
+
+test('round-trips named variables through the portable ruleset format', () => {
+	const encoded = serializeRuleset(
+		[rule('>pk:{pokemon}', 'https://embed.pkmn.dev/{pokemon}')],
+		[],
+	);
+
+	expect(parseRuleset(encoded).stringRules[0]).toMatchObject({
+		find: '>pk:{pokemon}',
+		replace: 'https://embed.pkmn.dev/{pokemon}',
 	});
 });
 

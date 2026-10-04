@@ -33,6 +33,7 @@ type SettingsColors = {
 	muted: string;
 	accent: string;
 	accentText: string;
+	success: string;
 	danger: string;
 	link: string;
 };
@@ -111,6 +112,7 @@ function getColors(): SettingsColors {
 		muted: getReadableText(surface, '#c8cad0', '#4f5660'),
 		accent,
 		accentText: getReadableText(accent),
+		success: getThemeColor(colors, 'STATUS_POSITIVE_BACKGROUND', getThemeColor(colors, 'GREEN_360', '#248046')),
 		danger: getThemeColor(colors, 'BUTTON_DANGER_BACKGROUND', '#ed4245'),
 		link: getThemeColor(colors, 'TEXT_LINK', '#00a8fc'),
 	};
@@ -210,6 +212,72 @@ function RuleInput({
 	);
 }
 
+function getPreviewExample(find: string, isRegex: boolean): string {
+	if (!find) return '';
+	if (!isRegex) return find.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, 'example');
+
+	const pattern = find.replace(/^\//, '').replace(/\/[gimsuyv]*$/, '');
+	const example = pattern
+		.replace(/\\[dDsSwW]/g, '1')
+		.replace(/\.\*/g, 'example')
+		.replace(/[()[\]|^$+?*]/g, '')
+		.trim();
+	return example || 'Example message';
+}
+
+function RulePreview({ rule, isRegex }: { rule: TextReplaceRule; isRegex: boolean }) {
+	const { ReactNative } = metro.common;
+	const colors = getColors();
+	const [example, setExample] = useState('');
+	const suggestedExample = getPreviewExample(rule.find, isRegex);
+	const input = example || suggestedExample;
+	const output = input ? applyRules(input, isRegex ? [] : [rule], isRegex ? [rule] : []) : '';
+	const changed = Boolean(input && output !== input);
+	const status = !rule.find ? 'ADD A RULE' : !input ? 'TYPE AN EXAMPLE' : changed ? 'MATCH FOUND' : 'NO MATCH';
+	const statusColor = changed ? colors.success : colors.muted;
+
+	return (
+		<ReactNative.View style={{ backgroundColor: colors.surface, borderColor: changed ? colors.success : colors.border, borderRadius: 14, borderWidth: 1, gap: 10, padding: 14 }}>
+			<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }}>
+				<ReactNative.Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>Live preview</ReactNative.Text>
+				<ReactNative.Text style={{ color: statusColor, fontSize: 12, fontWeight: '800' }}>{status}</ReactNative.Text>
+			</ReactNative.View>
+			<ReactNative.Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>
+				Type an example to see exactly what this rule will send.
+			</ReactNative.Text>
+			<ReactNative.TextInput
+				autoCapitalize='none'
+				autoCorrect={false}
+				multiline
+				onChangeText={setExample}
+				placeholder={suggestedExample || 'Type an example message'}
+				placeholderTextColor={colors.muted}
+				style={{
+					backgroundColor: colors.input,
+					borderColor: changed ? colors.success : colors.border,
+					borderRadius: 10,
+					borderWidth: 1,
+					color: getReadableText(colors.input),
+					fontSize: 15,
+					minHeight: 58,
+					paddingHorizontal: 12,
+					paddingVertical: 10,
+					textAlignVertical: 'top',
+				}}
+				value={input}
+			/>
+			{input ? (
+				<ReactNative.View style={{ backgroundColor: changed ? colors.success : colors.surfaceAlt, borderRadius: 10, gap: 4, padding: 10 }}>
+					<ReactNative.Text style={{ color: changed ? getReadableText(colors.success) : colors.muted, fontSize: 11, fontWeight: '800' }}>RESULT</ReactNative.Text>
+					<ReactNative.Text style={{ color: changed ? getReadableText(colors.success) : colors.text, fontSize: 15, lineHeight: 21 }}>
+						{output || 'Removed by this rule'}
+					</ReactNative.Text>
+				</ReactNative.View>
+			) : null}
+		</ReactNative.View>
+	);
+}
+
 function Button({
 	label,
 	onPress,
@@ -285,20 +353,20 @@ function RuleEditor({
 				</ReactNative.Text>
 				<ReactNative.Text style={{ color: colors.muted, fontSize: 15, lineHeight: 21 }}>
 					{isRegex
-						? 'Use a JavaScript pattern such as /hello/gi. Invalid patterns are skipped when sending.'
-						: 'This replaces every matching piece of text before the message is sent.'}
+						? 'Use a JavaScript pattern such as /hello/gi. Replacement supports captures such as $1. Invalid patterns are skipped when sending.'
+						: 'Replace literal text, or capture a non-space value with {name} and reuse it in the replacement. Example: >pk:{pokemon} becomes https://embed.pkmn.dev/{pokemon}.'}
 				</ReactNative.Text>
 			</ReactNative.View>
 			<RuleInput
 				label={isRegex ? 'Pattern' : 'Find text'}
-				placeholder={isRegex ? '/pattern/gi' : 'What should change?'}
+				placeholder={isRegex ? '/pattern/gi' : 'What should change? Try >pk:{pokemon}'}
 				value={draft.find}
 				onChange={(value) => update('find', value)}
 			/>
 			<RuleInput
 				label='Replace with'
 				multiline
-				placeholder='What should it become? Use \\n for a new line.'
+				placeholder='What should it become? Use {name} or \\n for a new line.'
 				value={draft.replace}
 				onChange={(value) => update('replace', value)}
 			/>
@@ -313,6 +381,7 @@ function RuleEditor({
 					Leave this blank to apply the rule everywhere.
 				</ReactNative.Text>
 			</ReactNative.View>
+			<RulePreview isRegex={isRegex} rule={draft} />
 			<Button disabled={!draft.find.trim()} label='Save rule' onPress={() => onSave(draft)} />
 			{!editing.isNew ? <Button danger label='Delete rule' onPress={onDelete} /> : null}
 		</ReactNative.ScrollView>
