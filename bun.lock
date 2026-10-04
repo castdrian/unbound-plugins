@@ -96,6 +96,21 @@
         "rollup-plugin-swc3": "^0.12.1",
       },
     },
+    "plugins/file-size-on-picker": {
+      "name": "file-size-on-picker",
+      "version": "1.0.0",
+      "devDependencies": {
+        "@rollup/plugin-json": "^6.1.0",
+        "@rollup/plugin-node-resolve": "^16.0.3",
+        "@types/react": "^19.2.7",
+        "@unbound-app/api": "latest",
+        "@unbound-plugins/rollup-path-aliases": "workspace:*",
+        "react-native": "^0.83.0",
+        "rollup": "^4.62.2",
+        "rollup-plugin-iife": "^0.8.0",
+        "rollup-plugin-swc3": "^0.12.1",
+      },
+    },
     "plugins/fix-gif-download": {
       "name": "fix-gif-download",
       "version": "1.0.0",
@@ -951,6 +966,8 @@
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
+    "file-size-on-picker": ["file-size-on-picker@workspace:plugins/file-size-on-picker"],
+
     "fill-range": ["fill-range@7.1.1", "", { "dependencies": { "to-regex-range": "^5.0.1" } }, "sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg=="],
 
     "finalhandler": ["finalhandler@2.1.1", "", { "dependencies": { "debug": "^4.4.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "on-finished": "^2.4.1", "parseurl": "^1.3.3", "statuses": "^2.0.1" } }, "sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA=="],
@@ -1502,6 +1519,8 @@
     "es-iife/is-reference": ["is-reference@3.0.3", "", { "dependencies": { "@types/estree": "^1.0.6" } }, "sha512-ixkJoqQvAP88E6wLydLGGqCJsrFUnqoH6HnaczB8XmDH1oaWU+xxdptvikTgaEhtZ53Ky6YXiBuUI2WXLMCwjw=="],
 
     "expression-tools/@unbound-app/api": ["@unbound-app/api@0.3.0", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-CIdm5nZRmxeybEujuk2HSiRnkNUAL/PbmpZyRGeuaS0KUhHOd94P5dkubCZBK9t55dKDy3Z+HFw7j61/MWhETQ=="],
+
+    "file-size-on-picker/@unbound-app/api": ["@unbound-app/api@0.6.0", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-w6OgtpcywfMsvKHih3vf/VFzwPOKQNu7VTq2HX7OmOA1B7f4mwK/aHl91u97dEnndV42BxsCaaRw12jOxKWcjw=="],
 
     "fix-gif-download/@unbound-app/api": ["@unbound-app/api@0.5.3", "", { "peerDependencies": { "@types/react": "^19.2.7", "react": "^19.2.3", "react-native": "^0.83.0", "typescript": "^5.9.3" } }, "sha512-avQKeqnRIl9whRwYEb9oVclD3KPQXpWAi4IRTGtXu9sTw4B/NXAeDlwcILTtdpJLDYy1b3sJ3yvGjzCOuEv5+A=="],
 
