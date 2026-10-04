@@ -10,6 +10,7 @@ export type TagMedia = {
 
 export type Tag = {
 	name: string;
+	description?: string;
 	message: string;
 	media: TagMedia[];
 };
@@ -27,6 +28,10 @@ export type CommandOption = {
 
 const ARGUMENT_PATTERN = /{{(.+?)}}/g;
 const COMMAND_NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
+
+export function getTagDescription(tag: Tag): string {
+	return tag.description?.trim() || `Send the ${tag.name} command`;
+}
 
 export function parseTagArguments(message: string): TagArgument[] {
 	const argumentsByName = new Map<string, TagArgument>();
@@ -53,6 +58,8 @@ export function validateTag(
 ): string | null {
 	if (!COMMAND_NAME_PATTERN.test(tag.name))
 		return 'Use 1–32 lowercase letters, numbers, hyphens, or underscores for the command name.';
+	if (tag.description && tag.description.trim().length > 100)
+		return 'Use at most 100 characters for the command description.';
 	if (!tag.message.trim() && !mediaCount) return 'Add a response or at least one image or video.';
 	if (parseTagArguments(tag.message).some((argument) => argument.name === 'ephemeral'))
 		return 'The argument name “ephemeral” is reserved.';
@@ -82,7 +89,16 @@ export function normalizeTags(value: unknown): Tag[] {
 						/^custom-commands-[a-z0-9-]+\.[a-z0-9]+$/i.test(item.storedName),
 				)
 			: [];
-		const tag = { name: record.name, message: record.message, media };
+		const description =
+			typeof record.description === 'string' && record.description.trim().length <= 100
+				? record.description.trim()
+				: '';
+		const tag = {
+			name: record.name,
+			message: record.message,
+			media,
+			...(description ? { description } : {}),
+		};
 		if (names.has(tag.name) || validateTag(tag, []) !== null) continue;
 		names.add(tag.name);
 		tags.push(tag);

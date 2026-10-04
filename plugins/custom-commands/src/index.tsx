@@ -4,6 +4,7 @@ import { CustomCommandsSettings } from '@custom-commands/settings';
 import {
 	type CommandOption,
 	getOptionValue,
+	getTagDescription,
 	normalizeTags,
 	parseTagArguments,
 	renderTagMessage,
@@ -71,6 +72,7 @@ function getCommandId(name: string): string {
 }
 
 function createCommand(tag: Tag): BuiltInCommand {
+	const description = getTagDescription(tag);
 	const options: Array<Record<string, unknown>> = parseTagArguments(tag.message).map(
 		(argument) => ({
 			name: argument.name,
@@ -97,8 +99,8 @@ function createCommand(tag: Tag): BuiltInCommand {
 		type: 1,
 		inputType: 1,
 		applicationId: APPLICATION_ID,
-		untranslatedDescription: `Send the ${tag.name} command`,
-		displayDescription: `Send the ${tag.name} command`,
+		untranslatedDescription: description,
+		displayDescription: description,
 		options,
 		execute: (args, context) => executeTag(tag.name, args, context),
 	};

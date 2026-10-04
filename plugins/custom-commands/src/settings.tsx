@@ -45,12 +45,14 @@ function FormField({
 	placeholder,
 	onChange,
 	multiline = false,
+	maxLength,
 }: {
 	label: string;
 	value: string;
 	placeholder: string;
 	onChange: (value: string) => void;
 	multiline?: boolean;
+	maxLength?: number;
 }) {
 	const ReactNative = metro.common.ReactNative;
 	const colors = getSettingsColors();
@@ -63,6 +65,7 @@ function FormField({
 			<ReactNative.TextInput
 				autoCapitalize='none'
 				autoCorrect={false}
+				maxLength={maxLength}
 				multiline={multiline}
 				onChangeText={onChange}
 				placeholder={placeholder}
@@ -145,6 +148,7 @@ export function CustomCommandsSettings() {
 	const [editing, setEditing] = useState<Tag | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [name, setName] = useState('');
+	const [description, setDescription] = useState('');
 	const [message, setMessage] = useState('');
 	const [media, setMedia] = useState<DraftMedia[]>([]);
 	const [busy, setBusy] = useState(false);
@@ -162,6 +166,7 @@ export function CustomCommandsSettings() {
 		setCreating(false);
 		setEditing(null);
 		setName('');
+		setDescription('');
 		setMessage('');
 		setMedia([]);
 	}
@@ -170,6 +175,7 @@ export function CustomCommandsSettings() {
 		setEditing(tag);
 		setCreating(true);
 		setName(tag?.name ?? '');
+		setDescription(tag?.description ?? '');
 		setMessage(tag?.message ?? '');
 		setMedia(tag?.media ?? []);
 	}
@@ -192,8 +198,10 @@ export function CustomCommandsSettings() {
 	async function saveTag(): Promise<void> {
 		if (busy) return;
 		const normalizedName = name.trim().toLowerCase();
+		const normalizedDescription = description.trim();
 		const draft: Tag = {
 			name: normalizedName,
+			description: normalizedDescription,
 			message,
 			media: media.filter(isStoredMedia),
 		};
@@ -223,6 +231,7 @@ export function CustomCommandsSettings() {
 			}
 			const nextTag: Tag = {
 				name: normalizedName,
+				...(normalizedDescription ? { description: normalizedDescription } : {}),
 				message,
 				media: [...media.filter(isStoredMedia), ...newlyStored],
 			};
@@ -270,6 +279,13 @@ export function CustomCommandsSettings() {
 			{creating ? (
 				<SettingsSection title={editing ? 'Edit command' : 'Create command'}>
 					<FormField label='Command name' onChange={setName} placeholder='greet' value={name} />
+					<FormField
+						label='Description (optional)'
+						maxLength={100}
+						onChange={setDescription}
+						placeholder='Shown in the slash-command list'
+						value={description}
+					/>
 					<FormField
 						label='Response'
 						multiline
@@ -328,7 +344,8 @@ export function CustomCommandsSettings() {
 											numberOfLines={2}
 											style={{ color: colors.muted, fontSize: 13 }}
 										>
-											{tag.message ||
+											{tag.description ||
+												tag.message ||
 												`${tag.media.length} attachment${tag.media.length === 1 ? '' : 's'}`}
 										</ReactNative.Text>
 									</ReactNative.View>
