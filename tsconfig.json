@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@custom-commands/*": [
+				"plugins/custom-commands/src/*"
+			],
 			"@shiki-codeblocks/*": [
 				"plugins/shiki-codeblocks/src/*"
 			],
