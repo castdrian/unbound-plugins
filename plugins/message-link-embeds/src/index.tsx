@@ -4,7 +4,10 @@ import {
 } from '@message-link-embeds/animated-media';
 import {
 	contentText,
+	decideLinkBatch,
 	findRenderedLinkRange,
+	type LinkDecision,
+	type LinkDecisionInput,
 	type LinkTarget,
 	linkedTargets,
 	nativeUsernameColor,
@@ -25,6 +28,7 @@ import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeWorkerBridge,
 	PluginContext,
 } from '@unbound-app/api/native';
 import type { ReactNode } from 'react';
@@ -141,6 +145,7 @@ type CellUpdateStatus = 'done' | 'retry' | 'waiting';
 
 let objc: NativeObjCBridge | null = null;
 let fabric: NativeFabricBridge | null = null;
+let worker: NativeWorkerBridge | null = null;
 let messages: MessageStore | null = null;
 let messageActions: MessageActions | null = null;
 let channelStore: ChannelStore | null = null;
@@ -156,6 +161,7 @@ let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
 let hooks: NativeHookToken[] = [];
 let lifecycle = 0;
 let surfaceModuleName = '';
+let linkDecisionTimer: ReturnType<typeof setTimeout> | null = null;
 
 const cachedMessages = new Map<string, Message>();
 const pendingMessages = new Set<string>();
@@ -170,6 +176,9 @@ const surfaces = new Map<string, EmbeddedSurfaceState>();
 const surfaceHeights = new SurfaceHeightCache();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
 const surfaceRebindTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const linkDecisionCache = new Map<string, { content: string; targets: LinkTarget[] }>();
+const pendingLinkDecisions = new Map<string, string>();
+const linkDecisionVersions = new Map<string, string>();
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
 	if (!objc) return null;
@@ -544,6 +553,68 @@ function wakeTargetCells(targetKey: string): void {
 		const cell = activeCells.get(key);
 		if (cell) scheduleCell(cell);
 	}
+}
+
+function isLinkDecisionBatch(value: unknown): value is LinkDecision[] {
+	if (!Array.isArray(value)) return false;
+	return value.every((entry: unknown) => {
+		if (!entry || typeof entry !== 'object') return false;
+		const decision = entry as LinkDecision;
+		return (
+			typeof decision.id === 'string' &&
+			Array.isArray(decision.targets) &&
+			decision.targets.every(
+				(target) => typeof target.channelId === 'string' && typeof target.messageId === 'string',
+			) &&
+			(decision.selected === null ||
+				(typeof decision.selected?.channelId === 'string' &&
+					typeof decision.selected?.messageId === 'string'))
+		);
+	});
+}
+
+function flushLinkDecisions(): void {
+	linkDecisionTimer = null;
+	if (pendingLinkDecisions.size === 0) return;
+	const batch: LinkDecisionInput[] = [...pendingLinkDecisions.entries()]
+		.slice(0, 16)
+		.map(([id, content]) => ({ id, content }));
+	for (const { id } of batch) pendingLinkDecisions.delete(id);
+	const inputs = new Map(batch.map(({ id, content }) => [id, content]));
+	const token = lifecycle;
+	const request = worker?.available
+		? worker.run('decideBatch', batch, decideLinkBatch, isLinkDecisionBatch)
+		: Promise.resolve(decideLinkBatch(batch));
+	void request
+		.then((results) => {
+			if (token !== lifecycle) return;
+			for (const { id, targets } of results) {
+				const content = inputs.get(id);
+				if (content === undefined || linkDecisionVersions.get(id) !== content) continue;
+				linkDecisionVersions.delete(id);
+				linkDecisionCache.delete(id);
+				linkDecisionCache.set(id, { content, targets });
+				if (linkDecisionCache.size > 400)
+					linkDecisionCache.delete(linkDecisionCache.keys().next().value as string);
+				wakeTargetCells(`link:${id}`);
+			}
+		})
+		.catch(() => undefined)
+		.finally(() => {
+			if (token !== lifecycle || pendingLinkDecisions.size === 0) return;
+			linkDecisionTimer = setTimeout(flushLinkDecisions, 100);
+		});
+}
+
+function targetDecision(id: string, content: string): LinkTarget[] | undefined {
+	if (!worker?.available || !content.includes('discord')) return linkedTargets({ content });
+	const cached = linkDecisionCache.get(id);
+	if (cached?.content === content) return cached.targets;
+	linkDecisionVersions.set(id, content);
+	pendingLinkDecisions.set(id, content);
+	if (linkDecisionTimer) clearTimeout(linkDecisionTimer);
+	linkDecisionTimer = setTimeout(flushLinkDecisions, 100);
+	return undefined;
 }
 
 function fetchLinkedMessage(target: LinkTarget): void {
@@ -1086,7 +1157,12 @@ function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
 	const channelId = info.channelId ?? currentChannelId();
 	if (!channelId) return 'retry';
 	const source = messages?.getMessage?.(channelId, info.messageId);
-	const targets = source ? linkedTargets(source) : [];
+	const sourceKey = messageKey(channelId, info.messageId);
+	const targets = source ? targetDecision(sourceKey, contentText(source.content)) : [];
+	if (targets === undefined) {
+		waitingCells.set(key, `link:${sourceKey}`);
+		return 'waiting';
+	}
 	if (!source || targets.length === 0) {
 		const state = cellStates.get(key);
 		if (state && state.messageId !== info.messageId) teardownSurface(key, true);
@@ -1378,6 +1454,7 @@ function start(context?: PluginContext): void {
 	lifecycle++;
 	objc = context?.native.objc ?? null;
 	fabric = context?.native.fabric ?? null;
+	worker = context?.native.worker ?? null;
 	embeddedAnimationSupport?.dispose();
 	embeddedAnimationSupport = installEmbeddedAnimationSupport(metro.common.React, metro, modulePath);
 	selectedChannel = metro.findByProps('getLastSelectedChannelId', 'getChannelId');
@@ -1387,6 +1464,12 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycle++;
+	worker = null;
+	if (linkDecisionTimer) clearTimeout(linkDecisionTimer);
+	linkDecisionTimer = null;
+	linkDecisionCache.clear();
+	pendingLinkDecisions.clear();
+	linkDecisionVersions.clear();
 	if (initialScanTimer) clearTimeout(initialScanTimer);
 	initialScanTimer = null;
 	removeMessageStoreListener();

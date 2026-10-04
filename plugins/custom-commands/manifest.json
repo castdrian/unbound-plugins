@@ -13,7 +13,9 @@
 	"main": "index.tsx",
 	"capabilities": [
 		"native.objc.classes",
-		"native.objc.invoke"
+		"native.objc.invoke",
+		"native.worker.run"
 	],
-	"minNativePluginApi": "1.0.0"
+	"minNativePluginApi": "1.0.0",
+	"worker": "worker.js"
 }

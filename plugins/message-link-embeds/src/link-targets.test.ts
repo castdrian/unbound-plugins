@@ -1,12 +1,28 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+	decideLink,
+	decideLinkBatch,
 	findRenderedLinkRange,
 	linkedTargets,
 	nativeUsernameColor,
 } from '@message-link-embeds/link-targets';
+import worker from '@message-link-embeds/worker';
 
 describe('linked message targets', () => {
+	test('worker and host choose the same embedded-message target', () => {
+		const input = {
+			id: 'source',
+			content:
+				'https://discord.com/channels/1019387038820216882/1534546622371987657/1551930605325910056',
+		};
+		expect(worker.decide(input)).toEqual(decideLink(input));
+		expect(worker.decideBatch([input])).toEqual(decideLinkBatch([input]));
+		expect(worker.decide(input).selected).toEqual({
+			channelId: '1534546622371987657',
+			messageId: '1551930605325910056',
+		});
+	});
 	test('extracts Discord message links from nested rich content', () => {
 		expect(
 			linkedTargets({

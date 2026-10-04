@@ -31,6 +31,7 @@ import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeWorkerBridge,
 	PluginContext,
 } from '@unbound-app/api/native';
 import { useState } from 'react';
@@ -48,6 +49,12 @@ import {
 	themeLabel,
 	themeUrl,
 } from './catalog';
+import {
+	type CodeBlockLayout,
+	type CodeLayoutInput,
+	codeBlockLayout,
+	decideCodeLayout,
+} from './code-layout';
 import devicons from './devicons.json';
 import {
 	hasHighlightLanguage,
@@ -55,6 +62,8 @@ import {
 	highlightLanguageLabel,
 	shouldUseHighlightJs,
 } from './highlight-js';
+
+export { codeBlockLayout } from './code-layout';
 
 const ADDON_ID = 'unbound.shiki-codeblocks';
 const { metro, storage } = unbound;
@@ -163,7 +172,6 @@ type NativeCodeHost = {
 	iconView: NativeObjectHandle | null;
 	languageLabel: NativeObjectHandle;
 };
-type CodeBlockLayout = { contentHeight: number; contentWidth: number; height: number };
 type ThemeAppearance = { background: string; foreground: string; light: boolean };
 type CodeSurfaceIdentity = { cellKey: string; channelId: string; messageId: string };
 const LANGUAGE_ALIASES: Record<string, LanguageId> = {
@@ -244,6 +252,11 @@ let highlighterPromise: Promise<HighlighterCore | null> | null = null;
 let loadedHighlighter: HighlighterCore | null = null;
 const tokenCache = new Map<string, TokenLines>();
 let objc: NativeObjCBridge | null = null;
+let worker: NativeWorkerBridge | null = null;
+let layoutDecisionTimer: ReturnType<typeof setTimeout> | null = null;
+let layoutGeneration = 0;
+const layoutDecisionCache = new Map<string, CodeBlockLayout>();
+const pendingLayoutDecisions = new Map<string, CodeLayoutInput>();
 let nativeCodeHook: NativeHookToken | null = null;
 let nativeCodeMoveHook: NativeHookToken | null = null;
 let nativeCodeReuseHook: NativeHookToken | null = null;
@@ -602,26 +615,62 @@ function nativeDevicon(language: string, mode: 'greyscale' | 'colored'): NativeO
 	}
 }
 
-export function codeBlockLayout(
+function isCodeLayout(value: unknown): value is CodeBlockLayout {
+	if (!value || typeof value !== 'object') return false;
+	const layout = value as CodeBlockLayout;
+	return (
+		Number.isFinite(layout.contentHeight) &&
+		Number.isFinite(layout.contentWidth) &&
+		Number.isFinite(layout.height)
+	);
+}
+
+function isCodeLayoutBatch(value: unknown): value is CodeBlockLayout[] {
+	return Array.isArray(value) && value.every(isCodeLayout);
+}
+
+function flushLayoutDecisions(): void {
+	layoutDecisionTimer = null;
+	if (pendingLayoutDecisions.size === 0) return;
+	const batch = [...pendingLayoutDecisions.entries()].slice(0, 16);
+	for (const [key] of batch) pendingLayoutDecisions.delete(key);
+	const inputs = batch.map(([, input]) => input);
+	const generation = layoutGeneration;
+	const request = worker?.available
+		? worker.run('layoutBatch', inputs, (items) => items.map(decideCodeLayout), isCodeLayoutBatch)
+		: Promise.resolve(inputs.map(decideCodeLayout));
+	void request
+		.then((layouts) => {
+			if (!started || generation !== layoutGeneration || layouts.length !== batch.length) return;
+			for (let index = 0; index < batch.length; index++) {
+				const key = batch[index][0];
+				layoutDecisionCache.delete(key);
+				layoutDecisionCache.set(key, layouts[index]);
+				if (layoutDecisionCache.size > MAX_CACHE_ENTRIES)
+					layoutDecisionCache.delete(layoutDecisionCache.keys().next().value as string);
+			}
+		})
+		.catch(() => undefined)
+		.finally(() => {
+			if (started && generation === layoutGeneration && pendingLayoutDecisions.size > 0)
+				layoutDecisionTimer = setTimeout(flushLayoutDecisions, 150);
+		});
+}
+
+function codeLayoutDecision(
 	code: string,
 	width: number,
 	overflow: 'wrap' | 'scroll',
 ): CodeBlockLayout {
-	const lines = code.split('\n');
-	const contentWidth = Math.max(
-		width - 24,
-		(Math.max(...lines.map((line) => line.replaceAll('\t', '    ').length)) + 4) * 9,
-	);
-	const charactersPerLine = Math.max(12, Math.floor((width - 44) / 7.25));
-	const lineCount =
-		overflow === 'scroll'
-			? lines.length
-			: lines.reduce(
-					(count, line) => count + Math.max(1, Math.ceil((line.length + 4) / charactersPerLine)),
-					0,
-				);
-	const contentHeight = Math.max(26, 2 + lineCount * 18);
-	return { contentHeight, contentWidth, height: Math.min(520, 50 + contentHeight) };
+	const key = JSON.stringify([code, width, overflow]);
+	const cached = layoutDecisionCache.get(key);
+	if (cached) return cached;
+	if (worker?.available && !pendingLayoutDecisions.has(key)) {
+		pendingLayoutDecisions.set(key, { code, width, overflow });
+		if (layoutDecisionTimer) clearTimeout(layoutDecisionTimer);
+		layoutDecisionTimer = setTimeout(flushLayoutDecisions, 150);
+	}
+	return codeBlockLayout(code, width, overflow);
 }
 
 export function codeScrollHeight(measuredHeight: number, viewportHeight: number): number {
@@ -1187,7 +1236,7 @@ function mountNativeCodeBlock(
 	const parts: NativeCodePart[] = [];
 	for (const placement of placements) {
 		const { code, language } = placement.block;
-		const layout = codeBlockLayout(code, width, overflow);
+		const layout = codeLayoutDecision(code, width, overflow);
 		const nativeHost = createNativeHost(
 			width,
 			layout.height,
@@ -1572,11 +1621,35 @@ export async function getCodeBlockTokens(
 		const key = cacheKey(block.code, `hljs:${language}`, light ? 'light' : 'dark');
 		const cached = tokenCache.get(key);
 		if (cached) return cached;
-		const tokens = highlightCodeToTokens(block.code, language, light);
+		const input = { code: block.code, language, light };
+		const tokens = worker?.available
+			? await worker.run(
+					'tokenize',
+					input,
+					({ code, language, light }) => highlightCodeToTokens(code, language, light),
+					isTokenLines,
+				)
+			: highlightCodeToTokens(block.code, language, light);
 		rememberTokens(key, tokens);
 		return tokens;
 	}
 	return getTokens(block.code, block.language, theme);
+}
+
+function isTokenLines(value: unknown): value is TokenLines {
+	if (!Array.isArray(value)) return false;
+	return value.every((line: unknown) => {
+		if (!Array.isArray(line)) return false;
+		return line.every((token: unknown) => {
+			if (!token || typeof token !== 'object') return false;
+			const value = token as ThemedToken;
+			return (
+				typeof value.content === 'string' &&
+				(value.color === undefined || typeof value.color === 'string') &&
+				(value.fontStyle === undefined || typeof value.fontStyle === 'number')
+			);
+		});
+	});
 }
 
 function ShikiSettings() {
@@ -1737,10 +1810,17 @@ export default {
 	start(context?: PluginContext) {
 		if (started) return;
 		started = true;
+		worker = context?.native.worker ?? null;
 		installNativeRenderer(context);
 	},
 	stop() {
 		started = false;
+		layoutGeneration++;
+		worker = null;
+		if (layoutDecisionTimer) clearTimeout(layoutDecisionTimer);
+		layoutDecisionTimer = null;
+		layoutDecisionCache.clear();
+		pendingLayoutDecisions.clear();
 		if (initialScanTimer) clearTimeout(initialScanTimer);
 		initialScanTimer = null;
 		nativeCodeHook?.remove();

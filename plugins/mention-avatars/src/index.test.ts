@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { selectMentionBatch, selectMentions } from '@mention-avatars/mention-decisions';
+import worker from '@mention-avatars/worker';
 
 const removed: string[] = [];
 const hooks: string[] = [];
@@ -107,6 +109,30 @@ afterEach(() => {
 });
 
 describe('mention token matching', () => {
+	test('worker and fallback choose identical user avatars and role icons', () => {
+		const input = {
+			content: '<@123> and <@&456>',
+			candidates: [
+				{ id: '123', type: 'user' as const, labels: ['Adrian'], avatar: 'hash' },
+				{ id: '456', type: 'role' as const, name: 'Staff', color: 0x336699 },
+			],
+		};
+		expect(worker.select(input)).toEqual(selectMentions(input));
+		expect(worker.selectBatch([{ id: 'message', input }])).toEqual(
+			selectMentionBatch([{ id: 'message', input }]),
+		);
+		expect(worker.select(input)).toEqual({
+			complete: true,
+			mentions: [
+				{
+					avatarURL: 'https://cdn.discordapp.com/avatars/123/hash.png?size=32',
+					labels: ['Adrian'],
+					type: 'user',
+				},
+				{ avatarURL: undefined, labels: ['Staff'], roleColor: 0x336699, type: 'role' },
+			],
+		});
+	});
 	test('preserves message order for adjacent user and role mentions', () => {
 		expect(extractMentionTokens('Hi <@123> and <@&456>')).toEqual([
 			{ id: '123', type: 'user' },

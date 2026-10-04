@@ -6,7 +6,11 @@ import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
-import { bunPathAliases, hermesExpressionEntrypoint } from '@unbound-plugins/rollup-path-aliases';
+import {
+	bunPathAliases,
+	hermesExpressionEntrypoint,
+	workerExpressionEntrypoint,
+} from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -31,7 +35,7 @@ const globals = {
 	'react-native': 'window.ReactNative',
 };
 
-export default {
+const pluginConfig = {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
 	plugins: [bunPathAliases(), json(), nodeResolve(), swc({ tsconfig: false }), iife(), hermesExpressionEntrypoint(), manifestToDist()],
@@ -44,3 +48,23 @@ export default {
 		globals,
 	},
 };
+
+const workerConfig = {
+	input: 'src/worker.ts',
+	plugins: [
+		bunPathAliases(),
+		nodeResolve(),
+		swc({ tsconfig: false }),
+		iife(),
+		workerExpressionEntrypoint(),
+	],
+	output: {
+		dir: 'dist',
+		entryFileNames: 'worker.js',
+		format: 'es',
+		compact: true,
+		exports: 'named',
+	},
+};
+
+export default [pluginConfig, workerConfig];

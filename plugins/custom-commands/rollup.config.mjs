@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
-import { bunPathAliases, hermesExpressionEntrypoint } from '@unbound-plugins/rollup-path-aliases';
+import {
+	bunPathAliases,
+	hermesExpressionEntrypoint,
+	workerExpressionEntrypoint,
+} from '@unbound-plugins/rollup-path-aliases';
 import iife from 'rollup-plugin-iife';
 import { swc } from 'rollup-plugin-swc3';
 
@@ -30,7 +34,7 @@ function manifestToDist() {
 	};
 }
 
-export default {
+const pluginConfig = {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
 	plugins: [
@@ -51,3 +55,23 @@ export default {
 		globals,
 	},
 };
+
+const workerConfig = {
+	input: 'src/worker.ts',
+	plugins: [
+		bunPathAliases(),
+		nodeResolve(),
+		swc({ tsconfig: false }),
+		iife(),
+		workerExpressionEntrypoint(),
+	],
+	output: {
+		dir: 'dist',
+		entryFileNames: 'worker.js',
+		format: 'es',
+		compact: true,
+		exports: 'named',
+	},
+};
+
+export default [pluginConfig, workerConfig];

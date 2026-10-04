@@ -1,146 +1,148 @@
+import type { RoleColorStops } from '@more-user-tags/role-colors';
 import {
-	getContrastingTextColor,
-	getRoleColorAppearance,
-	type RoleColorAppearance,
-} from '@more-user-tags/role-colors';
+	decideTag,
+	decideTagBatch,
+	type PermissionName,
+	TAGS,
+	type TagDecision,
+	type TagDecisionInput,
+} from '@more-user-tags/tag-decisions';
 import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer';
 
 import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';
 import { metro, patcher, storage } from '@unbound-app/api';
-import type { PluginContext } from '@unbound-app/api/native';
+import type { NativeWorkerBridge, PluginContext } from '@unbound-app/api/native';
 
 const ADDON_ID = 'unbound.more-user-tags';
 const STORE = storage.getStore(ADDON_ID);
 
-type PermissionName =
-	| 'ADMINISTRATOR'
-	| 'MANAGE_GUILD'
-	| 'MANAGE_CHANNELS'
-	| 'MANAGE_ROLES'
-	| 'MANAGE_WEBHOOKS'
-	| 'MANAGE_MESSAGES'
-	| 'KICK_MEMBERS'
-	| 'BAN_MEMBERS'
-	| 'MOVE_MEMBERS'
-	| 'MUTE_MEMBERS'
-	| 'DEAFEN_MEMBERS';
-
-interface TagDefinition {
-	name: string;
-	displayName: string;
-	description: string;
-	color: string;
-	permissions?: PermissionName[];
-	condition?: (message: any, user: any, guild: any) => boolean;
-}
-
-const TAGS: TagDefinition[] = [
-	{
-		name: 'WEBHOOK',
-		color: '#5865F2',
-		displayName: 'Webhook',
-		description: 'Messages sent by webhooks',
-		condition: (message, user) => Boolean(message?.webhookId) && Boolean(user?.bot),
-	},
-	{
-		name: 'OWNER',
-		color: '#F0B232',
-		displayName: 'Owner',
-		description: 'Owns the server',
-		condition: (_message, user, guild) => Boolean(guild) && guild.ownerId === user?.id,
-	},
-	{
-		name: 'ADMINISTRATOR',
-		color: '#DA373C',
-		displayName: 'Admin',
-		description: 'Has the administrator permission',
-		permissions: ['ADMINISTRATOR'],
-	},
-	{
-		name: 'MODERATOR_STAFF',
-		color: '#248046',
-		displayName: 'Staff',
-		description: 'Can manage the server, channels or roles',
-		permissions: ['MANAGE_GUILD', 'MANAGE_CHANNELS', 'MANAGE_ROLES', 'MANAGE_WEBHOOKS'],
-	},
-	{
-		name: 'MODERATOR',
-		color: '#4E7FFF',
-		displayName: 'Mod',
-		description: 'Can manage messages or kick/ban people',
-		permissions: ['MANAGE_MESSAGES', 'KICK_MEMBERS', 'BAN_MEMBERS'],
-	},
-	{
-		name: 'VOICE_MODERATOR',
-		color: '#059669',
-		displayName: 'VC Mod',
-		description: 'Can manage voice chats',
-		permissions: ['MOVE_MEMBERS', 'MUTE_MEMBERS', 'DEAFEN_MEMBERS'],
-	},
-];
-
 let unpatch: (() => void) | null = null;
 let tagGradientRenderer: ReturnType<typeof createTagGradientRenderer> = null;
+let worker: NativeWorkerBridge | null = null;
 let permissionBits: Record<string, bigint> | null = null;
 let computePermissions: ((options: any) => bigint) | null = null;
 let guilds: any = null;
 let channels: any = null;
 let members: any = null;
+let tagDecisionTimer: ReturnType<typeof setTimeout> | null = null;
+let tagLifecycle = 0;
+const tagDecisionCache = new Map<string, { signature: string; decision: TagDecision | null }>();
+const pendingTagDecisions = new Map<string, TagDecisionInput>();
+const tagDecisionVersions = new Map<string, string>();
 
-function isTagEnabled(name: string): boolean {
-	return STORE.get(`tag.${name}`, true);
-}
-
-function resolveColors(tag: TagDefinition, guild: any, user: any): RoleColorAppearance {
-	if (STORE.get('useRoleColor', true) && guild && members) {
-		const member = members.getMember?.(guild.id, user?.id);
-		if (member) {
-			const appearance = getRoleColorAppearance(
-				member.colorStrings,
-				member.colorString,
-				STORE.get('useEnhancedRoleColors', true),
-			);
-			if (appearance.colors.length > 0) return appearance;
-		}
-	}
-
-	return {
-		colors: STORE.get('coloredTags', true) ? [tag.color] : [],
-		style: 'solid',
-	};
-}
-
-function hasPermission(user: any, guild: any, channel: any, names: PermissionName[]): boolean {
-	if (!guild || !computePermissions || !permissionBits) return false;
-
-	let total: bigint;
+function permissionsFor(user: any, guild: any, channel: any): PermissionName[] {
+	if (!guild || !computePermissions || !permissionBits) return [];
 	try {
-		total = computePermissions({
+		const total = computePermissions({
 			user,
 			context: guild,
 			overwrites: channel?.permissionOverwrites,
 		});
+		const names = [...new Set(TAGS.flatMap((tag) => tag.permissions ?? []))];
+		return names.filter((name) => {
+			const bit = permissionBits?.[name];
+			return typeof bit === 'bigint' && (total & bit) === bit;
+		});
 	} catch {
-		return false;
+		return [];
 	}
-
-	return names.some((name) => {
-		const bit = permissionBits![name];
-		return typeof bit === 'bigint' && (total & bit) === bit;
-	});
 }
 
-function resolveTag(message: any, user: any, guild: any, channel: any): TagDefinition | null {
-	for (const tag of TAGS) {
-		if (!isTagEnabled(tag.name)) continue;
+function tagInput(
+	message: any,
+	user: any,
+	guild: any,
+	channel: any,
+	opTagText: unknown,
+): TagDecisionInput {
+	const member = guild ? members?.getMember?.(guild.id, user?.id) : null;
+	const colors = member?.colorStrings;
+	const memberColors: RoleColorStops | undefined =
+		colors && typeof colors.primaryColor === 'string'
+			? {
+					primaryColor: colors.primaryColor,
+					secondaryColor:
+						typeof colors.secondaryColor === 'string' ? colors.secondaryColor : undefined,
+					tertiaryColor:
+						typeof colors.tertiaryColor === 'string' ? colors.tertiaryColor : undefined,
+				}
+			: undefined;
+	return {
+		bot: Boolean(user?.bot),
+		coloredTags: STORE.get('coloredTags', true),
+		enabled: Object.fromEntries(TAGS.map((tag) => [tag.name, STORE.get(`tag.${tag.name}`, true)])),
+		enhancedRoleColors: STORE.get('useEnhancedRoleColors', true),
+		guildOwnerId: typeof guild?.ownerId === 'string' ? guild.ownerId : undefined,
+		id: typeof message?.id === 'string' ? message.id : '',
+		memberColor: typeof member?.colorString === 'string' ? member.colorString : undefined,
+		memberColors,
+		opTagText: typeof opTagText === 'string' ? opTagText : null,
+		permissions: permissionsFor(user, guild, channel),
+		useOpTagStyle: STORE.get('useOpTagStyle', false),
+		useRoleColor: STORE.get('useRoleColor', true),
+		userId: typeof user?.id === 'string' ? user.id : undefined,
+		webhookId: typeof message?.webhookId === 'string' ? message.webhookId : undefined,
+	};
+}
 
-		if (tag.condition?.(message, user, guild)) return tag;
-		if (!user?.bot && tag.permissions && hasPermission(user, guild, channel, tag.permissions)) {
-			return tag;
-		}
+function isTagDecisionBatch(value: unknown): value is Array<TagDecision | null> {
+	return (
+		Array.isArray(value) &&
+		value.every(
+			(entry) =>
+				entry === null ||
+				(entry &&
+					typeof entry.id === 'string' &&
+					typeof entry.tagText === 'string' &&
+					(entry.style === 'op' || entry.style === 'normal') &&
+					Array.isArray(entry.appearance?.colors)),
+		)
+	);
+}
+
+function flushTagDecisions(): void {
+	tagDecisionTimer = null;
+	if (pendingTagDecisions.size === 0) return;
+	const batch = [...pendingTagDecisions.entries()].slice(0, 16);
+	for (const [id] of batch) pendingTagDecisions.delete(id);
+	const inputs = batch.map(([, input]) => input);
+	const signatures = new Map(batch.map(([id, input]) => [id, JSON.stringify(input)]));
+	const token = tagLifecycle;
+	const request = worker?.available
+		? worker.run('decideBatch', inputs, decideTagBatch, isTagDecisionBatch)
+		: Promise.resolve(decideTagBatch(inputs));
+	void request
+		.then((decisions) => {
+			if (token !== tagLifecycle || decisions.length !== batch.length) return;
+			for (let index = 0; index < batch.length; index++) {
+				const id = batch[index][0];
+				const signature = signatures.get(id);
+				if (!signature || tagDecisionVersions.get(id) !== signature) continue;
+				tagDecisionVersions.delete(id);
+				tagDecisionCache.delete(id);
+				tagDecisionCache.set(id, { signature, decision: decisions[index] ?? null });
+				if (tagDecisionCache.size > 400)
+					tagDecisionCache.delete(tagDecisionCache.keys().next().value as string);
+			}
+		})
+		.catch(() => undefined)
+		.finally(() => {
+			if (token === tagLifecycle && pendingTagDecisions.size > 0)
+				tagDecisionTimer = setTimeout(flushTagDecisions, 100);
+		});
+}
+
+function resolveTagDecision(input: TagDecisionInput): TagDecision | null {
+	const signature = JSON.stringify(input);
+	const cached = tagDecisionCache.get(input.id);
+	if (cached?.signature === signature) return cached.decision;
+	if (worker?.available && input.id && tagDecisionVersions.get(input.id) !== signature) {
+		tagDecisionVersions.set(input.id, signature);
+		pendingTagDecisions.set(input.id, input);
+		if (tagDecisionTimer) clearTimeout(tagDecisionTimer);
+		tagDecisionTimer = setTimeout(flushTagDecisions, 100);
 	}
-
-	return null;
+	return decideTag(input);
 }
 
 function getDesignModule(): { TableRowGroup?: any; TableRow?: any; TableSwitchRow?: any } | null {
@@ -202,10 +204,12 @@ function MoreUserTagsSettings() {
 
 export default {
 	start(context: PluginContext) {
+		tagLifecycle++;
 		unpatch?.();
 		tagGradientRenderer?.stop();
 		unpatch = null;
 		tagGradientRenderer = null;
+		worker = context.native.worker;
 
 		permissionBits = (metro.findByProps('Permissions', 'ThemeTypes') as any)?.Permissions ?? null;
 		computePermissions =
@@ -233,17 +237,16 @@ export default {
 				const channel = channels.getChannel(message.channel_id);
 				const guild = channel?.guild_id ? guilds.getGuild(channel.guild_id) : null;
 
-				const tag = resolveTag(message, user, guild, channel);
-				if (!tag) return;
+				const decision = resolveTagDecision(
+					tagInput(message, user, guild, channel, result.opTagText),
+				);
+				if (!decision) return;
 
-				const appearance = resolveColors(tag, guild, user);
-				const { colors } = appearance;
-				const background = colors[0];
+				const { appearance } = decision;
+				const background = decision.background;
 				const { processColor } = metro.common.ReactNative;
-				const useOpTagStyle = STORE.get('useOpTagStyle', false);
-				const tagText = result.opTagText
-					? `${result.opTagText} · ${tag.displayName}`
-					: tag.displayName;
+				const useOpTagStyle = decision.style === 'op';
+				const tagText = decision.tagText;
 				if (useOpTagStyle) {
 					const tagged = {
 						...result,
@@ -261,7 +264,7 @@ export default {
 					return {
 						...tagged,
 						opTagBackgroundColor: processColor(background),
-						opTagTextColor: processColor(getContrastingTextColor(colors)),
+						opTagTextColor: processColor(decision.textColor),
 					};
 				}
 				const tagged = {
@@ -279,17 +282,24 @@ export default {
 				return {
 					...tagged,
 					tagBackgroundColor: processColor(background),
-					tagTextColor: processColor(getContrastingTextColor(colors)),
+					tagTextColor: processColor(decision.textColor),
 				};
 			} catch {}
 		});
 	},
 
 	stop() {
+		tagLifecycle++;
 		unpatch?.();
 		tagGradientRenderer?.stop();
 		unpatch = null;
 		tagGradientRenderer = null;
+		worker = null;
+		if (tagDecisionTimer) clearTimeout(tagDecisionTimer);
+		tagDecisionTimer = null;
+		tagDecisionCache.clear();
+		pendingTagDecisions.clear();
+		tagDecisionVersions.clear();
 		permissionBits = null;
 		computePermissions = null;
 		guilds = null;

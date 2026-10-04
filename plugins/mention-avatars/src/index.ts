@@ -1,8 +1,26 @@
+import {
+	extractMentionTokens,
+	type MentionBatchEntry,
+	type MentionBatchResult,
+	type MentionCandidate,
+	type MentionSelectionInput,
+	selectMentionBatch,
+	selectMentionLabel,
+	selectMentions,
+} from '@mention-avatars/mention-decisions';
 import { metro, patcher, storage } from '@unbound-app/api';
+
+export {
+	extractMentionTokens,
+	roleImageSource,
+	selectMentionLabel,
+} from '@mention-avatars/mention-decisions';
+
 import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeWorkerBridge,
 	PluginContext,
 } from '@unbound-app/api/native';
 
@@ -12,11 +30,6 @@ export type Mention = {
 	avatarURL?: string;
 	labels: string[];
 	roleColor?: number;
-	type: MentionType;
-};
-
-type MentionToken = {
-	id: string;
 	type: MentionType;
 };
 
@@ -35,33 +48,6 @@ type MentionImageMetrics = {
 	size: number;
 	trailing: number;
 };
-
-type RoleImageSource = {
-	avatarURL?: string;
-	roleColor?: number;
-};
-
-export function extractMentionTokens(content: string): MentionToken[] {
-	return [...content.matchAll(/<@!?([0-9]+)>|<@&([0-9]+)>/g)].map((match) => ({
-		id: match[1] ?? match[2],
-		type: match[1] ? 'user' : 'role',
-	}));
-}
-
-export function selectMentionLabel(text: string, labels: string[]): string | undefined {
-	const atOffset = text.indexOf('@');
-	if (atOffset === -1) return undefined;
-
-	const mentionText = text.slice(atOffset);
-	return [...labels]
-		.sort((left, right) => right.length - left.length)
-		.find((label) => {
-			const prefix = `@${label}`;
-			if (!mentionText.startsWith(prefix)) return false;
-			const next = mentionText[prefix.length];
-			return !next || next === '\u2068' || next === '\u2069' || /\s/u.test(next);
-		});
-}
 
 export function mentionImageMetrics(type: MentionType): MentionImageMetrics {
 	return {
@@ -94,19 +80,6 @@ export function mentionCellLifecycleAction(
 ): 'preserve' | 'render' | 'reset' {
 	if (reused) return 'reset';
 	return attached ? 'render' : 'preserve';
-}
-
-export function roleImageSource(role: {
-	color?: number;
-	icon?: string | null;
-	id: string;
-}): RoleImageSource {
-	return {
-		avatarURL: role.icon
-			? `https://cdn.discordapp.com/role-icons/${role.id}/${role.icon}.png?size=32&quality=lossless`
-			: undefined,
-		roleColor: typeof role.color === 'number' && role.color > 0 ? role.color : undefined,
-	};
 }
 
 export function cellRenderDecision(
@@ -161,11 +134,6 @@ type HighlightedRange = {
 	text: string;
 };
 
-type CollectedMentions = {
-	complete: boolean;
-	mentions: Mention[];
-};
-
 type SelectedChannel = {
 	addChangeListener?: (listener: () => void) => void;
 	getChannelId?: () => string | undefined;
@@ -196,6 +164,7 @@ let roles: {
 	getSortedRoles?: (guildId: string) => unknown[];
 } | null = null;
 let objc: NativeObjCBridge | null = null;
+let worker: NativeWorkerBridge | null = null;
 let hookTokens: NativeHookToken[] = [];
 const activeCells = new Map<string, NativeValue>();
 const pendingCells = new Set<string>();
@@ -204,9 +173,12 @@ const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
 const unresolvedMessageIDs = new Set<string>();
 const textViewStates = new Map<string, TextViewState>();
+const pendingWorkerSelections = new Map<string, MentionSelectionInput>();
+const workerSelectionSignatures = new Map<string, string>();
 let hydratedMessageKey: string | null = null;
 let lifecycleToken = 0;
 let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
+let workerSelectionTimer: ReturnType<typeof setTimeout> | null = null;
 let currentChannelId: string | undefined;
 
 function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
@@ -218,22 +190,7 @@ function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[
 	}
 }
 
-function pngURL(url: string): string {
-	const png = url.replace(/\.webp(?=\?|$)/, '.png');
-	if (/[?&]size=\d+/.test(png))
-		return png.replace(/([?&]size=)\d+/, (_, prefix: string) => `${prefix}32`);
-	return `${png}${png.includes('?') ? '&' : '?'}size=32`;
-}
-
-function userAvatarURL(user: User, guildId?: string): string | undefined {
-	const resolved = user.getAvatarURL?.(guildId ?? null, 32, false);
-	if (resolved) return pngURL(resolved);
-	if (user.avatar)
-		return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`;
-	return undefined;
-}
-
-function userMention(userId: string, guildId?: string): Mention | undefined {
+function userCandidate(userId: string, guildId?: string): MentionCandidate | undefined {
 	const user = users?.getUser?.(userId);
 	if (!user) return;
 
@@ -242,24 +199,28 @@ function userMention(userId: string, guildId?: string): Mention | undefined {
 		user.globalName,
 		user.username,
 	].filter((label): label is string => Boolean(label));
-	if (labels.length === 0) return;
-	return { avatarURL: userAvatarURL(user, guildId), labels: [...new Set(labels)], type: 'user' };
+	return {
+		avatar: user.avatar,
+		id: userId,
+		labels,
+		preferredURL: user.getAvatarURL?.(guildId ?? null, 32, false),
+		type: 'user',
+	};
 }
 
-function roleMention(roleId: string, guildId?: string): Mention | undefined {
+function roleCandidate(roleId: string, guildId?: string): MentionCandidate | undefined {
 	if (!guildId) return;
 	const role =
 		roles?.getRole?.(guildId, roleId) ??
 		(roles?.getSortedRoles?.(guildId)?.find((candidate: any) => candidate?.id === roleId) as
 			| { color?: number; icon?: string | null; id: string; name?: string }
 			| undefined);
-	if (!role?.name) return;
-
-	const image = roleImageSource(role);
+	if (!role) return;
 	return {
-		avatarURL: image.avatarURL,
-		labels: [role.name],
-		roleColor: image.roleColor,
+		color: role.color,
+		icon: role.icon,
+		id: roleId,
+		name: role.name,
 		type: 'role',
 	};
 }
@@ -272,27 +233,83 @@ function guildIdForMessage(message: any): string | undefined {
 	return channel?.guild_id ?? channel?.guildId;
 }
 
-function collectMentions(message: any): CollectedMentions {
-	const mentions: Mention[] = [];
-	let complete = true;
+function mentionSelectionInput(message: any): MentionSelectionInput {
 	const guildId = guildIdForMessage(message);
 	const content = message?.content;
-	if (typeof content !== 'string') return { complete, mentions };
+	if (typeof content !== 'string') return { candidates: [], content: '' };
+	const candidates = extractMentionTokens(content)
+		.map((token) =>
+			token.type === 'user' ? userCandidate(token.id, guildId) : roleCandidate(token.id, guildId),
+		)
+		.filter((candidate): candidate is MentionCandidate => Boolean(candidate));
+	return { candidates, content };
+}
 
-	for (const token of extractMentionTokens(content)) {
-		const mention =
-			token.type === 'user' ? userMention(token.id, guildId) : roleMention(token.id, guildId);
-		if (mention) mentions.push(mention);
-		else complete = false;
-	}
+function isMentionBatchResult(value: unknown): value is MentionBatchResult[] {
+	if (!Array.isArray(value)) return false;
+	return value.every((entry: unknown) => {
+		if (!entry || typeof entry !== 'object') return false;
+		const result = entry as MentionBatchResult;
+		return (
+			typeof result.id === 'string' &&
+			typeof result.selection?.complete === 'boolean' &&
+			Array.isArray(result.selection.mentions) &&
+			result.selection.mentions.every(
+				(mention) =>
+					Array.isArray(mention.labels) && (mention.type === 'user' || mention.type === 'role'),
+			)
+		);
+	});
+}
 
-	return { complete, mentions };
+function flushWorkerSelections(): void {
+	workerSelectionTimer = null;
+	if (!worker?.available || pendingWorkerSelections.size === 0) return;
+	const batch: MentionBatchEntry[] = [...pendingWorkerSelections.entries()]
+		.slice(0, 16)
+		.map(([id, input]) => ({ id, input }));
+	for (const { id } of batch) pendingWorkerSelections.delete(id);
+	const signatures = new Map(batch.map(({ id, input }) => [id, JSON.stringify(input)]));
+	const token = lifecycleToken;
+	void worker
+		.run('selectBatch', batch, selectMentionBatch, isMentionBatchResult)
+		.then((results) => {
+			if (token !== lifecycleToken) return;
+			let changed = false;
+			for (const { id, selection } of results) {
+				if (!signatures.has(id)) continue;
+				if (workerSelectionSignatures.get(id) !== signatures.get(id)) continue;
+				const previous = messageMentionIndex.get(id);
+				messageMentionIndex.set(id, selection.mentions);
+				if (selection.complete) unresolvedMessageIDs.delete(id);
+				else unresolvedMessageIDs.add(id);
+				changed ||= JSON.stringify(previous) !== JSON.stringify(selection.mentions);
+			}
+			if (changed) scanVisibleMessageCells();
+		})
+		.catch(() => undefined)
+		.finally(() => {
+			if (token !== lifecycleToken || pendingWorkerSelections.size === 0) return;
+			workerSelectionTimer = setTimeout(flushWorkerSelections, 250);
+		});
+}
+
+function queueWorkerSelection(id: string, input: MentionSelectionInput): void {
+	if (!worker?.available || extractMentionTokens(input.content).length === 0) return;
+	const signature = JSON.stringify(input);
+	if (workerSelectionSignatures.get(id) === signature) return;
+	workerSelectionSignatures.set(id, signature);
+	pendingWorkerSelections.set(id, input);
+	if (workerSelectionTimer) clearTimeout(workerSelectionTimer);
+	workerSelectionTimer = setTimeout(flushWorkerSelections, 250);
 }
 
 function addMentions(message: any): boolean {
 	const id = message?.id;
 	if (typeof id !== 'string') return false;
-	const { complete, mentions } = collectMentions(message);
+	const input = mentionSelectionInput(message);
+	const { complete, mentions } = selectMentions(input);
+	queueWorkerSelection(id, input);
 	if (!complete) {
 		unresolvedMessageIDs.add(id);
 		if (JSON.stringify(messageMentionIndex.get(id)) === JSON.stringify(mentions)) return false;
@@ -836,9 +853,7 @@ function scheduleVisibleCells(view: NativeValue): void {
 		if (!children || typeof children !== 'object') continue;
 		try {
 			for (const child of objc.array(children)) queue.push({ depth: node.depth + 1, view: child });
-		} catch {
-			continue;
-		}
+		} catch {}
 	}
 }
 
@@ -887,6 +902,10 @@ function onSelectedChannelChange(): void {
 	textViewStates.clear();
 	messageMentionIndex.clear();
 	unresolvedMessageIDs.clear();
+	pendingWorkerSelections.clear();
+	workerSelectionSignatures.clear();
+	if (workerSelectionTimer) clearTimeout(workerSelectionTimer);
+	workerSelectionTimer = null;
 	hydratedMessageKey = null;
 	scheduleVisibleCellScans();
 }
@@ -915,6 +934,7 @@ function installNativeHooks(): void {
 function start(context?: PluginContext): void {
 	lifecycleToken++;
 	objc = context?.native.objc ?? null;
+	worker = context?.native.worker ?? null;
 	if (!objc) return;
 	users = metro.findByProps('getCurrentUser', 'getUser');
 	members = metro.findStore('GuildMember');
@@ -940,6 +960,11 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycleToken++;
+	worker = null;
+	pendingWorkerSelections.clear();
+	workerSelectionSignatures.clear();
+	if (workerSelectionTimer) clearTimeout(workerSelectionTimer);
+	workerSelectionTimer = null;
 	unpatch?.();
 	unpatch = null;
 	for (const token of hookTokens) token.remove();

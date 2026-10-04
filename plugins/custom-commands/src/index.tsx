@@ -2,16 +2,17 @@ import { mediaUri, setMediaContext } from '@custom-commands/media';
 import { appendSavedCommands } from '@custom-commands/registration';
 import { CustomCommandsSettings } from '@custom-commands/settings';
 import {
+	type CommandDecision,
 	type CommandOption,
-	getOptionValue,
+	decideCommand,
 	getTagDescription,
 	normalizeTags,
 	parseTagArguments,
-	renderTagMessage,
 	type Tag,
+	type TagMedia,
 } from '@custom-commands/tags';
 import { metro, patcher, storage, toasts } from '@unbound-app/api';
-import type { PluginContext } from '@unbound-app/api/native';
+import type { NativeWorkerBridge, PluginContext } from '@unbound-app/api/native';
 
 const STORE = storage.getStore('unbound.custom-commands');
 const APPLICATION_ID = '-1';
@@ -60,6 +61,7 @@ type MessageActions = {
 };
 
 let unpatch: (() => void) | null = null;
+let worker: NativeWorkerBridge | null = null;
 
 function getTags(): Tag[] {
 	return normalizeTags(STORE.get('tags', []));
@@ -106,26 +108,26 @@ function createCommand(tag: Tag): BuiltInCommand {
 	};
 }
 
-async function uploadMedia(tag: Tag, channelId: string): Promise<CloudUpload[]> {
-	if (!tag.media.length) return [];
+async function uploadMedia(media: TagMedia[], channelId: string): Promise<CloudUpload[]> {
+	if (!media.length) return [];
 	const module = metro.findByProps('CloudUpload') as {
 		CloudUpload?: CloudUploadConstructor;
 	} | null;
 	const CloudUpload = module?.CloudUpload;
 	if (!CloudUpload) throw new Error('Discord file uploads are unavailable.');
 
-	const uploads = tag.media.map((media, index) => {
-		const uri = mediaUri(media);
+	const uploads = media.map((attachment, index) => {
+		const uri = mediaUri(attachment);
 		const item = {
 			id: `custom-commands-${Date.now()}-${index}`,
 			origin: 1,
 			uri,
 			originalUri: uri,
-			mimeType: media.mimeType,
-			width: media.width,
-			height: media.height,
-			filename: media.fileName,
-			playableDuration: media.duration ?? null,
+			mimeType: attachment.mimeType,
+			width: attachment.width,
+			height: attachment.height,
+			filename: attachment.fileName,
+			playableDuration: attachment.duration ?? null,
 			platform: 0,
 			createdUsingInAppCamera: false,
 			progress: 0,
@@ -144,15 +146,16 @@ async function executeTag(
 	options: CommandOption[],
 	context: CommandContext,
 ): Promise<void> {
-	const tag = getTags().find((entry) => entry.name === name);
-	const channelId = context?.channel?.id;
-	if (!tag || !channelId) return;
+	const input = { channelId: context?.channel?.id, name, options, tags: getTags() };
+	const decision = worker
+		? await worker.run('decide', input, decideCommand, isCommandDecision)
+		: decideCommand(input);
+	if (!decision) return;
+	const { channelId, content, ephemeral, media } = decision;
 
 	const messageActions = metro.findByProps('_sendMessage') as MessageActions | null;
 	if (!messageActions) throw new Error('Discord message actions are unavailable.');
-	const ephemeral = getOptionValue(options, 'ephemeral') === true;
-	const content = renderTagMessage(tag.message, options);
-	if (ephemeral && tag.media.length) {
+	if (ephemeral && media.length) {
 		toasts.showToast({
 			title: 'Custom Commands',
 			content: 'Commands with attachments cannot be sent ephemerally.',
@@ -172,7 +175,7 @@ async function executeTag(
 			} | null
 		)?.getPendingReply?.(channelId);
 		const replyOptions = messageActions.getSendMessageOptionsForReply?.(pendingReply) ?? {};
-		const attachmentsToUpload = await uploadMedia(tag, channelId);
+		const attachmentsToUpload = await uploadMedia(media, channelId);
 		const result = await messageActions._sendMessage(
 			channelId,
 			{ content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
@@ -195,9 +198,29 @@ async function executeTag(
 	}
 }
 
+function isCommandDecision(value: unknown): value is CommandDecision | null {
+	if (value === null) return true;
+	if (!value || typeof value !== 'object') return false;
+	const decision = value as Record<string, unknown>;
+	return (
+		typeof decision.channelId === 'string' &&
+		typeof decision.content === 'string' &&
+		typeof decision.ephemeral === 'boolean' &&
+		Array.isArray(decision.media) &&
+		decision.media.every(
+			(item) =>
+				item &&
+				typeof item === 'object' &&
+				typeof item.storedName === 'string' &&
+				typeof item.mimeType === 'string',
+		)
+	);
+}
+
 function start(context: PluginContext): void {
 	if (unpatch) return;
 	setMediaContext(context);
+	worker = context.native.worker;
 	const commands = metro.findByProps('getBuiltInCommands') as CommandModule | null;
 	if (!commands) throw new Error('Discord built-in commands are unavailable.');
 
@@ -209,6 +232,7 @@ function start(context: PluginContext): void {
 function stop(): void {
 	unpatch?.();
 	unpatch = null;
+	worker = null;
 	setMediaContext(null);
 }
 

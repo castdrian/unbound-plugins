@@ -14,8 +14,10 @@
 		"native.objc.classes",
 		"native.objc.invoke",
 		"native.objc.associations",
-		"native.objc.hooks"
+		"native.objc.hooks",
+		"native.worker.run"
 	],
 	"minNativePluginApi": "1.0.0",
-	"main": "index.tsx"
+	"main": "index.tsx",
+	"worker": "worker.js"
 }

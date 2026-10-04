@@ -5,7 +5,10 @@ import { fileURLToPath } from 'url';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import iife from 'rollup-plugin-iife';
-import { hermesExpressionEntrypoint } from '@unbound-plugins/rollup-path-aliases';
+import {
+	hermesExpressionEntrypoint,
+	workerExpressionEntrypoint,
+} from '@unbound-plugins/rollup-path-aliases';
 import { swc } from 'rollup-plugin-swc3';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -57,7 +60,7 @@ function manifestToDist() {
 	};
 }
 
-export default {
+const pluginConfig = {
 	input: 'src/index.ts',
 	output: {
 		dir: 'dist',
@@ -78,3 +81,23 @@ export default {
 		manifestToDist(),
 	],
 };
+
+const workerConfig = {
+	input: 'src/worker.ts',
+	output: {
+		dir: 'dist',
+		entryFileNames: 'worker.js',
+		format: 'es',
+		compact: true,
+		exports: 'named',
+	},
+	plugins: [
+		mentionAvatarsAlias(),
+		nodeResolve(),
+		swc({ jsc: { parser: { syntax: 'typescript' }, target: 'es2022' } }),
+		iife(),
+		workerExpressionEntrypoint(),
+	],
+};
+
+export default [pluginConfig, workerConfig];

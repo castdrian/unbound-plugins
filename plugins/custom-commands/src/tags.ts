@@ -26,6 +26,20 @@ export type CommandOption = {
 	options?: CommandOption[];
 };
 
+export type CommandDecisionInput = {
+	channelId?: string;
+	name: string;
+	options: CommandOption[];
+	tags: Tag[];
+};
+
+export type CommandDecision = {
+	channelId: string;
+	content: string;
+	ephemeral: boolean;
+	media: TagMedia[];
+};
+
 const ARGUMENT_PATTERN = /{{(.+?)}}/g;
 const COMMAND_NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 
@@ -138,4 +152,15 @@ export function renderTagMessage(
 			return defaultParts.length ? defaultParts.join('=').trim() : fullMatch;
 		})
 		.replaceAll('\\n', '\n');
+}
+
+export function decideCommand(input: CommandDecisionInput): CommandDecision | null {
+	const tag = input.tags.find((entry) => entry.name === input.name);
+	if (!tag || !input.channelId) return null;
+	return {
+		channelId: input.channelId,
+		content: renderTagMessage(tag.message, input.options),
+		ephemeral: getOptionValue(input.options, 'ephemeral') === true,
+		media: tag.media,
+	};
 }

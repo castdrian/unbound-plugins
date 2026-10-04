@@ -1,10 +1,12 @@
 import {
 	isCurrentReactionRequest,
 	REACTION_AVATAR_LIMIT,
+	type ReactionAvatarSelection,
 	type ReactionEmoji,
 	type ReactionLayoutItem,
 	type ReactionRecord,
 	ReactionUserCache,
+	type ReactionWorkerPresentation,
 	type Reactor,
 	reactionAvatarExtraWidth,
 	reactionAvatarFrame,
@@ -17,6 +19,8 @@ import {
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
+	reactionWorkerPlan,
+	reactionWorkerPresentation,
 	reflowReactionItems,
 	shouldHandleChannelChange,
 	shouldMeasureReactionAvatarWidth,
@@ -38,6 +42,7 @@ import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeWorkerBridge,
 	PluginContext,
 } from '@unbound-app/api/native';
 
@@ -231,6 +236,7 @@ const reactionLayoutRefreshes = new Map<string, ReturnType<typeof setTimeout>>()
 
 let objc: NativeObjCBridge | null = null;
 let fabric: NativeFabricBridge | null = null;
+let worker: NativeWorkerBridge | null = null;
 let reactionActions: ReactionActions | null = null;
 let messages: MessageStore | null = null;
 let dispatcher: Dispatcher | null = null;
@@ -905,7 +911,17 @@ function createReactionState(
 
 async function fetchReactionUsers(context: ReactionContext): Promise<Reactor[]> {
 	if (!reactionActions?.getReactors) return [];
-	const selection = reactionAvatarSelection(context.reaction, context.reactionType);
+	const planInput = {
+		reaction: {
+			burst_count: context.reaction.burst_count,
+			count: context.reaction.count,
+			count_details: context.reaction.count_details,
+		},
+		reactionType: context.reactionType,
+	};
+	const selection = worker
+		? await worker.run('plan', planInput, reactionWorkerPlan, isReactionAvatarSelection)
+		: reactionWorkerPlan(planInput);
 	const uniqueUsers = new Map<string, Reactor>();
 	for (const reactionType of selection.types) {
 		const remaining = REACTION_AVATAR_LIMIT - uniqueUsers.size;
@@ -939,7 +955,42 @@ async function fetchReactionUsers(context: ReactionContext): Promise<Reactor[]> 
 			console.error(error);
 		}
 	}
-	return [...uniqueUsers.values()];
+	const presentationInput = {
+		totalCount: selection.count,
+		users: [...uniqueUsers.values()].map(({ id, username, avatar }) => ({ id, username, avatar })),
+	};
+	const presentation = worker
+		? await worker.run(
+				'present',
+				presentationInput,
+				reactionWorkerPresentation,
+				isReactionWorkerPresentation,
+			)
+		: reactionWorkerPresentation(presentationInput);
+	return presentation.users;
+}
+
+function isReactionAvatarSelection(value: unknown): value is ReactionAvatarSelection {
+	return (
+		record(value) &&
+		typeof value.count === 'number' &&
+		Number.isFinite(value.count) &&
+		Array.isArray(value.types) &&
+		value.types.every((type) => type === 0 || type === 1)
+	);
+}
+
+function isReactionWorkerPresentation(value: unknown): value is ReactionWorkerPresentation {
+	return (
+		record(value) &&
+		typeof value.overflowCount === 'number' &&
+		typeof value.slotCount === 'number' &&
+		typeof value.stackWidth === 'number' &&
+		Array.isArray(value.positions) &&
+		value.positions.every((position) => typeof position === 'number') &&
+		Array.isArray(value.users) &&
+		value.users.every((user) => record(user) && typeof user.id === 'string')
+	);
 }
 
 function loadReactionUsers(state: ReactionSurfaceState): void {
@@ -1707,6 +1758,7 @@ function start(context?: PluginContext): void {
 	lifecycle++;
 	objc = context?.native.objc ?? null;
 	fabric = context?.native.fabric ?? null;
+	worker = context?.native.worker ?? null;
 	activated = false;
 	initialize();
 }
@@ -1738,6 +1790,7 @@ function stop(): void {
 	userSummaryItem = null;
 	objc = null;
 	fabric = null;
+	worker = null;
 	surfaceModuleName = '';
 }
 

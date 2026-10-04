@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import {
+	decideCommand,
 	getOptionValue,
 	getTagDescription,
 	normalizeTags,
@@ -9,10 +10,37 @@ import {
 	type Tag,
 	validateTag,
 } from '@custom-commands/tags';
+import worker from '@custom-commands/worker';
 
 function tag(name: string, message: string): Tag {
 	return { name, message, media: [] };
 }
+
+test('worker and host make the same text, media, and ephemeral decisions', () => {
+	const media = {
+		storedName: 'custom-commands-123-abc.png',
+		fileName: 'photo.png',
+		fileSize: 12,
+		mimeType: 'image/png',
+	};
+	const input = {
+		channelId: '123',
+		name: 'greet',
+		options: [
+			{ name: 'user', value: '@Clyde' },
+			{ name: 'ephemeral', value: true },
+		],
+		tags: [{ name: 'greet', message: 'Hi {{user}}', media: [media] }],
+	};
+	expect(worker.decide(input)).toEqual(decideCommand(input));
+	expect(worker.decide(input)).toEqual({
+		channelId: '123',
+		content: 'Hi @Clyde',
+		ephemeral: true,
+		media: [media],
+	});
+	expect(worker.decide({ ...input, name: 'missing' })).toBeNull();
+});
 
 test('extracts required and optional arguments once per name', () => {
 	expect(parseTagArguments('Hi {{User}}! {{mood = great}} {{user}}')).toEqual([

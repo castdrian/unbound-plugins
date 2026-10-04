@@ -21,11 +21,14 @@ import {
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
+	reactionWorkerPlan,
+	reactionWorkerPresentation,
 	reflowReactionItems,
 	shouldHandleChannelChange,
 	shouldMeasureReactionAvatarWidth,
 	shouldRenderReactionAvatars,
 } from '@reaction-avatars/reaction-state';
+import worker from '@reaction-avatars/worker';
 
 type ElementTree = {
 	children: unknown[];
@@ -61,6 +64,24 @@ const {
 } = await import('@reaction-avatars/reaction-surface');
 
 describe('reaction avatar state', () => {
+	test('worker and host choose identical reactor plans and stacks', () => {
+		const planInput = {
+			reaction: { count: 8, count_details: { normal: 6, burst: 2 } },
+		};
+		expect(worker.plan(planInput)).toEqual(reactionWorkerPlan(planInput));
+		const presentationInput = {
+			totalCount: 8,
+			users: [{ id: 'first' }, { id: 'second' }, { id: 'first' }, { id: 'third' }],
+		};
+		expect(worker.present(presentationInput)).toEqual(
+			reactionWorkerPresentation(presentationInput),
+		);
+		expect(worker.present(presentationInput)).toMatchObject({
+			overflowCount: 5,
+			positions: [0, 5, 10, 15],
+			users: [{ id: 'first' }, { id: 'second' }, { id: 'third' }],
+		});
+	});
 	test('selects normal and burst reactor requests independently', () => {
 		const reaction = { burst_count: 3, count: 9, count_details: { burst: 3, normal: 6 } };
 

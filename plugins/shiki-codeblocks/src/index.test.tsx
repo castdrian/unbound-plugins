@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { decideCodeLayout } from '@shiki-codeblocks/code-layout';
+import worker from '@shiki-codeblocks/worker';
 
 let nativeHookClass: string | null = null;
 let nativeHookSelector: string | null = null;
@@ -345,6 +347,15 @@ describe('native fenced code matching', () => {
 });
 
 describe('native syntax rendering', () => {
+	test('worker and fallback agree on highlighting and wrap geometry', () => {
+		const tokenInput = { code: 'const answer = 42;', language: 'javascript', light: false };
+		const layoutInput = { code: 'const answer = 42;', width: 280, overflow: 'wrap' as const };
+		expect(worker.tokenize(tokenInput)).toEqual(
+			highlightCodeToTokens(tokenInput.code, tokenInput.language, tokenInput.light),
+		);
+		expect(worker.layout(layoutInput)).toEqual(decideCodeLayout(layoutInput));
+		expect(worker.layoutBatch([layoutInput])).toEqual([decideCodeLayout(layoutInput)]);
+	});
 	test('copies the exact code and confirms it with an Unbound toast', async () => {
 		const code = 'const answer = 42;\nconsole.log(answer);';
 

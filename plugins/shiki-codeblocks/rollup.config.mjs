@@ -10,6 +10,7 @@ import { swc } from 'rollup-plugin-swc3';
 import {
 	bunPathAliases,
 	hermesExpressionEntrypoint,
+	workerExpressionEntrypoint,
 } from '@unbound-plugins/rollup-path-aliases';
 
 const pluginRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -34,7 +35,7 @@ function manifestToDist() {
 	};
 }
 
-export default {
+const pluginConfig = {
 	input: 'src/index.tsx',
 	external: Object.keys(globals),
 	plugins: [
@@ -56,3 +57,24 @@ export default {
 		globals,
 	},
 };
+
+const workerConfig = {
+	input: 'src/worker.ts',
+	plugins: [
+		bunPathAliases(),
+		nodeResolve(),
+		commonjs(),
+		swc({ tsconfig: false }),
+		iife(),
+		workerExpressionEntrypoint(),
+	],
+	output: {
+		dir: 'dist',
+		entryFileNames: 'worker.js',
+		format: 'es',
+		compact: true,
+		exports: 'named',
+	},
+};
+
+export default [pluginConfig, workerConfig];

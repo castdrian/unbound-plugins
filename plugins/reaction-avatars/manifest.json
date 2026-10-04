@@ -13,10 +13,12 @@
 		"native.objc.invoke",
 		"native.objc.ivars",
 		"native.objc.hooks",
-		"native.fabric.mount"
+		"native.fabric.mount",
+		"native.worker.run"
 	],
 	"minNativePluginApi": "1.0.0",
 	"version": "1.0.0",
 	"icon": "ReactionIcon",
-	"main": "index.tsx"
+	"main": "index.tsx",
+	"worker": "worker.js"
 }

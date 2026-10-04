@@ -6,6 +6,17 @@ export type LinkTarget = {
 	messageId: string;
 };
 
+export type LinkDecisionInput = {
+	content: string;
+	id: string;
+};
+
+export type LinkDecision = {
+	id: string;
+	selected: LinkTarget | null;
+	targets: LinkTarget[];
+};
+
 export type TextRange = {
 	location: number;
 	length: number;
@@ -47,6 +58,15 @@ export function linkedTargets(message: MessageLike): LinkTarget[] {
 			targets.push(target);
 	}
 	return targets;
+}
+
+export function decideLink(input: LinkDecisionInput): LinkDecision {
+	const targets = linkedTargets({ content: input.content });
+	return { id: input.id, selected: targets[0] ?? null, targets };
+}
+
+export function decideLinkBatch(inputs: LinkDecisionInput[]): LinkDecision[] {
+	return inputs.map(decideLink);
 }
 
 export function findRenderedLinkRange(text: string, channelName: string): TextRange | undefined {

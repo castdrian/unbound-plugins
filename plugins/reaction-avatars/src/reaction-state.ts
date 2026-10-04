@@ -17,6 +17,24 @@ export type ReactionAvatarSelection = {
 	types: number[];
 };
 
+export type ReactionWorkerPlanInput = {
+	reaction: ReactionRecord;
+	reactionType?: number;
+};
+
+export type ReactionWorkerPresentationInput = {
+	totalCount: number;
+	users: Reactor[];
+};
+
+export type ReactionWorkerPresentation = {
+	overflowCount: number;
+	positions: number[];
+	slotCount: number;
+	stackWidth: number;
+	users: Reactor[];
+};
+
 export type ReactionAvatarFrame = {
 	x: number;
 	width: number;
@@ -451,6 +469,32 @@ export function reactionAvatarSelection(
 	if (burstCount) types.push(1);
 
 	return { count: normalCount + burstCount, types };
+}
+
+export function reactionWorkerPlan(input: ReactionWorkerPlanInput): ReactionAvatarSelection {
+	return reactionAvatarSelection(input.reaction, input.reactionType);
+}
+
+export function reactionWorkerPresentation(
+	input: ReactionWorkerPresentationInput,
+): ReactionWorkerPresentation {
+	const uniqueUsers: Reactor[] = [];
+	const seen = new Set<string>();
+	for (const user of input.users) {
+		if (!user?.id || seen.has(user.id)) continue;
+		seen.add(user.id);
+		uniqueUsers.push(user);
+		if (uniqueUsers.length >= REACTION_AVATAR_LIMIT) break;
+	}
+	const presentation = reactionAvatarPresentation(uniqueUsers, input.totalCount);
+	const positions = reactionAvatarStackPositions(presentation.slotCount);
+	return {
+		overflowCount: presentation.overflowCount,
+		positions,
+		slotCount: presentation.slotCount,
+		stackWidth: reactionAvatarStackWidth(presentation.slotCount),
+		users: uniqueUsers,
+	};
 }
 
 export function reactionAvatarKey(
