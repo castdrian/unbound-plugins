@@ -5,7 +5,10 @@ let threadPatchHandler: ((context: any) => any) | null = null;
 let threadRendererPatchHandler: ((context: any) => any) | null = null;
 let unpatchCount = 0;
 let moduleListenerCount = 0;
+let moduleListener: (() => void) | null = null;
 let moduleAvailable = true;
+let typingStoreAvailable = true;
+let userStoreAvailable = true;
 let selectedChannelId: string | null = null;
 let typingUserSnapshot: Record<string, number> = {};
 let nextDotIndex = 0;
@@ -18,6 +21,7 @@ const unresolvedUsers = new Set<string>();
 const target = { type: () => null };
 const threadModule = { default: () => null };
 const typingListeners = new Set<() => void>();
+const effectCleanups = new Set<() => void>();
 const typingStore = {
 	getTypingUsers: () => typingUserSnapshot,
 	addChangeListener(listener: () => void) {
@@ -61,7 +65,8 @@ const react = {
 		return [typeof initial === 'function' ? initial() : initial, () => {}];
 	},
 	useEffect(effect: () => void | (() => void)) {
-		effect();
+		const cleanup = effect();
+		if (cleanup) effectCleanups.add(cleanup);
 	},
 	useRef(value: unknown) {
 		return { current: value };
@@ -148,13 +153,15 @@ mock.module('@unbound-app/api', () => ({
 					},
 					hideActionSheet() {},
 				};
-			if (props.includes('getTypingUsers')) return typingStore;
+			if (props.includes('getTypingUsers')) return typingStoreAvailable ? typingStore : null;
 			if (props.includes('getChannelId')) return { getChannelId: () => selectedChannelId };
 			if (props.includes('getCurrentUser'))
-				return {
-					getCurrentUser: () => ({ id: 'self' }),
-					getUser: (id: string) => (unresolvedUsers.has(id) ? null : { id }),
-				};
+				return userStoreAvailable
+					? {
+							getCurrentUser: () => ({ id: 'self' }),
+							getUser: (id: string) => (unresolvedUsers.has(id) ? null : { id }),
+						}
+					: null;
 			if (props.includes('isChannelMuted')) return { isChannelMuted: () => false };
 			if (props.includes('isBlocked')) return { isBlocked: () => false };
 			if (props.includes('UserIcon')) return { UserIcon: () => null };
@@ -166,8 +173,9 @@ mock.module('@unbound-app/api', () => ({
 					? threadModule
 					: { default: target }
 				: null,
-		addListener: () => {
+		addListener: (listener: () => void) => {
 			moduleListenerCount++;
+			moduleListener = listener;
 			return () => true;
 		},
 	},
@@ -241,13 +249,18 @@ function renderIndicator(indicator: any): any {
 }
 
 afterEach(() => {
+	for (const cleanup of effectCleanups) cleanup();
+	effectCleanups.clear();
 	plugin.stop();
 	patchHandler = null;
 	threadPatchHandler = null;
 	threadRendererPatchHandler = null;
 	unpatchCount = 0;
 	moduleListenerCount = 0;
+	moduleListener = null;
 	moduleAvailable = true;
+	typingStoreAvailable = true;
+	userStoreAvailable = true;
 	selectedChannelId = null;
 	typingUserSnapshot = {};
 	nextDotIndex = 0;
@@ -347,6 +360,18 @@ describe('channel row integration', () => {
 		expect(insertTypingIndicator(original, { id: 'channel' }, false)).toBe(original);
 	});
 
+	test('does not insert a second indicator from a previous plugin evaluation', () => {
+		const channel = { id: 'channel', guild_id: 'guild' };
+		const updated = insertTypingIndicator(channelRow(channel.id), channel, false);
+		const children = updated.props.children[1].props.children[1].props.children;
+		children[2] = {
+			...children[2],
+			type: 'PreviousIndicatorBoundary',
+			key: 'unbound.channel-typing-indicators',
+		};
+		expect(insertTypingIndicator(updated, channel, false)).toBe(updated);
+	});
+
 	test('adds typing to thread rows without replacing their native layout', () => {
 		const channel = { id: 'thread', guild_id: 'guild' };
 		const original = threadRow(channel.id);
@@ -369,6 +394,18 @@ describe('channel row integration', () => {
 		const info = updated.props.children[2].props.children[2].props.channelInfo;
 		expect(info.props.children[0].type).toBe('ExistingBadge');
 		expect(wrappedIndicator(info.props.children[1]).props.channel).toBe(channel);
+		expect(insertThreadTypingIndicator(updated, channel, false)).toBe(updated);
+	});
+
+	test('does not insert a second thread indicator from a previous plugin evaluation', () => {
+		const channel = { id: 'thread', guild_id: 'guild' };
+		const updated = insertThreadTypingIndicator(threadRow(channel.id), channel, false);
+		const row = updated.props.children[2].props.children[2];
+		row.props.channelInfo = {
+			...row.props.channelInfo,
+			type: 'PreviousIndicatorBoundary',
+			key: 'unbound.channel-typing-indicators',
+		};
 		expect(insertThreadTypingIndicator(updated, channel, false)).toBe(updated);
 	});
 
@@ -424,6 +461,24 @@ describe('channel row integration', () => {
 		expect(typingListeners.size).toBe(0);
 	});
 
+	test('resumes mounted row listeners when re-enabled without a row remount', () => {
+		typingUserSnapshot = { other: 1 };
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		indicator.type(indicator.props);
+		expect(typingListeners.size).toBe(1);
+		plugin.stop();
+		expect(typingListeners.size).toBe(0);
+		plugin.start();
+		expect(typingListeners.size).toBe(1);
+	});
+
 	test('can hide the selected channel without hiding other typing channels', () => {
 		settingsValues.set('includeCurrentChannel', false);
 		selectedChannelId = 'channel';
@@ -476,6 +531,9 @@ describe('channel row integration', () => {
 		expect(content.props.children[0].type).toBeFunction();
 		expect(content.props.children[1].type).toBe('Pressable');
 		expect(content.props.children[1].props.children.type).toBeFunction();
+		let stopped = false;
+		content.props.children[1].props.onPress({ stopPropagation: () => (stopped = true) });
+		expect(stopped).toBe(true);
 	});
 
 	test('opens a known typing avatar profile without navigating the channel', async () => {
@@ -541,6 +599,9 @@ describe('channel row integration', () => {
 		const second = stack.props.children[0][1].props.children;
 		expect(first.type).toBe('Pressable');
 		expect(first.props.onLongPress).toBeFunction();
+		let stopped = false;
+		first.props.onPress({ stopPropagation: () => (stopped = true) });
+		expect(stopped).toBe(true);
 		expect(first.props.children.type).toBe('View');
 		expect(first.props.children.props.children.type).toBeFunction();
 		expect(second.type).toBe('Pressable');
@@ -565,6 +626,9 @@ describe('channel row integration', () => {
 		const overflow = avatars.type(avatars.props).props.children[1];
 		expect(overflow.type).toBe('Pressable');
 		expect(overflow.props.onLongPress).toBeFunction();
+		let stopped = false;
+		overflow.props.onPress({ stopPropagation: () => (stopped = true) });
+		expect(stopped).toBe(true);
 		expect(overflow.props.children.props.children.props.children).toBe('+2');
 		expect(overflow.props.style.marginLeft).toBe(-6);
 		expect(overflow.props.style.zIndex).toBeGreaterThan(3);
@@ -620,5 +684,25 @@ describe('channel row integration', () => {
 		plugin.start();
 		expect(moduleListenerCount).toBe(1);
 		expect(patchHandler).toBeNull();
+	});
+
+	test('waits for a late-loaded typing store before patching channel rows', () => {
+		typingStoreAvailable = false;
+		plugin.start();
+		expect(moduleListenerCount).toBe(1);
+		expect(patchHandler).toBeNull();
+		typingStoreAvailable = true;
+		moduleListener?.();
+		expect(patchHandler).toBeFunction();
+	});
+
+	test('waits for a late-loaded user store before patching channel rows', () => {
+		userStoreAvailable = false;
+		plugin.start();
+		expect(moduleListenerCount).toBe(1);
+		expect(patchHandler).toBeNull();
+		userStoreAvailable = true;
+		moduleListener?.();
+		expect(patchHandler).toBeFunction();
 	});
 });

@@ -67,6 +67,18 @@ type TooltipPlacement = {
 	top: number;
 	width: number;
 };
+type ActiveIndicator = { pause: () => void; resume: () => void };
+type IndicatorRegistry = { enabled: boolean; indicators: Set<ActiveIndicator> };
+
+const INDICATOR_REGISTRY_KEY = Symbol.for('unbound.channel-typing-indicators.indicators');
+const registryHost = globalThis as typeof globalThis & {
+	[key: symbol]: IndicatorRegistry | undefined;
+};
+const indicatorRegistry = registryHost[INDICATOR_REGISTRY_KEY] ?? {
+	enabled: false,
+	indicators: new Set<ActiveIndicator>(),
+};
+registryHost[INDICATOR_REGISTRY_KEY] = indicatorRegistry;
 
 let typingStore: TypingStore | null = null;
 let userStore: UserStore | null = null;
@@ -87,7 +99,7 @@ let threadRenderer: ((props: any) => any) | null = null;
 let threadRendererHost: { render: (props: any) => any } | null = null;
 let removeModuleListener: (() => boolean) | null = null;
 let started = false;
-const activeIndicators = new Set<() => void>();
+const activeIndicators = indicatorRegistry.indicators;
 
 class IndicatorBoundary extends metro.common.React.Component<
 	{ children: any },
@@ -347,7 +359,7 @@ function TypingAvatars({
 							/>
 						</ReactNative.Pressable>
 					) : (
-						<ReactNative.Pressable onLongPress={showAvatarsTooltip}>
+						<ReactNative.Pressable onPress={showAvatarsTooltip} onLongPress={showAvatarsTooltip}>
 							<ReactNative.View
 								style={{
 									alignItems: 'center',
@@ -368,6 +380,7 @@ function TypingAvatars({
 			))}
 			{overflow > 0 ? (
 				<ReactNative.Pressable
+					onPress={showAvatarsTooltip}
 					onLongPress={showAvatarsTooltip}
 					style={{ marginLeft: -6, zIndex: MAX_AVATARS + 1 }}
 				>
@@ -407,10 +420,11 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 	);
 
 	React.useEffect(() => {
-		const currentTypingStore = typingStore;
-		const currentRelationshipStore = relationshipStore;
-		const currentGuildSettingsStore = guildSettingsStore;
-		const currentSelectedChannelStore = selectedChannelStore;
+		let subscribed = false;
+		let currentTypingStore: TypingStore | null = null;
+		let currentRelationshipStore: RelationshipStore | null = null;
+		let currentGuildSettingsStore: GuildSettingsStore | null = null;
+		let currentSelectedChannelStore: SelectedChannelStore | null = null;
 		function refresh(): void {
 			const next = readTypingIds(
 				channel,
@@ -422,25 +436,49 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 			);
 			setTypingIds((current) => (sameIds(current, next) ? current : next));
 		}
-		function remove(): void {
+		function unsubscribe(): void {
+			if (!subscribed) return;
+			subscribed = false;
 			currentTypingStore?.removeChangeListener(refresh);
 			currentRelationshipStore?.removeChangeListener?.(refresh);
 			currentGuildSettingsStore?.removeChangeListener?.(refresh);
 			currentSelectedChannelStore?.removeChangeListener?.(refresh);
-			activeIndicators.delete(dispose);
+			currentTypingStore = null;
+			currentRelationshipStore = null;
+			currentGuildSettingsStore = null;
+			currentSelectedChannelStore = null;
 		}
-		function dispose(): void {
-			remove();
+		function pause(): void {
+			unsubscribe();
 			setTypingIds([]);
+			setTooltipAnchor(null);
 		}
-
-		refresh();
-		currentTypingStore?.addChangeListener(refresh);
-		currentRelationshipStore?.addChangeListener?.(refresh);
-		currentGuildSettingsStore?.addChangeListener?.(refresh);
-		currentSelectedChannelStore?.addChangeListener?.(refresh);
-		activeIndicators.add(dispose);
-		return remove;
+		function resume(): void {
+			if (
+				subscribed ||
+				!indicatorRegistry.enabled ||
+				!typingStore?.getTypingUsers ||
+				!userStore?.getUser
+			)
+				return;
+			currentTypingStore = typingStore;
+			currentRelationshipStore = relationshipStore;
+			currentGuildSettingsStore = guildSettingsStore;
+			currentSelectedChannelStore = selectedChannelStore;
+			subscribed = true;
+			refresh();
+			currentTypingStore.addChangeListener(refresh);
+			currentRelationshipStore?.addChangeListener?.(refresh);
+			currentGuildSettingsStore?.addChangeListener?.(refresh);
+			currentSelectedChannelStore?.addChangeListener?.(refresh);
+		}
+		const indicator = { pause, resume };
+		activeIndicators.add(indicator);
+		resume();
+		return () => {
+			unsubscribe();
+			activeIndicators.delete(indicator);
+		};
 	}, [
 		channel.id,
 		channel.guild_id,
@@ -488,7 +526,10 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 					<ReactNative.Pressable
 						ref={dotsRef}
 						accessibilityLabel={label}
-						onPress={() => showTooltip(dotsRef)}
+						onPress={(event: any) => {
+							event.stopPropagation();
+							showTooltip(dotsRef);
+						}}
 					>
 						<TypingDots />
 					</ReactNative.Pressable>
@@ -528,6 +569,14 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 	);
 }
 
+function isIndicatorBoundary(element: any): boolean {
+	return (
+		element?.type === IndicatorBoundary ||
+		element?.key === ADDON_ID ||
+		element?.props?.key === ADDON_ID
+	);
+}
+
 export function insertTypingIndicator(result: any, channel: Channel, muted: boolean): any {
 	const { React } = metro.common;
 	const outerChildren = result?.props?.children;
@@ -542,13 +591,13 @@ export function insertTypingIndicator(result: any, channel: Channel, muted: bool
 	);
 	if (!content) return result;
 	const contentChildren = content.props.children;
-	if (contentChildren.some((part: any) => part?.type === IndicatorBoundary)) return result;
+	if (contentChildren.some(isIndicatorBoundary)) return result;
 	const infoIndex = contentChildren.findIndex(
 		(part: any) => part?.props?.channel?.id === channel.id,
 	);
 	if (infoIndex < 0) return result;
 	const indicator = (
-		<IndicatorBoundary>
+		<IndicatorBoundary key={ADDON_ID}>
 			<ChannelTypingIndicator channel={channel} muted={muted} />
 		</IndicatorBoundary>
 	);
@@ -582,13 +631,10 @@ export function insertThreadTypingIndicator(result: any, channel: Channel, muted
 		);
 		if (!row) continue;
 		const currentInfo = row.props.channelInfo;
-		if (
-			currentInfo?.type === IndicatorBoundary ||
-			currentInfo?.props?.children?.[1]?.type === IndicatorBoundary
-		)
+		if (isIndicatorBoundary(currentInfo) || isIndicatorBoundary(currentInfo?.props?.children?.[1]))
 			return result;
 		const indicator = (
-			<IndicatorBoundary>
+			<IndicatorBoundary key={ADDON_ID}>
 				<ChannelTypingIndicator channel={channel} muted={muted} />
 			</IndicatorBoundary>
 		);
@@ -646,20 +692,22 @@ function patchThreadChannel(module: any): boolean {
 	return true;
 }
 
-function waitForChannelModules(): void {
+function patchAvailableChannelModules(): boolean {
+	typingStore ??= metro.findByProps('getTypingUsers') as TypingStore | null;
+	userStore ??= metro.findByProps('getCurrentUser', 'getUser') as UserStore | null;
+	if (!typingStore?.getTypingUsers || !userStore?.getUser) return false;
+	for (const indicator of activeIndicators) indicator.resume();
 	const textReady = patchTextChannel(metro.findByFilePath(TEXT_CHANNEL_PATH, { interop: false }));
 	const threadReady = patchThreadChannel(
 		metro.findByFilePath(THREAD_CHANNEL_PATH, { interop: false }),
 	);
-	if (textReady && threadReady) return;
+	return textReady && threadReady;
+}
+
+function waitForChannelModules(): void {
+	if (patchAvailableChannelModules()) return;
 	removeModuleListener = metro.addListener(() => {
-		const textAvailable = patchTextChannel(
-			metro.findByFilePath(TEXT_CHANNEL_PATH, { interop: false }),
-		);
-		const threadAvailable = patchThreadChannel(
-			metro.findByFilePath(THREAD_CHANNEL_PATH, { interop: false }),
-		);
-		if (!textAvailable || !threadAvailable) return;
+		if (!patchAvailableChannelModules()) return;
 		removeModuleListener?.();
 		removeModuleListener = null;
 	});
@@ -721,6 +769,7 @@ export default {
 	start() {
 		if (started) return;
 		started = true;
+		indicatorRegistry.enabled = true;
 		typingStore = metro.findByProps('getTypingUsers') as TypingStore | null;
 		userStore = metro.findByProps('getCurrentUser', 'getUser') as UserStore | null;
 		relationshipStore = metro.findByProps('isBlocked') as RelationshipStore | null;
@@ -738,12 +787,12 @@ export default {
 			const appearance = module?.theme;
 			return typeof appearance === 'string' && Object.values(theme.themes).includes(appearance);
 		}) as ThemeStore | null;
-		if (!typingStore?.getTypingUsers || !userStore?.getUser) return;
 		waitForChannelModules();
 	},
 	stop() {
 		started = false;
-		for (const dispose of [...activeIndicators]) dispose();
+		indicatorRegistry.enabled = false;
+		for (const indicator of activeIndicators) indicator.pause();
 		unpatchText?.();
 		unpatchText = null;
 		unpatchThread?.();
@@ -754,18 +803,6 @@ export default {
 		threadRendererHost = null;
 		removeModuleListener?.();
 		removeModuleListener = null;
-		typingStore = null;
-		userStore = null;
-		relationshipStore = null;
-		selectedChannelStore = null;
-		guildSettingsStore = null;
-		memberStore = null;
-		userSummaryItem = null;
-		userIcon = null;
-		tooltipComponents = null;
-		profileSheet = null;
-		actionSheets = null;
-		themeStore = null;
 	},
 	getSettingsPanel: () => <ChannelTypingSettings />,
 };
