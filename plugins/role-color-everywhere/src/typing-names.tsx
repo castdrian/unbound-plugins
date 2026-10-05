@@ -1,6 +1,6 @@
-import { getRoleColorAppearance, roleColorAt, type RoleColorAppearance } from '@shared/role-colors';
+import { paintRoleTextTree } from '@role-color-everywhere/role-text';
+import { getRoleColorAppearance, type RoleColorAppearance } from '@shared/role-colors';
 import { metro, patcher } from '@unbound-app/api';
-import type { ReactElement } from 'react';
 
 const TYPING_INDICATOR_PATH = 'modules/chat/native/TypingIndicator.tsx';
 
@@ -20,56 +20,12 @@ interface TypingItemProps {
 	appearances: Map<string, RoleColorAppearance>;
 }
 
-function paintTypingTree(node: any, appearances: Map<string, RoleColorAppearance>, depth = 0): any {
-	if (depth > 12 || !node) return node;
-	const { React, ReactNative } = metro.common;
-	if (Array.isArray(node)) {
-		const next = node.map((child) => paintTypingTree(child, appearances, depth + 1));
-		return next.some((child, index) => child !== node[index]) ? next : node;
-	}
-	if (!React.isValidElement(node)) return node;
-	const element = node as ReactElement<any>;
-
-	const children = element.props?.children;
-	const name =
-		typeof children === 'string'
-			? children
-			: Array.isArray(children) && children.length === 1 && typeof children[0] === 'string'
-				? children[0]
-				: null;
-	const appearance = name ? appearances.get(name) : null;
-	if (appearance?.colors.length === 1)
-		return React.cloneElement(element, {
-			style: [element.props.style, { color: appearance.colors[0] }],
-		});
-	if (appearance && name) {
-		const characters = Array.from(name);
-		const colored = characters.map((character, index) =>
-			React.createElement(
-				ReactNative.Text,
-				{
-					key: index,
-					style: {
-						color:
-							roleColorAt(
-								appearance.colors,
-								characters.length === 1 ? 0 : index / (characters.length - 1),
-							) ?? appearance.colors[0],
-					},
-				},
-				character,
-			),
-		);
-		return React.cloneElement(element, { children: colored });
-	}
-
-	const next = paintTypingTree(children, appearances, depth + 1);
-	return next === children ? node : React.cloneElement(element, { children: next });
-}
-
 function TypingNameRenderer({ original, properties, appearances }: TypingItemProps) {
 	const result = original(properties);
-	return paintTypingTree(result, appearances);
+	return paintRoleTextTree(result, appearances, {
+		React: metro.common.React,
+		Text: metro.common.ReactNative.Text,
+	});
 }
 
 export function installTypingNameColors(members: MemberStore, enabled: () => boolean): () => void {

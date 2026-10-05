@@ -5,9 +5,12 @@ import {
 	type MemberStore,
 } from '@role-color-everywhere/chat-rows';
 import { installMemberListColors } from '@role-color-everywhere/member-list';
+import { installPollVoterColors } from '@role-color-everywhere/poll-voters';
+import { installReactionUserColors } from '@role-color-everywhere/reaction-users';
 import { installNativeMentionColors } from '@role-color-everywhere/native-mentions';
 import { installComposerMentionColors } from '@role-color-everywhere/composer-mentions';
 import { installTypingNameColors } from '@role-color-everywhere/typing-names';
+import { installVoiceUserColors } from '@role-color-everywhere/voice-users';
 
 import {
 	getSettingsColors,
@@ -31,6 +34,9 @@ let unpatchMemberList: (() => void) | null = null;
 let unpatchNativeMentions: (() => void) | null = null;
 let unpatchComposerMentions: (() => void) | null = null;
 let unpatchTypingNames: (() => void) | null = null;
+let unpatchReactionUsers: (() => void) | null = null;
+let unpatchPollVoters: (() => void) | null = null;
+let unpatchVoiceUsers: (() => void) | null = null;
 let removeModuleListener: (() => boolean) | null = null;
 
 function chatOptions(): ChatColorOptions {
@@ -129,6 +135,24 @@ function RoleColorSettings() {
 					value={settings.get('memberList', true)}
 					onValueChange={(value: boolean) => settings.set('memberList', value)}
 				/>
+				<SettingsSwitchRow
+					label='Reaction Users'
+					description='Color names in the reaction details list'
+					value={settings.get('reactorsList', true)}
+					onValueChange={(value: boolean) => settings.set('reactorsList', value)}
+				/>
+				<SettingsSwitchRow
+					label='Poll Voters'
+					description='Color names in poll result details'
+					value={settings.get('pollResults', true)}
+					onValueChange={(value: boolean) => settings.set('pollResults', value)}
+				/>
+				<SettingsSwitchRow
+					label='Voice Users'
+					description='Color members’ names in voice user lists'
+					value={settings.get('voiceUsers', true)}
+					onValueChange={(value: boolean) => settings.set('voiceUsers', value)}
+				/>
 			</SettingsSection>
 		</SettingsScrollView>
 	);
@@ -139,6 +163,14 @@ export default {
 		members = metro.findStore('GuildMember') as MemberStore | null;
 		if (members)
 			unpatchTypingNames = installTypingNameColors(members, () => STORE.get('typingUsers', true));
+		if (members)
+			unpatchReactionUsers = installReactionUserColors(members, () =>
+				STORE.get('reactorsList', true),
+			);
+		if (members)
+			unpatchPollVoters = installPollVoterColors(members, () => STORE.get('pollResults', true));
+		if (members)
+			unpatchVoiceUsers = installVoiceUserColors(members, () => STORE.get('voiceUsers', true));
 		nativeObjC = context?.native.objc ?? null;
 		setNativeMentions(STORE.get('chatMentions', true));
 		const roles = metro.findStore('GuildRole') as
@@ -158,6 +190,12 @@ export default {
 		unpatchComposerMentions = null;
 		unpatchTypingNames?.();
 		unpatchTypingNames = null;
+		unpatchReactionUsers?.();
+		unpatchReactionUsers = null;
+		unpatchPollVoters?.();
+		unpatchPollVoters = null;
+		unpatchVoiceUsers?.();
+		unpatchVoiceUsers = null;
 		unpatchNativeMentions?.();
 		unpatchNativeMentions = null;
 		unpatchMemberList?.();
