@@ -10,7 +10,9 @@ let selectedChannelId: string | null = null;
 let typingUserSnapshot: Record<string, number> = {};
 let nextDotIndex = 0;
 let dotAnimation: any = null;
+const linear = () => 0;
 const settingsValues = new Map<string, unknown>();
+const unresolvedUsers = new Set<string>();
 const target = { type: () => null };
 const threadModule = { default: () => null };
 const typingListeners = new Set<() => void>();
@@ -24,6 +26,12 @@ const typingStore = {
 	},
 };
 const react = {
+	Component: class {
+		props: any;
+		constructor(props: any) {
+			this.props = props;
+		}
+	},
 	createElement(type: any, props: any, ...children: any[]) {
 		return {
 			type,
@@ -60,11 +68,24 @@ const react = {
 const animated = {
 	Value: class {
 		index = nextDotIndex++;
-		constructor(_value: number) {}
+		constructor(public initial: number) {}
 	},
 	View: 'AnimatedView',
-	timing(value: { index: number }, options: { toValue: number }) {
-		return { kind: 'timing', index: value.index, toValue: options.toValue };
+	add(value: any, offset: number) {
+		return { kind: 'add', value, offset };
+	},
+	modulo(value: any, modulus: number) {
+		return {
+			kind: 'modulo',
+			value,
+			modulus,
+			interpolate(options: any) {
+				return { kind: 'interpolation', source: this, ...options };
+			},
+		};
+	},
+	timing(value: { index: number }, options: any) {
+		return { kind: 'timing', index: value.index, ...options };
 	},
 	parallel(children: any[]) {
 		return { kind: 'parallel', children };
@@ -85,7 +106,15 @@ mock.module('@unbound-app/api', () => ({
 	metro: {
 		common: {
 			React: react,
-			ReactNative: { View: 'View', Animated: animated },
+			ReactNative: {
+				View: 'View',
+				Text: 'Text',
+				Pressable: 'Pressable',
+				Modal: 'Modal',
+				Dimensions: { get: () => ({ width: 375, height: 667 }) },
+				Animated: animated,
+				Easing: { linear },
+			},
 			Theme: {
 				colors: { TEXT_MUTED: 'muted' },
 				internal: { resolveSemanticColor: () => '#96979e' },
@@ -93,13 +122,18 @@ mock.module('@unbound-app/api', () => ({
 			},
 		},
 		find: () => ({ theme: 'darker' }),
+		findByName: () => () => null,
 		findByProps: (...props: string[]) => {
 			if (props.includes('getTypingUsers')) return typingStore;
 			if (props.includes('getChannelId')) return { getChannelId: () => selectedChannelId };
 			if (props.includes('getCurrentUser'))
-				return { getCurrentUser: () => ({ id: 'self' }), getUser: (id: string) => ({ id }) };
+				return {
+					getCurrentUser: () => ({ id: 'self' }),
+					getUser: (id: string) => (unresolvedUsers.has(id) ? null : { id }),
+				};
 			if (props.includes('isChannelMuted')) return { isChannelMuted: () => false };
 			if (props.includes('isBlocked')) return { isBlocked: () => false };
+			if (props.includes('UserIcon')) return { UserIcon: () => null };
 			return {};
 		},
 		findByFilePath: (path: string) =>
@@ -145,6 +179,8 @@ const {
 	insertThreadTypingIndicator,
 	insertTypingIndicator,
 	sameIds,
+	tooltipPlacement,
+	typingLabel,
 	visibleTypingIds,
 } = await import('@channel-typing-indicators/index');
 
@@ -172,6 +208,14 @@ function threadRow(channelId: string): any {
 	return { type: 'Fragment', props: { children: [null, null, container] } };
 }
 
+function wrappedIndicator(boundary: any): any {
+	return boundary.props.children;
+}
+
+function renderIndicator(indicator: any): any {
+	return indicator.type(indicator.props).props.children[0];
+}
+
 afterEach(() => {
 	plugin.stop();
 	patchHandler = null;
@@ -185,10 +229,17 @@ afterEach(() => {
 	nextDotIndex = 0;
 	dotAnimation = null;
 	settingsValues.clear();
+	unresolvedUsers.clear();
 	typingListeners.clear();
 });
 
 describe('channel typing user selection', () => {
+	test('uses Vencord-style typing labels without unbounded user lists', () => {
+		expect(typingLabel(['Alice'])).toBe('Alice is typing...');
+		expect(typingLabel(['Alice', 'Bob'])).toBe('Alice and Bob are typing...');
+		expect(typingLabel(['Alice', 'Bob', 'Casey'])).toBe('Alice, Bob, and Casey are typing...');
+		expect(typingLabel(['Alice', 'Bob', 'Casey', 'Drew'])).toBe('Several users are typing...');
+	});
 	test('hides the current user and blocked users by default', () => {
 		const typing = { self: 1, blocked: 2, visible: 3 };
 		expect(visibleTypingIds(typing, 'self', (id) => id === 'blocked', false)).toEqual(['visible']);
@@ -231,6 +282,16 @@ describe('channel typing user selection', () => {
 });
 
 describe('channel row integration', () => {
+	test('positions the typing tooltip within the viewport and points at the indicator', () => {
+		const above = tooltipPlacement({ x: 270, y: 500, width: 40, height: 16 }, 28, 375);
+		expect(above.arrowDirection).toBe('DOWN');
+		expect(above.left).toBeGreaterThanOrEqual(8);
+		expect(above.left + above.width).toBeLessThanOrEqual(367);
+		expect(above.left + above.arrowOffset + 8).toBe(290);
+		const below = tooltipPlacement({ x: 16, y: 30, width: 40, height: 16 }, 28, 375);
+		expect(below.arrowDirection).toBe('UP');
+		expect(below.top).toBeGreaterThan(46);
+	});
 	test('inserts the indicator inside the original row before channel info', () => {
 		const channel = { id: 'channel', guild_id: 'guild' };
 		const original = channelRow(channel.id);
@@ -241,7 +302,7 @@ describe('channel row integration', () => {
 		expect(updated.type).toBe('Root');
 		expect(row.type).toBe('Pressable');
 		expect(children).toHaveLength(4);
-		expect(children[2].props.channel).toBe(channel);
+		expect(wrappedIndicator(children[2]).props.channel).toBe(channel);
 		expect(children[3].type).toBe('ChannelInfo');
 		expect(insertTypingIndicator(updated, channel, false)).toBe(updated);
 	});
@@ -258,7 +319,7 @@ describe('channel row integration', () => {
 		const row = updated.props.children[2].props.children[2];
 		expect(updated.type).toBe('Fragment');
 		expect(row.type).toBe('ThreadRow');
-		expect(row.props.channelInfo.props.channel).toBe(channel);
+		expect(wrappedIndicator(row.props.channelInfo).props.channel).toBe(channel);
 		expect(insertThreadTypingIndicator(updated, channel, false)).toBe(updated);
 	});
 
@@ -272,7 +333,7 @@ describe('channel row integration', () => {
 		const updated = insertThreadTypingIndicator(original, channel, false);
 		const info = updated.props.children[2].props.children[2].props.channelInfo;
 		expect(info.props.children[0].type).toBe('ExistingBadge');
-		expect(info.props.children[1].props.channel).toBe(channel);
+		expect(wrappedIndicator(info.props.children[1]).props.channel).toBe(channel);
 		expect(insertThreadTypingIndicator(updated, channel, false)).toBe(updated);
 	});
 
@@ -304,9 +365,9 @@ describe('channel row integration', () => {
 			args: [{ channel, muted: false }],
 			result: threadRow(channel.id),
 		});
-		expect(updated.props.children[2].props.children[2].props.channelInfo.props.channel).toBe(
-			channel,
-		);
+		expect(
+			wrappedIndicator(updated.props.children[2].props.children[2].props.channelInfo).props.channel,
+		).toBe(channel);
 		plugin.stop();
 		expect(unpatchCount).toBe(3);
 	});
@@ -318,7 +379,9 @@ describe('channel row integration', () => {
 			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
 			result: original,
 		});
-		const indicator = updated.props.children[1].props.children[1].props.children[2];
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
 		indicator.type(indicator.props);
 		expect(typingListeners.size).toBe(1);
 
@@ -335,7 +398,9 @@ describe('channel row integration', () => {
 			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
 			result: channelRow('channel'),
 		});
-		const indicator = updated.props.children[1].props.children[1].props.children[2];
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
 		expect(indicator.type(indicator.props)).toBeNull();
 		selectedChannelId = 'different';
 		expect(indicator.type(indicator.props)).not.toBeNull();
@@ -348,32 +413,101 @@ describe('channel row integration', () => {
 			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
 			result: channelRow('channel'),
 		});
-		const indicator = updated.props.children[1].props.children[1].props.children[2];
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
 		settingsValues.set('indicatorMode', 2);
-		const avatarsOnly = indicator.type(indicator.props);
+		const avatarsOnly = renderIndicator(indicator);
 		expect(avatarsOnly.props.children[0]).not.toBeNull();
 		expect(avatarsOnly.props.children[1]).toBeNull();
 		settingsValues.set('indicatorMode', 1);
-		const dotsOnly = indicator.type(indicator.props);
+		const dotsOnly = renderIndicator(indicator);
 		expect(dotsOnly.props.children[0]).toBeNull();
 		expect(dotsOnly.props.children[1]).not.toBeNull();
 	});
 
-	test('animates the dots from left to right', () => {
+	test('keeps default avatars for typing users absent from the user cache', () => {
+		typingUserSnapshot = { uncached: 1, known: 2 };
+		unresolvedUsers.add('uncached');
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const avatars = renderIndicator(indicator).props.children[0];
+		const stack = avatars.type(avatars.props);
+		const first = stack.props.children[0][0].props.children;
+		const second = stack.props.children[0][1].props.children;
+		expect(first.type).toBe('View');
+		expect(first.props.children.type).toBeFunction();
+		expect(second.props.users).toEqual([{ id: 'known' }]);
+		const summary = second;
+		expect(summary.props.showDefaultAvatarsForNullUsers).toBe(true);
+		expect(summary.props.showUserPopout).toBe(true);
+		expect(summary.props.max).toBe(1);
+	});
+
+	test('shows a legible overflow count after three avatars', () => {
+		typingUserSnapshot = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const avatars = renderIndicator(indicator).props.children[0];
+		const overflow = avatars.type(avatars.props).props.children[1];
+		expect(overflow.props.children.props.children).toBe('+2');
+		expect(overflow.props.style.zIndex).toBeGreaterThan(3);
+	});
+
+	test('hides a failed indicator without replacing the channel row', () => {
+		const updated = insertTypingIndicator(channelRow('channel'), { id: 'channel' }, false);
+		const boundary = updated.props.children[1].props.children[1].props.children[2];
+		const instance = new boundary.type(boundary.props);
+		expect(instance.render()).toBe(boundary.props.children);
+		instance.state = boundary.type.getDerivedStateFromError();
+		expect(instance.render()).toBeNull();
+	});
+
+	test('animates dot size and opacity with Discord’s staggered 2.4-second cycle', () => {
 		typingUserSnapshot = { other: 1 };
 		plugin.start();
 		const updated = patchHandler?.({
 			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
 			result: channelRow('channel'),
 		});
-		const indicator = updated.props.children[1].props.children[1].props.children[2];
-		const dots = indicator.type(indicator.props).props.children[1];
-		dots.type(dots.props);
-		const brightening = dotAnimation.children
-			.flatMap((step: any) => (step.kind === 'parallel' ? step.children : [step]))
-			.filter((step: any) => step.kind === 'timing' && step.toValue === 1)
-			.map((step: any) => step.index);
-		expect(brightening).toEqual([0, 1, 2]);
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const dots = renderIndicator(indicator).props.children[1];
+		const rendered = dots.type(dots.props);
+		const dotViews = rendered.props.children;
+		expect(dotAnimation).toMatchObject({
+			duration: 2400,
+			easing: linear,
+			toValue: 6.8,
+			useNativeDriver: true,
+		});
+		expect(dotViews).toHaveLength(3);
+		expect(dotViews.map((dot: any) => dot.props.style.opacity.source.value.offset)).toEqual([
+			0, -0.25, -0.5,
+		]);
+		for (const dot of dotViews) {
+			expect(dot.props.style.opacity).toMatchObject({
+				inputRange: [0, 0.4, 0.8, 1, 1.2, 1.6, 2],
+				outputRange: [0.3, 0.3, 1, 1, 1, 0.3, 0.3],
+			});
+			expect(dot.props.style.transform[0].scale).toMatchObject({
+				inputRange: [0, 0.4, 0.8, 1, 1.2, 1.6, 2],
+				outputRange: [0.8, 0.8, 1, 1, 1, 0.8, 0.8],
+			});
+		}
 	});
 
 	test('waits for a late-loaded channel module', () => {

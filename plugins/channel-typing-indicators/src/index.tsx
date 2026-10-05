@@ -43,10 +43,6 @@ type GuildSettingsStore = {
 	removeChangeListener?: (listener: () => void) => void;
 };
 type MemberStore = { getNick?: (guildId: string, userId: string) => string | null | undefined };
-type AvatarComponents = {
-	Avatar: any;
-	AvatarSizes: { SIZE_16: unknown };
-};
 type ThemeModule = {
 	colors: Record<string, unknown>;
 	internal: { resolveSemanticColor: (theme: string, color: unknown) => string };
@@ -57,6 +53,19 @@ type ThemeStore = {
 	addChangeListener?: (listener: () => void) => void;
 	removeChangeListener?: (listener: () => void) => void;
 };
+type TooltipModule = {
+	Tooltip: any;
+	TooltipArrowDirections: { UP: string; DOWN: string };
+	TooltipArrowPositions: { LEFT: string };
+};
+type TooltipAnchor = { x: number; y: number; width: number; height: number };
+type TooltipPlacement = {
+	arrowDirection: string;
+	arrowOffset: number;
+	left: number;
+	top: number;
+	width: number;
+};
 
 let typingStore: TypingStore | null = null;
 let userStore: UserStore | null = null;
@@ -64,7 +73,9 @@ let relationshipStore: RelationshipStore | null = null;
 let selectedChannelStore: SelectedChannelStore | null = null;
 let guildSettingsStore: GuildSettingsStore | null = null;
 let memberStore: MemberStore | null = null;
-let avatarComponents: AvatarComponents | null = null;
+let userSummaryItem: any = null;
+let userIcon: any = null;
+let tooltipComponents: TooltipModule | null = null;
 let themeStore: ThemeStore | null = null;
 let unpatchText: (() => void) | null = null;
 let unpatchThread: (() => void) | null = null;
@@ -74,6 +85,25 @@ let threadRendererHost: { render: (props: any) => any } | null = null;
 let removeModuleListener: (() => boolean) | null = null;
 let started = false;
 const activeIndicators = new Set<() => void>();
+
+class IndicatorBoundary extends metro.common.React.Component<
+	{ children: any },
+	{ failed: boolean }
+> {
+	state = { failed: false };
+
+	static getDerivedStateFromError(): { failed: boolean } {
+		return { failed: true };
+	}
+
+	componentDidCatch(error: unknown): void {
+		console.error('Channel typing indicator failed:', error);
+	}
+
+	render(): any {
+		return this.state.failed ? null : this.props.children;
+	}
+}
 
 export function visibleTypingIds(
 	typingUsers: Record<string, number> | null | undefined,
@@ -94,6 +124,34 @@ export function visibleTypingIds(
 
 export function sameIds(first: string[], second: string[]): boolean {
 	return first.length === second.length && first.every((id, index) => id === second[index]);
+}
+
+export function typingLabel(names: string[]): string {
+	if (names.length === 1) return `${names[0]} is typing...`;
+	if (names.length === 2) return `${names[0]} and ${names[1]} are typing...`;
+	if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} are typing...`;
+	return 'Several users are typing...';
+}
+
+export function tooltipPlacement(
+	anchor: TooltipAnchor,
+	labelLength: number,
+	viewportWidth: number,
+): TooltipPlacement {
+	const width = Math.min(viewportWidth - 16, Math.max(120, Math.min(260, labelLength * 6 + 28)));
+	const left = Math.max(
+		8,
+		Math.min(anchor.x + anchor.width / 2 - width / 2, viewportWidth - width - 8),
+	);
+	const height = Math.min(100, Math.max(42, Math.ceil(labelLength / 38) * 18 + 22));
+	const below = anchor.y - height - 6 < 28;
+	return {
+		arrowDirection: below ? 'UP' : 'DOWN',
+		arrowOffset: anchor.x + anchor.width / 2 - left - 8,
+		left,
+		top: below ? anchor.y + anchor.height + 6 : anchor.y - height - 6,
+		width,
+	};
 }
 
 function displayName(user: User, guildId?: string): string {
@@ -135,11 +193,13 @@ function TypingDots() {
 	const theme = (metro.common as any).Theme as ThemeModule;
 	const [appearance, setAppearance] = React.useState(themeStore?.theme ?? theme.themes.DARK);
 	const dotColor = theme.internal.resolveSemanticColor(appearance, theme.colors.TEXT_MUTED);
-	const values = React.useRef([
-		new Animated.Value(0.35),
-		new Animated.Value(0.35),
-		new Animated.Value(0.35),
-	]).current;
+	const phase = React.useRef(new Animated.Value(2.8)).current;
+	const waves = React.useRef(
+		[0, 1, 2].map((index) =>
+			Animated.modulo(Animated.add(phase, index === 0 ? 0 : -index * 0.25), 2),
+		),
+	).current;
+	const inputRange = [0, 0.4, 0.8, 1, 1.2, 1.6, 2];
 
 	React.useEffect(() => {
 		const currentStore = themeStore;
@@ -151,35 +211,43 @@ function TypingDots() {
 	}, [theme]);
 
 	React.useEffect(() => {
-		const timing = (value: any, toValue: number) =>
-			Animated.timing(value, { toValue, duration: 220, useNativeDriver: true });
 		const animation = Animated.loop(
-			Animated.sequence([
-				timing(values[0], 1),
-				Animated.parallel([timing(values[0], 0.35), timing(values[1], 1)]),
-				Animated.parallel([timing(values[1], 0.35), timing(values[2], 1)]),
-				timing(values[2], 0.35),
-				Animated.delay(240),
-			]),
+			Animated.timing(phase, {
+				toValue: 6.8,
+				duration: 2400,
+				easing: ReactNative.Easing.linear,
+				useNativeDriver: true,
+			}),
 		);
 		animation.start();
 		return () => animation.stop();
-	}, [Animated, values]);
+	}, [Animated, phase, ReactNative.Easing]);
 
 	return (
 		<ReactNative.View
 			style={{ alignItems: 'center', flexDirection: 'row', height: 16, marginLeft: 4 }}
 		>
-			{values.map((value: any, index: number) => (
+			{waves.map((wave: any, index: number) => (
 				<Animated.View
 					key={index}
 					style={{
 						backgroundColor: dotColor,
-						borderRadius: 2.5,
-						height: 5,
-						marginHorizontal: 1.5,
-						opacity: value,
-						width: 5,
+						borderRadius: 3,
+						height: 6,
+						marginRight: index < 2 ? 1.5 : 0,
+						opacity: wave.interpolate({
+							inputRange,
+							outputRange: [0.3, 0.3, 1, 1, 1, 0.3, 0.3],
+						}),
+						transform: [
+							{
+								scale: wave.interpolate({
+									inputRange,
+									outputRange: [0.8, 0.8, 1, 1, 1, 0.8, 0.8],
+								}),
+							},
+						],
+						width: 6,
 					}}
 				/>
 			))}
@@ -187,27 +255,81 @@ function TypingDots() {
 	);
 }
 
-function TypingAvatars({ users, guildId }: { users: User[]; guildId?: string }) {
+function TypingAvatars({ users, guildId }: { users: (User | null)[]; guildId?: string }) {
 	const { ReactNative } = metro.common;
+	const Component = userSummaryItem;
+	const UserIcon = userIcon;
+	if (!Component) return null;
+	const theme = (metro.common as any).Theme as ThemeModule;
+	const appearance = themeStore?.theme ?? theme.themes.DARK;
+	const background = theme.internal.resolveSemanticColor(
+		appearance,
+		theme.colors.BACKGROUND_ACCENT,
+	);
+	const foreground = theme.internal.resolveSemanticColor(appearance, theme.colors.TEXT_DEFAULT);
 	const visible = users.slice(0, MAX_AVATARS);
-	const components = avatarComponents;
-	if (!components?.Avatar) return null;
+	const overflow = users.length - visible.length;
 	return (
 		<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', marginLeft: 6 }}>
 			{visible.map((user, index) => (
 				<ReactNative.View
-					key={user.id}
+					key={user?.id ?? `unknown-${index}`}
 					style={{ marginLeft: index ? -6 : 0, zIndex: visible.length - index }}
 				>
-					<components.Avatar user={user} size={components.AvatarSizes.SIZE_16} guildId={guildId} />
+					{user ? (
+						<Component
+							users={[user]}
+							guildId={guildId}
+							renderIcon={false}
+							max={1}
+							size={16}
+							showDefaultAvatarsForNullUsers
+							showUserPopout
+						/>
+					) : (
+						<ReactNative.View
+							style={{
+								alignItems: 'center',
+								backgroundColor: background,
+								borderRadius: 8,
+								height: 16,
+								justifyContent: 'center',
+								width: 16,
+							}}
+						>
+							{UserIcon ? (
+								<UserIcon color={foreground} style={{ transform: [{ scale: 0.5 }] }} />
+							) : null}
+						</ReactNative.View>
+					)}
 				</ReactNative.View>
 			))}
+			{overflow > 0 ? (
+				<ReactNative.View
+					style={{
+						alignItems: 'center',
+						backgroundColor: '#000',
+						borderRadius: 8,
+						height: 16,
+						justifyContent: 'center',
+						marginLeft: -6,
+						width: 16,
+						zIndex: MAX_AVATARS + 1,
+					}}
+				>
+					<ReactNative.Text style={{ color: '#fff', fontSize: 8, fontWeight: '600' }}>
+						{`+${overflow}`}
+					</ReactNative.Text>
+				</ReactNative.View>
+			) : null}
 		</ReactNative.View>
 	);
 }
 
 function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: boolean }) {
 	const { React, ReactNative } = metro.common;
+	const indicatorRef = React.useRef<any>(null);
+	const [tooltipAnchor, setTooltipAnchor] = React.useState<TooltipAnchor | null>(null);
 	const settings = STORE.useSettingsStore();
 	const includeMuted = settings.get('includeMutedChannels', false);
 	const includeBlocked = settings.get('includeBlockedUsers', false);
@@ -264,23 +386,72 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 	]);
 
 	if (!typingIds.length) return null;
-	const typingUsers = typingIds
-		.map((id) => userStore?.getUser(id))
-		.filter((user): user is User => Boolean(user));
-	const names = typingUsers.map((user) => displayName(user, channel.guild_id));
-	const label = `${names.join(', ') || `${typingIds.length} people`} typing`;
+	const typingUsers = typingIds.map((id) => userStore?.getUser(id) ?? null);
+	const names = typingUsers.map((user) => (user ? displayName(user, channel.guild_id) : 'Someone'));
+	const label = typingLabel(names);
+	const theme = (metro.common as any).Theme as ThemeModule;
+	const appearance = themeStore?.theme ?? theme.themes.DARK;
+	const background = theme.internal.resolveSemanticColor(
+		appearance,
+		theme.colors.BACKGROUND_SURFACE_HIGHEST,
+	);
+	const foreground = theme.internal.resolveSemanticColor(appearance, theme.colors.TEXT_DEFAULT);
+	const placement = tooltipAnchor
+		? tooltipPlacement(tooltipAnchor, label.length, ReactNative.Dimensions.get('window').width)
+		: null;
+	function showTooltip(): void {
+		indicatorRef.current?.measureInWindow?.(
+			(x: number, y: number, width: number, height: number) => {
+				if (![x, y, width, height].every(Number.isFinite)) return;
+				setTooltipAnchor({ x, y, width, height });
+			},
+		);
+	}
 
 	return (
-		<ReactNative.View
-			accessibilityLabel={label}
-			pointerEvents='none'
-			style={{ alignItems: 'center', flexDirection: 'row', flexShrink: 0 }}
-		>
-			{indicatorMode & AVATARS && typingUsers.length ? (
-				<TypingAvatars users={typingUsers} guildId={channel.guild_id} />
+		<>
+			<ReactNative.Pressable
+				ref={indicatorRef}
+				accessibilityLabel={label}
+				onPress={showTooltip}
+				style={{ alignItems: 'center', flexDirection: 'row', flexShrink: 0 }}
+			>
+				{indicatorMode & AVATARS ? (
+					<TypingAvatars users={typingUsers} guildId={channel.guild_id} />
+				) : null}
+				{indicatorMode & DOTS ? <TypingDots /> : null}
+			</ReactNative.Pressable>
+			{placement && tooltipComponents?.Tooltip ? (
+				<ReactNative.Modal
+					visible
+					transparent
+					statusBarTranslucent
+					onRequestClose={() => setTooltipAnchor(null)}
+				>
+					<ReactNative.View style={{ flex: 1 }}>
+						<ReactNative.Pressable
+							onPress={() => setTooltipAnchor(null)}
+							style={{ bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 }}
+						/>
+						<ReactNative.View
+							pointerEvents='none'
+							style={{ left: placement.left, position: 'absolute', top: placement.top }}
+						>
+							<tooltipComponents.Tooltip
+								arrowDirection={placement.arrowDirection}
+								arrowOffset={placement.arrowOffset}
+								arrowPosition={tooltipComponents.TooltipArrowPositions.LEFT}
+								arrowStyle={{ borderBottomColor: background, borderTopColor: background }}
+								containerStyle={{ backgroundColor: background }}
+								label={label}
+								labelStyle={{ color: foreground }}
+								style={{ width: placement.width }}
+							/>
+						</ReactNative.View>
+					</ReactNative.View>
+				</ReactNative.Modal>
 			) : null}
-			{indicatorMode & DOTS ? <TypingDots /> : null}
-		</ReactNative.View>
+		</>
 	);
 }
 
@@ -298,12 +469,16 @@ export function insertTypingIndicator(result: any, channel: Channel, muted: bool
 	);
 	if (!content) return result;
 	const contentChildren = content.props.children;
-	if (contentChildren.some((part: any) => part?.type === ChannelTypingIndicator)) return result;
+	if (contentChildren.some((part: any) => part?.type === IndicatorBoundary)) return result;
 	const infoIndex = contentChildren.findIndex(
 		(part: any) => part?.props?.channel?.id === channel.id,
 	);
 	if (infoIndex < 0) return result;
-	const indicator = <ChannelTypingIndicator channel={channel} muted={muted} />;
+	const indicator = (
+		<IndicatorBoundary>
+			<ChannelTypingIndicator channel={channel} muted={muted} />
+		</IndicatorBoundary>
+	);
 	const nextContent = React.cloneElement(content, {}, [
 		...contentChildren.slice(0, infoIndex),
 		indicator,
@@ -335,11 +510,15 @@ export function insertThreadTypingIndicator(result: any, channel: Channel, muted
 		if (!row) continue;
 		const currentInfo = row.props.channelInfo;
 		if (
-			currentInfo?.type === ChannelTypingIndicator ||
-			currentInfo?.props?.children?.[1]?.type === ChannelTypingIndicator
+			currentInfo?.type === IndicatorBoundary ||
+			currentInfo?.props?.children?.[1]?.type === IndicatorBoundary
 		)
 			return result;
-		const indicator = <ChannelTypingIndicator channel={channel} muted={muted} />;
+		const indicator = (
+			<IndicatorBoundary>
+				<ChannelTypingIndicator channel={channel} muted={muted} />
+			</IndicatorBoundary>
+		);
 		const channelInfo = currentInfo ? (
 			<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row' }}>
 				{currentInfo}
@@ -475,11 +654,12 @@ export default {
 		selectedChannelStore = metro.findByProps('getChannelId') as SelectedChannelStore | null;
 		guildSettingsStore = metro.findByProps('isChannelMuted') as GuildSettingsStore | null;
 		memberStore = metro.findByProps('getNick') as MemberStore | null;
-		avatarComponents = metro.findByProps(
-			'SummarizedIconRow',
-			'Avatar',
-			'AvatarSizes',
-		) as AvatarComponents | null;
+		userSummaryItem = metro.findByName('UserSummaryItem');
+		userIcon = (metro.findByProps('UserIcon') as { UserIcon?: unknown } | null)?.UserIcon;
+		tooltipComponents = metro.findByProps(
+			'TooltipArrowDirections',
+			'TooltipArrowPositions',
+		) as TooltipModule | null;
 		const theme = (metro.common as any).Theme as ThemeModule;
 		themeStore = metro.find((module) => {
 			const appearance = module?.theme;
@@ -507,7 +687,9 @@ export default {
 		selectedChannelStore = null;
 		guildSettingsStore = null;
 		memberStore = null;
-		avatarComponents = null;
+		userSummaryItem = null;
+		userIcon = null;
+		tooltipComponents = null;
 		themeStore = null;
 	},
 	getSettingsPanel: () => <ChannelTypingSettings />,
