@@ -10,6 +10,7 @@ let selectedChannelId: string | null = null;
 let typingUserSnapshot: Record<string, number> = {};
 let nextDotIndex = 0;
 let dotAnimation: any = null;
+let profileOpen: any = null;
 const linear = () => 0;
 const settingsValues = new Map<string, unknown>();
 const unresolvedUsers = new Set<string>();
@@ -121,9 +122,19 @@ mock.module('@unbound-app/api', () => ({
 				themes: { DARK: 'darker' },
 			},
 		},
-		find: () => ({ theme: 'darker' }),
+		find: (predicate: (module: any) => boolean) => {
+			const profile = { default: { type: { name: 'UserProfileActionSheet' } } };
+			return predicate(profile) ? profile : { theme: 'darker' };
+		},
 		findByName: () => () => null,
 		findByProps: (...props: string[]) => {
+			if (props.includes('openLazy'))
+				return {
+					openLazy(component: unknown, key: string, options: unknown) {
+						profileOpen = { component, key, options };
+					},
+					hideActionSheet() {},
+				};
 			if (props.includes('getTypingUsers')) return typingStore;
 			if (props.includes('getChannelId')) return { getChannelId: () => selectedChannelId };
 			if (props.includes('getCurrentUser'))
@@ -228,6 +239,7 @@ afterEach(() => {
 	typingUserSnapshot = {};
 	nextDotIndex = 0;
 	dotAnimation = null;
+	profileOpen = null;
 	settingsValues.clear();
 	unresolvedUsers.clear();
 	typingListeners.clear();
@@ -426,6 +438,44 @@ describe('channel row integration', () => {
 		expect(dotsOnly.props.children[1]).not.toBeNull();
 	});
 
+	test('keeps typing avatars outside the tooltip press target', () => {
+		typingUserSnapshot = { known: 1 };
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const content = renderIndicator(indicator);
+		expect(content.type).toBe('View');
+		expect(content.props.children[0].type).toBeFunction();
+		expect(content.props.children[1].type).toBe('Pressable');
+		expect(content.props.children[1].props.children.type).toBeFunction();
+	});
+
+	test('opens a known typing avatar profile without navigating the channel', async () => {
+		typingUserSnapshot = { known: 1 };
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const avatars = renderIndicator(indicator).props.children[0];
+		const avatar = avatars.type(avatars.props).props.children[0][0].props.children;
+		expect(avatar.type).toBe('Pressable');
+		let stopped = false;
+		avatar.props.onPress({ stopPropagation: () => (stopped = true) });
+		expect(stopped).toBe(true);
+		expect(profileOpen?.key).toBe('UserProfileknown');
+		expect(profileOpen?.options).toMatchObject({ userId: 'known', channelId: 'channel' });
+		expect((await profileOpen?.component)?.default?.type?.name).toBe('UserProfileActionSheet');
+	});
+
 	test('keeps default avatars for typing users absent from the user cache', () => {
 		typingUserSnapshot = { uncached: 1, known: 2 };
 		unresolvedUsers.add('uncached');
@@ -443,8 +493,9 @@ describe('channel row integration', () => {
 		const second = stack.props.children[0][1].props.children;
 		expect(first.type).toBe('View');
 		expect(first.props.children.type).toBeFunction();
-		expect(second.props.users).toEqual([{ id: 'known' }]);
-		const summary = second;
+		expect(second.type).toBe('Pressable');
+		const summary = second.props.children;
+		expect(summary.props.users).toEqual([{ id: 'known' }]);
 		expect(summary.props.showDefaultAvatarsForNullUsers).toBe(true);
 		expect(summary.props.showUserPopout).toBe(true);
 		expect(summary.props.max).toBe(1);
@@ -485,9 +536,10 @@ describe('channel row integration', () => {
 		const indicator = wrappedIndicator(
 			updated.props.children[1].props.children[1].props.children[2],
 		);
-		const dots = renderIndicator(indicator).props.children[1];
+		const dots = renderIndicator(indicator).props.children[1].props.children;
 		const rendered = dots.type(dots.props);
 		const dotViews = rendered.props.children;
+		expect(rendered.props.style.marginLeft).toBe(6);
 		expect(dotAnimation).toMatchObject({
 			duration: 2400,
 			easing: linear,

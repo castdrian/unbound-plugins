@@ -76,6 +76,8 @@ let memberStore: MemberStore | null = null;
 let userSummaryItem: any = null;
 let userIcon: any = null;
 let tooltipComponents: TooltipModule | null = null;
+let profileSheet: any = null;
+let actionSheets: any = null;
 let themeStore: ThemeStore | null = null;
 let unpatchText: (() => void) | null = null;
 let unpatchThread: (() => void) | null = null;
@@ -225,7 +227,7 @@ function TypingDots() {
 
 	return (
 		<ReactNative.View
-			style={{ alignItems: 'center', flexDirection: 'row', height: 16, marginLeft: 4 }}
+			style={{ alignItems: 'center', flexDirection: 'row', height: 16, marginLeft: 6 }}
 		>
 			{waves.map((wave: any, index: number) => (
 				<Animated.View
@@ -255,7 +257,30 @@ function TypingDots() {
 	);
 }
 
-function TypingAvatars({ users, guildId }: { users: (User | null)[]; guildId?: string }) {
+function openProfile(userId: string, channelId: string): void {
+	profileSheet ??= metro.find(
+		(module) => module?.default?.type?.name === 'UserProfileActionSheet',
+		{ interop: false },
+	)?.default;
+	actionSheets ??= metro.findByProps('openLazy', 'hideActionSheet');
+	if (!profileSheet || !actionSheets?.openLazy) return;
+	actionSheets.openLazy(Promise.resolve({ default: profileSheet }), `UserProfile${userId}`, {
+		userId,
+		channelId,
+		sourceAnalyticsLocations: ['avatar'],
+		openedAt: Date.now(),
+	});
+}
+
+function TypingAvatars({
+	users,
+	guildId,
+	channelId,
+}: {
+	users: (User | null)[];
+	guildId?: string;
+	channelId: string;
+}) {
 	const { ReactNative } = metro.common;
 	const Component = userSummaryItem;
 	const UserIcon = userIcon;
@@ -277,15 +302,22 @@ function TypingAvatars({ users, guildId }: { users: (User | null)[]; guildId?: s
 					style={{ marginLeft: index ? -6 : 0, zIndex: visible.length - index }}
 				>
 					{user ? (
-						<Component
-							users={[user]}
-							guildId={guildId}
-							renderIcon={false}
-							max={1}
-							size={16}
-							showDefaultAvatarsForNullUsers
-							showUserPopout
-						/>
+						<ReactNative.Pressable
+							onPress={(event: any) => {
+								event.stopPropagation();
+								openProfile(user.id, channelId);
+							}}
+						>
+							<Component
+								users={[user]}
+								guildId={guildId}
+								renderIcon={false}
+								max={1}
+								size={16}
+								showDefaultAvatarsForNullUsers
+								showUserPopout
+							/>
+						</ReactNative.Pressable>
 					) : (
 						<ReactNative.View
 							style={{
@@ -410,17 +442,20 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 
 	return (
 		<>
-			<ReactNative.Pressable
-				ref={indicatorRef}
-				accessibilityLabel={label}
-				onPress={showTooltip}
-				style={{ alignItems: 'center', flexDirection: 'row', flexShrink: 0 }}
-			>
+			<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', flexShrink: 0 }}>
 				{indicatorMode & AVATARS ? (
-					<TypingAvatars users={typingUsers} guildId={channel.guild_id} />
+					<TypingAvatars users={typingUsers} guildId={channel.guild_id} channelId={channel.id} />
 				) : null}
-				{indicatorMode & DOTS ? <TypingDots /> : null}
-			</ReactNative.Pressable>
+				{indicatorMode & DOTS ? (
+					<ReactNative.Pressable
+						ref={indicatorRef}
+						accessibilityLabel={label}
+						onPress={showTooltip}
+					>
+						<TypingDots />
+					</ReactNative.Pressable>
+				) : null}
+			</ReactNative.View>
 			{placement && tooltipComponents?.Tooltip ? (
 				<ReactNative.Modal
 					visible
@@ -690,6 +725,8 @@ export default {
 		userSummaryItem = null;
 		userIcon = null;
 		tooltipComponents = null;
+		profileSheet = null;
+		actionSheets = null;
 		themeStore = null;
 	},
 	getSettingsPanel: () => <ChannelTypingSettings />,
