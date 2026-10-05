@@ -41,6 +41,51 @@ describe('applyChatRoleColors', () => {
 		expect(row.message?.textColor).toBe(blendArgb(0xffeeeeee, 0xff112233, 30));
 	});
 
+	test('does not compound the tint when Discord reuses a row', () => {
+		const row: ChatRow = {
+			message: { authorId: 'user', guildId: 'guild', textColor: 0xffeeeeee },
+		};
+		const options = {
+			chatMentions: false,
+			colorChatMessages: true,
+			messageSaturation: 30,
+		};
+		applyChatRoleColors(row, members, options);
+		applyChatRoleColors(row, members, options);
+		expect(row.message?.textColor).toBe(blendArgb(0xffeeeeee, 0xff112233, 30));
+	});
+
+	test('restores the original text color when message coloring is disabled', () => {
+		const row: ChatRow = {
+			message: { authorId: 'user', guildId: 'guild', textColor: 0xffeeeeee },
+		};
+		applyChatRoleColors(row, members, {
+			chatMentions: false,
+			colorChatMessages: true,
+			messageSaturation: 30,
+		});
+		applyChatRoleColors(row, members, {
+			chatMentions: false,
+			colorChatMessages: false,
+			messageSaturation: 30,
+		});
+		expect(row.message?.textColor).toBe(0xffeeeeee);
+	});
+
+	test('uses a new base when Discord updates the text color', () => {
+		const message = { authorId: 'user', guildId: 'guild', textColor: 0xffeeeeee };
+		const row: ChatRow = { message };
+		const options = {
+			chatMentions: false,
+			colorChatMessages: true,
+			messageSaturation: 30,
+		};
+		applyChatRoleColors(row, members, options);
+		message.textColor = 0xffaaaaaa;
+		applyChatRoleColors(row, members, options);
+		expect(message.textColor).toBe(blendArgb(0xffaaaaaa, 0xff112233, 30));
+	});
+
 	test('preserves failed-send text color', () => {
 		const row: ChatRow = {
 			message: {

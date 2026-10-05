@@ -41,6 +41,13 @@ export interface ChatRow {
 	message?: ChatMessage;
 }
 
+interface MessageColorState {
+	base: number;
+	applied: number;
+}
+
+const messageColors = new WeakMap<ChatMessage, MessageColorState>();
+
 export function hexToArgb(hex: string): number | null {
 	if (!/^#[\da-f]{6}$/i.test(hex)) return null;
 	return (0xff000000 | Number.parseInt(hex.slice(1), 16)) >>> 0;
@@ -97,12 +104,30 @@ function applyMentionColors(
 	}
 }
 
-function applyMessageColors(message: ChatMessage, members: MemberStore, saturation: number): void {
-	if (!message.guildId || !message.authorId || message.state === 'SEND_FAILED') return;
-	if (typeof message.textColor !== 'number' || saturation <= 0) return;
-	const [color] = memberColorNumbers(members.getMember(message.guildId, message.authorId));
-	if (color === undefined) return;
-	message.textColor = blendArgb(message.textColor, color, saturation);
+function applyMessageColors(
+	message: ChatMessage,
+	members: MemberStore,
+	options: ChatColorOptions,
+): void {
+	if (typeof message.textColor !== 'number') return;
+	const previous = messageColors.get(message);
+	const base = previous?.applied === message.textColor ? previous.base : message.textColor;
+	const color =
+		options.colorChatMessages &&
+		options.messageSaturation > 0 &&
+		message.guildId &&
+		message.authorId &&
+		message.state !== 'SEND_FAILED'
+			? memberColorNumbers(members.getMember(message.guildId, message.authorId))[0]
+			: undefined;
+	if (color === undefined) {
+		message.textColor = base;
+		messageColors.delete(message);
+		return;
+	}
+	const applied = blendArgb(base, color, options.messageSaturation);
+	message.textColor = applied;
+	messageColors.set(message, { base, applied });
 }
 
 export function applyChatRoleColors(
@@ -120,5 +145,5 @@ export function applyChatRoleColors(
 		const referenced = message.referencedMessage?.message;
 		if (referenced) applyMentionColors(referenced.content, members, referenced.guildId);
 	}
-	if (options.colorChatMessages) applyMessageColors(message, members, options.messageSaturation);
+	applyMessageColors(message, members, options);
 }

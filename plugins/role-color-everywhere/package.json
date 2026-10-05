@@ -1,7 +1,7 @@
 {
 	"name": "role-color-everywhere",
-	"version": "0.1.0",
-	"description": "Colors mentions, typing names, and member list role headers.",
+	"version": "0.2.0",
+	"description": "Colors mentions, typing names, voice users, reaction users, poll voters, and role headers.",
 	"private": true,
 	"type": "module",
 	"scripts": {
