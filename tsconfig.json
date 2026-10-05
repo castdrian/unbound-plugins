@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@moyai/*": [
+				"plugins/moyai/src/*"
+			],
 			"@channel-typing-indicators/*": [
 				"plugins/channel-typing-indicators/src/*"
 			],

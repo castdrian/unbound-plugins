@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -10,6 +10,7 @@ const settingsPlugins = [
 	'custom-commands',
 	'message-latency',
 	'more-user-tags',
+	'moyai',
 	'no-reply-mention',
 	'pronoundb',
 	'reviewdb',
@@ -25,6 +26,7 @@ test('only plugins with settings register a settings panel', async () => {
 
 	for (const plugin of readdirSync(pluginDirectory, { withFileTypes: true })) {
 		if (!plugin.isDirectory()) continue;
+		if (!existsSync(resolve(pluginDirectory, plugin.name, 'manifest.json'))) continue;
 		const configurationPath = resolve(pluginDirectory, plugin.name, 'rollup.config.mjs');
 		const configuration = (await import(pathToFileURL(configurationPath).href)).default;
 		const entrypoint = configuration.plugins.find(
