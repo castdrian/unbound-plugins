@@ -24,7 +24,7 @@ export const SETTINGS_SPACING = {
 } as const;
 
 export function getSettingsColors(): SettingsColors {
-	const colors = ((metro.common.Theme as any)?.colors ?? {}) as Record<string, unknown>;
+	const colors = (((metro.common as any).Theme as any)?.colors ?? {}) as Record<string, unknown>;
 	const color = (key: string, fallback: string): string => (typeof colors[key] === 'string' ? colors[key] as string : fallback);
 
 	return {

@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@channel-typing-indicators/*": [
+				"plugins/channel-typing-indicators/src/*"
+			],
 			"@custom-commands/*": [
 				"plugins/custom-commands/src/*"
 			],

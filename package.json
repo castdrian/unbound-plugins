@@ -17,6 +17,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",
+		"@unbound-app/api": "latest",
 		"@unbound-app/cli": "latest",
 		"@unbound-plugins/rollup-path-aliases": "workspace:*"
 	}
