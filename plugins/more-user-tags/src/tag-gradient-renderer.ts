@@ -3,7 +3,7 @@ import {
 	parseNativeColorDescription,
 	type RoleColorAppearance,
 	type RoleColorStyle,
-} from '@more-user-tags/role-colors';
+} from '@shared/role-colors';
 import type {
 	NativeAssociationKey,
 	NativeClassHandle,

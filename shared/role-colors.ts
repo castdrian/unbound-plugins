@@ -93,6 +93,23 @@ export function getRoleColorAppearance(
 	return { colors: stops, style };
 }
 
+export function roleColorAt(colors: string[], position: number): string | null {
+	if (colors.length === 0 || colors.some((color) => !validHexColor(color))) return null;
+	if (colors.length === 1) return colors[0];
+
+	const clamped = Math.min(1, Math.max(0, position));
+	const scaled = clamped * (colors.length - 1);
+	const index = Math.min(colors.length - 2, Math.floor(scaled));
+	const fraction = scaled - index;
+	const first = Number.parseInt(colors[index].slice(1), 16);
+	const second = Number.parseInt(colors[index + 1].slice(1), 16);
+	const channels = [16, 8, 0].map((shift) =>
+		Math.round(((first >> shift) & 0xff) * (1 - fraction) + ((second >> shift) & 0xff) * fraction),
+	);
+
+	return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function relativeLuminance(color: string): number {
 	const value = Number.parseInt(color.slice(1), 16);
 	const channels = [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff].map((channel) => {

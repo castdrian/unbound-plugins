@@ -15,6 +15,9 @@
 		"allowImportingTsExtensions": true,
 		"baseUrl": ".",
 		"paths": {
+			"@role-color-everywhere/*": [
+				"plugins/role-color-everywhere/src/*"
+			],
 			"@moyai/*": [
 				"plugins/moyai/src/*"
 			],

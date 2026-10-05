@@ -14,6 +14,7 @@ const settingsPlugins = [
 	'no-reply-mention',
 	'pronoundb',
 	'reviewdb',
+	'role-color-everywhere',
 	'shiki-codeblocks',
 	'show-hidden-things',
 	'show-me-your-name',

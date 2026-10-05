@@ -2,7 +2,7 @@ import {
 	getContrastingTextColor,
 	getRoleColorAppearance,
 	type RoleColorAppearance,
-} from '@more-user-tags/role-colors';
+} from '@shared/role-colors';
 import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer';
 
 import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';

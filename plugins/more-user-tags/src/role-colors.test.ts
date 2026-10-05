@@ -7,7 +7,7 @@ import {
 	getRoleColorStops,
 	getRoleGradientKey,
 	parseNativeColorDescription,
-} from '@more-user-tags/role-colors';
+} from '@shared/role-colors';
 
 describe('role color stops', () => {
 	test('preserves enhanced gradient and three-stop colors', () => {
