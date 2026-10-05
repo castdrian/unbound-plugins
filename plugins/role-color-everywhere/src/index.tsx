@@ -176,8 +176,10 @@ export default {
 		const roles = metro.findStore('GuildRole') as
 			| Parameters<typeof installMemberListColors>[0]
 			| null;
-		if (roles)
-			unpatchMemberList = installMemberListColors(roles, () => STORE.get('memberList', true));
+		if (roles && members)
+			unpatchMemberList = installMemberListColors(roles, members, () =>
+				STORE.get('memberList', true),
+			);
 		if (patchRows()) return;
 		removeModuleListener = metro.addListener(() => {
 			if (!patchRows()) return;

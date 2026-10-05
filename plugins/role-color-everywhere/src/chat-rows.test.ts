@@ -17,6 +17,12 @@ const members: MemberStore = {
 };
 
 describe('applyChatRoleColors', () => {
+	test('mixes optional message colors in Oklab like Vencord', () => {
+		expect(blendArgb(0xffffffff, 0xff000000, 50)).toBe(0xff636363);
+		expect(blendArgb(0x80ffffff, 0xff000000, 0)).toBe(0x80ffffff);
+		expect(blendArgb(0x80ffffff, 0xff000000, 100)).toBe(0x80000000);
+	});
+
 	test('keeps message content untinted by default', () => {
 		const row: ChatRow = {
 			message: { authorId: 'user', guildId: 'guild', textColor: 0xffeeeeee },

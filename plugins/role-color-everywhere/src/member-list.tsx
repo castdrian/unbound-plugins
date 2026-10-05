@@ -4,6 +4,7 @@ import {
 	type RoleColorAppearance,
 	type RoleColorStops,
 } from '@shared/role-colors';
+import type { MemberStore } from '@role-color-everywhere/chat-rows';
 import { metro, patcher } from '@unbound-app/api';
 
 const USER_LIST_PATH = 'modules/main_tabs_v2/native/shared_components/user_list/UsersFastList.tsx';
@@ -15,11 +16,14 @@ interface Role {
 }
 
 interface RoleStore {
-	getUnsafeMutableRoles(guildId: string): Record<string, Role> | null | undefined;
+	getRole(guildId: string, roleId: string): Role | null | undefined;
 }
 
 interface UserListProps {
-	getItemProps?: (section: number, index: number) => { props?: { guildId?: string } };
+	getItemProps?: (
+		section: number,
+		index: number,
+	) => { props?: { guildId?: string; user?: { id?: string } } };
 	getSectionProps?: (section: number) => { props?: { title?: string } };
 	sections?: number[];
 }
@@ -28,21 +32,26 @@ function roleHeaderAppearance(
 	props: UserListProps,
 	section: number,
 	roles: RoleStore,
+	members: MemberStore,
 ): RoleColorAppearance | null {
 	const title = props.getSectionProps?.(section)?.props?.title;
-	const guildId = props.getItemProps?.(section, 0)?.props?.guildId;
-	if (typeof title !== 'string' || !guildId) return null;
-	const roleName = /^(.*) — \d+$/.exec(title)?.[1];
-	if (!roleName) return null;
-	const matching = Object.values(roles.getUnsafeMutableRoles(guildId) ?? {}).filter(
-		(role) => role.name === roleName,
-	);
-	if (matching.length !== 1) return null;
-	const appearance = getRoleColorAppearance(matching[0].colorStrings, matching[0].colorString);
+	const first = props.getItemProps?.(section, 0)?.props;
+	const guildId = first?.guildId;
+	const userId = first?.user?.id;
+	if (typeof title !== 'string' || !guildId || !userId) return null;
+	const roleId = members.getMember(guildId, userId)?.hoistRoleId;
+	if (!roleId) return null;
+	const role = roles.getRole(guildId, roleId);
+	if (!role?.name || !title.includes(role.name)) return null;
+	const appearance = getRoleColorAppearance(role.colorStrings, role.colorString);
 	return appearance.colors.length ? appearance : null;
 }
 
-export function installMemberListColors(roles: RoleStore, enabled: () => boolean): () => void {
+export function installMemberListColors(
+	roles: RoleStore,
+	members: MemberStore,
+	enabled: () => boolean,
+): () => void {
 	const listModule = metro.findByFilePath(USER_LIST_PATH, { interop: false }) as {
 		UsersFastList?: { render: (props: UserListProps) => any };
 	} | null;
@@ -58,7 +67,7 @@ export function installMemberListColors(roles: RoleStore, enabled: () => boolean
 		return React.cloneElement(result, {
 			renderSectionHeader: (section: number, ...rest: unknown[]) => {
 				const header = renderHeader(section, ...rest);
-				const appearance = roleHeaderAppearance(props, section, roles);
+				const appearance = roleHeaderAppearance(props, section, roles, members);
 				if (!appearance || typeof header?.props?.title !== 'string') return header;
 				const title = header.props.title as string;
 				const characters = Array.from(title);

@@ -3,6 +3,7 @@ import { getRoleColorAppearance, type RoleColorStops } from '@shared/role-colors
 export interface Member {
 	colorString?: string | null;
 	colorStrings?: RoleColorStops | null;
+	hoistRoleId?: string | null;
 }
 
 export interface MemberStore {
@@ -44,22 +45,64 @@ export interface ChatRow {
 interface MessageColorState {
 	base: number;
 	applied: number;
+	role: number;
+	saturation: number;
 }
 
 const messageColors = new WeakMap<ChatMessage, MessageColorState>();
+
+type Oklab = [number, number, number];
 
 export function hexToArgb(hex: string): number | null {
 	if (!/^#[\da-f]{6}$/i.test(hex)) return null;
 	return (0xff000000 | Number.parseInt(hex.slice(1), 16)) >>> 0;
 }
 
+function toLinear(channel: number): number {
+	const value = channel / 255;
+	return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function fromLinear(value: number): number {
+	const clamped = Math.min(1, Math.max(0, value));
+	const encoded = clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
+	return Math.round(encoded * 255);
+}
+
+function toOklab(color: number): Oklab {
+	const red = toLinear((color >>> 16) & 0xff);
+	const green = toLinear((color >>> 8) & 0xff);
+	const blue = toLinear(color & 0xff);
+	const light = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
+	const medium = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
+	const short = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
+	return [
+		0.2104542553 * light + 0.793617785 * medium - 0.0040720468 * short,
+		1.9779984951 * light - 2.428592205 * medium + 0.4505937099 * short,
+		0.0259040371 * light + 0.7827717662 * medium - 0.808675766 * short,
+	];
+}
+
+function fromOklab(color: Oklab, alpha: number): number {
+	const light = (color[0] + 0.3963377774 * color[1] + 0.2158037573 * color[2]) ** 3;
+	const medium = (color[0] - 0.1055613458 * color[1] - 0.0638541728 * color[2]) ** 3;
+	const short = (color[0] - 0.0894841775 * color[1] - 1.291485548 * color[2]) ** 3;
+	const red = fromLinear(4.0767416621 * light - 3.3077115913 * medium + 0.2309699292 * short);
+	const green = fromLinear(-1.2684380046 * light + 2.6097574011 * medium - 0.3413193965 * short);
+	const blue = fromLinear(-0.0041960863 * light - 0.7034186147 * medium + 1.707614701 * short);
+	return ((alpha & 0xff000000) | (red << 16) | (green << 8) | blue) >>> 0;
+}
+
 export function blendArgb(base: number, role: number, saturation: number): number {
 	const ratio = Math.min(100, Math.max(0, saturation)) / 100;
-	const alpha = base & 0xff000000;
-	const red = Math.round(((base >>> 16) & 0xff) * (1 - ratio) + ((role >>> 16) & 0xff) * ratio);
-	const green = Math.round(((base >>> 8) & 0xff) * (1 - ratio) + ((role >>> 8) & 0xff) * ratio);
-	const blue = Math.round((base & 0xff) * (1 - ratio) + (role & 0xff) * ratio);
-	return (alpha | (red << 16) | (green << 8) | blue) >>> 0;
+	if (ratio === 0) return base >>> 0;
+	if (ratio === 1) return ((base & 0xff000000) | (role & 0x00ffffff)) >>> 0;
+	const original = toOklab(base);
+	const tint = toOklab(role);
+	return fromOklab(
+		original.map((value, index) => value * (1 - ratio) + tint[index] * ratio) as Oklab,
+		base,
+	);
 }
 
 export function memberColorNumbers(member: Member | null | undefined): number[] {
@@ -125,9 +168,15 @@ function applyMessageColors(
 		messageColors.delete(message);
 		return;
 	}
+	if (
+		previous?.applied === message.textColor &&
+		previous.role === color &&
+		previous.saturation === options.messageSaturation
+	)
+		return;
 	const applied = blendArgb(base, color, options.messageSaturation);
 	message.textColor = applied;
-	messageColors.set(message, { base, applied });
+	messageColors.set(message, { base, applied, role: color, saturation: options.messageSaturation });
 }
 
 export function applyChatRoleColors(
