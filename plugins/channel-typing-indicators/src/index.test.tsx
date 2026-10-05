@@ -11,6 +11,7 @@ let typingUserSnapshot: Record<string, number> = {};
 let nextDotIndex = 0;
 let dotAnimation: any = null;
 let profileOpen: any = null;
+let translatedLabels: Record<string, string> | null = null;
 const linear = () => 0;
 const settingsValues = new Map<string, unknown>();
 const unresolvedUsers = new Set<string>();
@@ -107,6 +108,18 @@ mock.module('@unbound-app/api', () => ({
 	metro: {
 		common: {
 			React: react,
+			i18n: {
+				t: Object.fromEntries(
+					['lJ9sZX', 'rB0CUa', 'StKThj', 'uVDhqZ'].map((key) => [key, () => key]),
+				),
+				intl: {
+					formatToPlainString(message: () => string, values: Record<string, string>) {
+						const template = translatedLabels?.[message()];
+						if (!template) throw new Error('No translation');
+						return template.replace(/\{([abc])\}/g, (_, key) => values[key]);
+					},
+				},
+			},
 			ReactNative: {
 				View: 'View',
 				Text: 'Text',
@@ -240,6 +253,7 @@ afterEach(() => {
 	nextDotIndex = 0;
 	dotAnimation = null;
 	profileOpen = null;
+	translatedLabels = null;
 	settingsValues.clear();
 	unresolvedUsers.clear();
 	typingListeners.clear();
@@ -247,10 +261,19 @@ afterEach(() => {
 
 describe('channel typing user selection', () => {
 	test('uses Vencord-style typing labels without unbounded user lists', () => {
+		expect(typingLabel([])).toBe('');
 		expect(typingLabel(['Alice'])).toBe('Alice is typing...');
 		expect(typingLabel(['Alice', 'Bob'])).toBe('Alice and Bob are typing...');
 		expect(typingLabel(['Alice', 'Bob', 'Casey'])).toBe('Alice, Bob, and Casey are typing...');
-		expect(typingLabel(['Alice', 'Bob', 'Casey', 'Drew'])).toBe('Several users are typing...');
+		expect(typingLabel(['Alice', 'Bob', 'Casey', 'Drew'])).toBe('Several people are typing...');
+	});
+	test('uses Discord locale strings for the typing tooltip when available', () => {
+		translatedLabels = {
+			lJ9sZX: '{a} schreibt...',
+			uVDhqZ: 'Mehrere Personen schreiben...',
+		};
+		expect(typingLabel(['Alice'])).toBe('Alice schreibt...');
+		expect(typingLabel(['Alice', 'Bob', 'Casey', 'Drew'])).toBe('Mehrere Personen schreiben...');
 	});
 	test('hides the current user and blocked users by default', () => {
 		const typing = { self: 1, blocked: 2, visible: 3 };
@@ -476,6 +499,31 @@ describe('channel row integration', () => {
 		expect((await profileOpen?.component)?.default?.type?.name).toBe('UserProfileActionSheet');
 	});
 
+	test('reveals the typing tooltip from an avatar long press in avatars-only mode', () => {
+		typingUserSnapshot = { known: 1 };
+		settingsValues.set('indicatorMode', 2);
+		plugin.start();
+		const updated = patchHandler?.({
+			args: [{ channel: { id: 'channel', guild_id: 'guild' }, muted: false }],
+			result: channelRow('channel'),
+		});
+		const indicator = wrappedIndicator(
+			updated.props.children[1].props.children[1].props.children[2],
+		);
+		const avatars = renderIndicator(indicator).props.children[0];
+		let measured = false;
+		avatars.props.containerRef.current = {
+			measureInWindow(callback: (x: number, y: number, width: number, height: number) => void) {
+				measured = true;
+				callback(250, 400, 48, 16);
+			},
+		};
+		const avatar = avatars.type(avatars.props).props.children[0][0].props.children;
+		avatar.props.onLongPress({ stopPropagation() {} });
+		expect(measured).toBe(true);
+		expect(profileOpen).toBeNull();
+	});
+
 	test('keeps default avatars for typing users absent from the user cache', () => {
 		typingUserSnapshot = { uncached: 1, known: 2 };
 		unresolvedUsers.add('uncached');
@@ -491,8 +539,10 @@ describe('channel row integration', () => {
 		const stack = avatars.type(avatars.props);
 		const first = stack.props.children[0][0].props.children;
 		const second = stack.props.children[0][1].props.children;
-		expect(first.type).toBe('View');
-		expect(first.props.children.type).toBeFunction();
+		expect(first.type).toBe('Pressable');
+		expect(first.props.onLongPress).toBeFunction();
+		expect(first.props.children.type).toBe('View');
+		expect(first.props.children.props.children.type).toBeFunction();
 		expect(second.type).toBe('Pressable');
 		const summary = second.props.children;
 		expect(summary.props.users).toEqual([{ id: 'known' }]);
@@ -513,7 +563,10 @@ describe('channel row integration', () => {
 		);
 		const avatars = renderIndicator(indicator).props.children[0];
 		const overflow = avatars.type(avatars.props).props.children[1];
-		expect(overflow.props.children.props.children).toBe('+2');
+		expect(overflow.type).toBe('Pressable');
+		expect(overflow.props.onLongPress).toBeFunction();
+		expect(overflow.props.children.props.children.props.children).toBe('+2');
+		expect(overflow.props.style.marginLeft).toBe(-6);
 		expect(overflow.props.style.zIndex).toBeGreaterThan(3);
 	});
 

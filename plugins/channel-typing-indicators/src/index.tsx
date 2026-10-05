@@ -13,6 +13,7 @@ const STORE = storage.getStore(ADDON_ID);
 const MAX_AVATARS = 3;
 const DOTS = 1;
 const AVATARS = 2;
+const TYPING_MESSAGE_IDS = ['lJ9sZX', 'rB0CUa', 'StKThj', 'uVDhqZ'];
 
 type Channel = { id: string; guild_id?: string; name?: string };
 type User = { id: string; username?: string; globalName?: string };
@@ -129,10 +130,25 @@ export function sameIds(first: string[], second: string[]): boolean {
 }
 
 export function typingLabel(names: string[]): string {
-	if (names.length === 1) return `${names[0]} is typing...`;
-	if (names.length === 2) return `${names[0]} and ${names[1]} are typing...`;
-	if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} are typing...`;
-	return 'Several users are typing...';
+	if (!names.length) return '';
+	let fallback = 'Several people are typing...';
+	if (names.length === 1) fallback = `${names[0]} is typing...`;
+	if (names.length === 2) fallback = `${names[0]} and ${names[1]} are typing...`;
+	if (names.length === 3) fallback = `${names[0]}, ${names[1]}, and ${names[2]} are typing...`;
+	const messageId = TYPING_MESSAGE_IDS[Math.min(names.length, 4) - 1];
+	const i18n = (metro.common as any).i18n;
+	const message = i18n?.t?.[messageId];
+	if (typeof message !== 'function') return fallback;
+	try {
+		const localized = i18n.intl?.formatToPlainString?.(message, {
+			a: names[0],
+			b: names[1],
+			c: names[2],
+		});
+		return typeof localized === 'string' && localized ? localized : fallback;
+	} catch {
+		return fallback;
+	}
 }
 
 export function tooltipPlacement(
@@ -276,10 +292,14 @@ function TypingAvatars({
 	users,
 	guildId,
 	channelId,
+	containerRef,
+	onLongPress,
 }: {
 	users: (User | null)[];
 	guildId?: string;
 	channelId: string;
+	containerRef: any;
+	onLongPress: () => void;
 }) {
 	const { ReactNative } = metro.common;
 	const Component = userSummaryItem;
@@ -294,8 +314,15 @@ function TypingAvatars({
 	const foreground = theme.internal.resolveSemanticColor(appearance, theme.colors.TEXT_DEFAULT);
 	const visible = users.slice(0, MAX_AVATARS);
 	const overflow = users.length - visible.length;
+	function showAvatarsTooltip(event: any): void {
+		event.stopPropagation();
+		onLongPress();
+	}
 	return (
-		<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', marginLeft: 6 }}>
+		<ReactNative.View
+			ref={containerRef}
+			style={{ alignItems: 'center', flexDirection: 'row', marginLeft: 6 }}
+		>
 			{visible.map((user, index) => (
 				<ReactNative.View
 					key={user?.id ?? `unknown-${index}`}
@@ -307,6 +334,7 @@ function TypingAvatars({
 								event.stopPropagation();
 								openProfile(user.id, channelId);
 							}}
+							onLongPress={showAvatarsTooltip}
 						>
 							<Component
 								users={[user]}
@@ -319,40 +347,45 @@ function TypingAvatars({
 							/>
 						</ReactNative.Pressable>
 					) : (
-						<ReactNative.View
-							style={{
-								alignItems: 'center',
-								backgroundColor: background,
-								borderRadius: 8,
-								height: 16,
-								justifyContent: 'center',
-								width: 16,
-							}}
-						>
-							{UserIcon ? (
-								<UserIcon color={foreground} style={{ transform: [{ scale: 0.5 }] }} />
-							) : null}
-						</ReactNative.View>
+						<ReactNative.Pressable onLongPress={showAvatarsTooltip}>
+							<ReactNative.View
+								style={{
+									alignItems: 'center',
+									backgroundColor: background,
+									borderRadius: 8,
+									height: 16,
+									justifyContent: 'center',
+									width: 16,
+								}}
+							>
+								{UserIcon ? (
+									<UserIcon color={foreground} style={{ transform: [{ scale: 0.5 }] }} />
+								) : null}
+							</ReactNative.View>
+						</ReactNative.Pressable>
 					)}
 				</ReactNative.View>
 			))}
 			{overflow > 0 ? (
-				<ReactNative.View
-					style={{
-						alignItems: 'center',
-						backgroundColor: '#000',
-						borderRadius: 8,
-						height: 16,
-						justifyContent: 'center',
-						marginLeft: -6,
-						width: 16,
-						zIndex: MAX_AVATARS + 1,
-					}}
+				<ReactNative.Pressable
+					onLongPress={showAvatarsTooltip}
+					style={{ marginLeft: -6, zIndex: MAX_AVATARS + 1 }}
 				>
-					<ReactNative.Text style={{ color: '#fff', fontSize: 8, fontWeight: '600' }}>
-						{`+${overflow}`}
-					</ReactNative.Text>
-				</ReactNative.View>
+					<ReactNative.View
+						style={{
+							alignItems: 'center',
+							backgroundColor: '#000',
+							borderRadius: 8,
+							height: 16,
+							justifyContent: 'center',
+							width: 16,
+						}}
+					>
+						<ReactNative.Text style={{ color: '#fff', fontSize: 8, fontWeight: '600' }}>
+							{`+${overflow}`}
+						</ReactNative.Text>
+					</ReactNative.View>
+				</ReactNative.Pressable>
 			) : null}
 		</ReactNative.View>
 	);
@@ -360,7 +393,8 @@ function TypingAvatars({
 
 function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: boolean }) {
 	const { React, ReactNative } = metro.common;
-	const indicatorRef = React.useRef<any>(null);
+	const avatarsRef = React.useRef<any>(null);
+	const dotsRef = React.useRef<any>(null);
 	const [tooltipAnchor, setTooltipAnchor] = React.useState<TooltipAnchor | null>(null);
 	const settings = STORE.useSettingsStore();
 	const includeMuted = settings.get('includeMutedChannels', false);
@@ -431,26 +465,30 @@ function ChannelTypingIndicator({ channel, muted }: { channel: Channel; muted: b
 	const placement = tooltipAnchor
 		? tooltipPlacement(tooltipAnchor, label.length, ReactNative.Dimensions.get('window').width)
 		: null;
-	function showTooltip(): void {
-		indicatorRef.current?.measureInWindow?.(
-			(x: number, y: number, width: number, height: number) => {
-				if (![x, y, width, height].every(Number.isFinite)) return;
-				setTooltipAnchor({ x, y, width, height });
-			},
-		);
+	function showTooltip(targetRef: any): void {
+		targetRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+			if (![x, y, width, height].every(Number.isFinite)) return;
+			setTooltipAnchor({ x, y, width, height });
+		});
 	}
 
 	return (
 		<>
 			<ReactNative.View style={{ alignItems: 'center', flexDirection: 'row', flexShrink: 0 }}>
 				{indicatorMode & AVATARS ? (
-					<TypingAvatars users={typingUsers} guildId={channel.guild_id} channelId={channel.id} />
+					<TypingAvatars
+						users={typingUsers}
+						guildId={channel.guild_id}
+						channelId={channel.id}
+						containerRef={avatarsRef}
+						onLongPress={() => showTooltip(avatarsRef)}
+					/>
 				) : null}
 				{indicatorMode & DOTS ? (
 					<ReactNative.Pressable
-						ref={indicatorRef}
+						ref={dotsRef}
 						accessibilityLabel={label}
-						onPress={showTooltip}
+						onPress={() => showTooltip(dotsRef)}
 					>
 						<TypingDots />
 					</ReactNative.Pressable>
