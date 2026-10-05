@@ -4,6 +4,10 @@
 	"description": "Hide the gift button from the chat composer.",
 	"authors": [
 		{
+			"name": "ssense",
+			"id": "0"
+		},
+		{
 			"name": "Unbound Team",
 			"id": "0"
 		}

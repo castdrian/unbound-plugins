@@ -4,6 +4,10 @@
 	"description": "Makes GIF picker selections paste a link into the chat box instead of sending immediately.",
 	"authors": [
 		{
+			"name": "V",
+			"id": "343383572805058560"
+		},
+		{
 			"name": "Unbound Team",
 			"id": "0"
 		}

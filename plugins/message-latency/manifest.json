@@ -4,6 +4,10 @@
 	"description": "Marks messages that took at least the selected threshold to send.",
 	"authors": [
 		{
+			"name": "arHSM",
+			"id": "841509053422632990"
+		},
+		{
 			"name": "Unbound Team",
 			"id": "0"
 		}

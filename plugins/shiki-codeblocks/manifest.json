@@ -4,6 +4,10 @@
 	"description": "Highlights code blocks with VS Code-style syntax colors.",
 	"authors": [
 		{
+			"name": "Vap0r1ze",
+			"id": "454072114492866560"
+		},
+		{
 			"name": "Unbound Team",
 			"id": "0"
 		}

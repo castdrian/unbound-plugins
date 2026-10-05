@@ -4,6 +4,10 @@
 	"description": "Shows file sizes on media picker thumbnails.",
 	"authors": [
 		{
+			"name": "mafu",
+			"id": "519760564755365888"
+		},
+		{
 			"name": "Unbound Team",
 			"id": "0"
 		}
