@@ -74,7 +74,12 @@ export function readSurfaceAnchor(
 	tolerance: number = 36,
 ): BottomAnchor {
 	const anchor = readBottomAnchor(metrics, tolerance);
-	if (followsLatestMessage) anchor.atBottom = true;
+	if (
+		followsLatestMessage &&
+		Number.isFinite(metrics.offsetY) &&
+		Math.abs(bottomOffset(metrics) - metrics.offsetY) <= 520
+	)
+		anchor.atBottom = true;
 	return anchor;
 }
 

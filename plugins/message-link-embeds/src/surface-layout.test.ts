@@ -60,6 +60,15 @@ describe('chat bottom anchoring', () => {
 		});
 	});
 
+	test('does not pull distant history to a latest-message surface', () => {
+		const anchor = readSurfaceAnchor(metrics({ offsetY: -1200 }), true);
+		const inverted = readSurfaceAnchor(metrics({ inverted: true, offsetY: -1200 }), true);
+
+		expect(anchor.atBottom).toBe(false);
+		expect(inverted.atBottom).toBe(false);
+		expect(bottomOffsetCorrection(anchor, metrics(), false)).toBeUndefined();
+	});
+
 	test('does not pin older message surfaces away from their current scroll position', () => {
 		const anchor = readSurfaceAnchor(metrics({ offsetY: 700 }), false);
 
