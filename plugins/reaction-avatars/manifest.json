@@ -28,6 +28,7 @@
 		"native.objc.classes",
 		"native.objc.invoke",
 		"native.objc.batch",
+		"native.objc.snapshot",
 		"native.objc.ivars",
 		"native.objc.hooks",
 		"native.fabric.mount"

@@ -244,6 +244,7 @@ let lifecycle = 0;
 let currentSelectedChannelId: string | undefined;
 let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
 let nextNativeId = 0;
+let visibleScanRevision = 0;
 let activated = false;
 
 function record(value: unknown): value is AnyRecord {
@@ -292,7 +293,12 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 }
 
 function nativeKey(handle: NativeObjectHandle): string {
-	const hash = numberValue(nativeCall(handle, 'hash'));
+	let hash: number | undefined;
+	try {
+		hash = numberValue(objc?.call(handle, 'hash'));
+	} catch {
+		hash = undefined;
+	}
 	if (hash !== undefined) return `${objc?.className(handle) ?? 'NSObject'}:${hash}`;
 	const existing = nativeIds.get(handle);
 	if (existing !== undefined) return `native:${existing}`;
@@ -1472,46 +1478,53 @@ function scheduleCell(cell: NativeObjectHandle, force: boolean = false): void {
 	}, 0);
 }
 
-function scanVisibleReactionCells(): number {
+async function scanVisibleReactionCells(): Promise<number> {
 	if (!objc) return 0;
-	const applicationClass = objc.getClass('UIApplication');
+	const bridge = objc;
+	const applicationClass = bridge.getClass('UIApplication');
 	if (!applicationClass) return 0;
-	const application = nativeCall(
-		applicationClass,
-		'sharedApplication',
-	) as NativeObjectHandle | null;
-	if (!application) return 0;
-	const windows = nativeArray(nativeCall(application, 'windows'));
-	const keyWindow = nativeCall(application, 'keyWindow') as NativeObjectHandle | null;
-	if (keyWindow && !windows.some((window) => nativeKey(window) === nativeKey(keyWindow))) {
-		windows.push(keyWindow);
-	}
-	const cells = new Map<string, NativeObjectHandle>();
-
-	for (const window of windows) {
-		const queue: NativeNode[] = [{ depth: 0, view: window }];
-		let visited = 0;
-
-		while (queue.length > 0 && visited < MAX_VISIBLE_CELL_SCAN_NODES) {
-			const node = queue.shift();
-			if (!node) break;
-			visited++;
-
-			const className = objc.className(node.view) ?? '';
-			if (className.includes('DCDMessageTableViewCell')) {
-				if (nativeCall(node.view, 'window')) cells.set(nativeKey(node.view), node.view);
-				continue;
-			}
-			if (node.depth >= MAX_VISIBLE_CELL_SCAN_DEPTH) continue;
-
-			for (const child of nativeChildren(node.view)) {
-				queue.push({ depth: node.depth + 1, view: child });
-			}
+	const token = lifecycle;
+	const revision = ++visibleScanRevision;
+	const channelId = selectedChannelId();
+	try {
+		const values = await bridge.batch([
+			{ target: applicationClass, selector: 'sharedApplication', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'windows', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'keyWindow', args: [] },
+		]);
+		if (
+			token !== lifecycle ||
+			revision !== visibleScanRevision ||
+			channelId !== selectedChannelId()
+		)
+			return 0;
+		const windows = nativeArray(values[1]);
+		const keyWindow = values[2] as NativeObjectHandle | null;
+		if (keyWindow && !windows.some((window) => nativeKey(window) === nativeKey(keyWindow))) {
+			windows.push(keyWindow);
 		}
+		const cells = new Map<string, NativeObjectHandle>();
+		for (const window of windows) {
+			const found = await bridge.findViews(window, 'DCDMessageTableViewCell', {
+				maxDepth: MAX_VISIBLE_CELL_SCAN_DEPTH,
+				maxVisited: MAX_VISIBLE_CELL_SCAN_NODES,
+				maxResults: 256,
+				attachedOnly: true,
+				stopAtMatch: true,
+			});
+			if (
+				token !== lifecycle ||
+				revision !== visibleScanRevision ||
+				channelId !== selectedChannelId()
+			)
+				return 0;
+			for (const cell of found) cells.set(nativeKey(cell), cell);
+		}
+		for (const cell of cells.values()) scheduleCell(cell, true);
+		return cells.size;
+	} catch {
+		return 0;
 	}
-
-	for (const cell of cells.values()) scheduleCell(cell, true);
-	return cells.size;
 }
 
 function onReactionChange(event: AnyRecord): void {
@@ -1549,6 +1562,7 @@ function onSelectedChannelChange(): void {
 	const nextChannelId = selectedChannelId();
 	if (!shouldHandleChannelChange(currentSelectedChannelId, nextChannelId)) return;
 	currentSelectedChannelId = nextChannelId;
+	visibleScanRevision++;
 	for (const timeout of channelScanTimeouts) clearTimeout(timeout);
 	channelScanTimeouts = [];
 	for (const timeout of reactionLayoutRefreshes.values()) clearTimeout(timeout);
@@ -1569,7 +1583,7 @@ function onSelectedChannelChange(): void {
 			channelScanTimeouts = channelScanTimeouts.filter((candidate) => candidate !== timeout);
 			if (token !== lifecycle || !activated) return;
 			userCache.cancelQueuedOutsideChannel(selectedChannelId());
-			scanVisibleReactionCells();
+			void scanVisibleReactionCells();
 		}, delay);
 		channelScanTimeouts.push(timeout);
 	}
@@ -1651,7 +1665,7 @@ function activate(): void {
 	const token = lifecycle;
 	setTimeout(() => {
 		if (token !== lifecycle || !activated) return;
-		scanVisibleReactionCells();
+		void scanVisibleReactionCells();
 	}, 0);
 }
 
