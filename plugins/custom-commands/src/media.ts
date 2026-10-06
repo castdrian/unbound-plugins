@@ -40,7 +40,7 @@ function localPath(uri: string): string {
 	return uri.startsWith('file://') ? decodeURI(uri.slice('file://'.length)) : uri;
 }
 
-async function resolvePickedMedia(asset: PickerAsset): Promise<PickedMedia> {
+function resolvePickedMedia(asset: PickerAsset): PickedMedia {
 	const context = pluginContext;
 	if (!context) throw new Error('Custom Commands is not running.');
 	if (typeof asset.uri !== 'string' || !asset.uri.startsWith('file://'))
@@ -53,16 +53,9 @@ async function resolvePickedMedia(asset: PickerAsset): Promise<PickedMedia> {
 
 	const objc = context.native.objc;
 	const fileManagerClass = objc.getClass('NSFileManager');
-	if (!fileManagerClass)
-		throw new Error('The selected media is unavailable. Choose a local photo or video.');
-	const [, attributes] = await objc.batch([
-		{ target: fileManagerClass, selector: 'defaultManager', args: [] },
-		{
-			target: { $nativeBatchResult: 0 },
-			selector: 'attributesOfItemAtPath:error:',
-			args: [path, null],
-		},
-	]);
+	const fileManager = fileManagerClass && objc.call(fileManagerClass, 'defaultManager');
+	const attributes =
+		fileManager && objc.call(fileManager, 'attributesOfItemAtPath:error:', path, null);
 	const file = attributes as Record<string, unknown> | null;
 	const fileSize = Number(file?.NSFileSize);
 	if (file?.NSFileType !== 'NSFileTypeRegular' || !Number.isSafeInteger(fileSize) || fileSize < 0)
@@ -70,14 +63,9 @@ async function resolvePickedMedia(asset: PickerAsset): Promise<PickedMedia> {
 
 	const extension = fileName.match(/\.([a-z0-9]+)$/i)?.[1];
 	const uniformTypeClass = !asset.type && !asset.mimeType && extension && objc.getClass('UTType');
-	const inferredType = uniformTypeClass
-		? (
-				await objc.batch([
-					{ target: uniformTypeClass, selector: 'typeWithFilenameExtension:', args: [extension] },
-					{ target: { $nativeBatchResult: 0 }, selector: 'preferredMIMEType', args: [] },
-				])
-			)[1]
-		: null;
+	const uniformType =
+		uniformTypeClass && objc.call(uniformTypeClass, 'typeWithFilenameExtension:', extension);
+	const inferredType = uniformType && objc.call(uniformType, 'preferredMIMEType');
 	const type = asset.type || asset.mimeType || inferredType;
 	if (typeof type !== 'string' || (!type.startsWith('image/') && !type.startsWith('video/')))
 		throw new Error('Choose an image or video attachment.');
@@ -105,7 +93,7 @@ export async function pickMedia(): Promise<PickedMedia[]> {
 		selectionLimit: 10,
 	});
 	if (result.errorCode) throw new Error(result.errorMessage || result.errorCode);
-	return Promise.all((result.assets ?? []).map(resolvePickedMedia));
+	return (result.assets ?? []).map(resolvePickedMedia);
 }
 
 export async function persistMedia(asset: PickedMedia): Promise<TagMedia> {
@@ -122,15 +110,12 @@ export async function persistMedia(asset: PickedMedia): Promise<TagMedia> {
 		const objc = context.native.objc;
 		const fileManagerClass = objc.getClass('NSFileManager');
 		if (fileManagerClass) {
-			const [, result] = await objc.batch([
-				{ target: fileManagerClass, selector: 'defaultManager', args: [] },
-				{
-					target: { $nativeBatchResult: 0 },
-					selector: 'copyItemAtPath:toPath:error:',
-					args: [sourcePath, destinationPath, null],
-				},
-			]);
-			copied = Boolean(result);
+			const fileManager = objc.call(fileManagerClass, 'defaultManager');
+			if (fileManager && typeof fileManager === 'object') {
+				copied = Boolean(
+					objc.call(fileManager, 'copyItemAtPath:toPath:error:', sourcePath, destinationPath, null),
+				);
+			}
 		}
 	} catch {}
 
