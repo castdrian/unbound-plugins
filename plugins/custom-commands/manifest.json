@@ -21,7 +21,7 @@
 	"main": "index.tsx",
 	"capabilities": [
 		"native.objc.classes",
-		"native.objc.invoke"
+		"native.objc.batch"
 	],
 	"minNativePluginApi": "1.0.0"
 }
