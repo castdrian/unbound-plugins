@@ -149,7 +149,7 @@ type NativeValue = any;
 
 type User = {
 	avatar?: string | null;
-	getAvatarURL?: (guildId?: string | null, size?: number, animated?: boolean) => string;
+	getAvatarURL?: (guildId?: string | null, size?: number, animated?: boolean) => unknown;
 	globalName?: string | null;
 	id: string;
 	username?: string;
@@ -225,10 +225,10 @@ function pngURL(url: string): string {
 	return `${png}${png.includes('?') ? '&' : '?'}size=32`;
 }
 
-function userAvatarURL(user: User, guildId?: string): string | undefined {
+export function userAvatarURL(user: User, guildId?: string): string | undefined {
 	const resolved = user.getAvatarURL?.(guildId ?? null, 32, false);
-	if (resolved) return pngURL(resolved);
-	if (user.avatar)
+	if (typeof resolved === 'string' && resolved) return pngURL(resolved);
+	if (typeof user.avatar === 'string' && user.avatar)
 		return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`;
 	return undefined;
 }

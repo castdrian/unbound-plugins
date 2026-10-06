@@ -89,6 +89,7 @@ const {
 	imageCacheAction,
 	mentionImageMetrics,
 	roleImageSource,
+	userAvatarURL,
 	tintRoleSymbol,
 	ROLE_SYMBOL_METRICS,
 	selectMentionLabel,
@@ -134,6 +135,20 @@ describe('mention token matching', () => {
 });
 
 describe('mention image decisions', () => {
+	test('uses a custom avatar when Discord resolves its avatar to a numeric asset', () => {
+		expect(
+			userAvatarURL({
+				avatar: 'avatar-hash',
+				getAvatarURL: () => 42,
+				id: '123',
+			}),
+		).toBe('https://cdn.discordapp.com/avatars/123/avatar-hash.png?size=32');
+	});
+
+	test('skips numeric default avatar assets without stopping mention rendering', () => {
+		expect(userAvatarURL({ getAvatarURL: () => 42, id: '123' })).toBeUndefined();
+	});
+
 	test('retains the verified SE role symbol size', () => {
 		expect(ROLE_SYMBOL_METRICS).toEqual({ pointSize: 14 });
 	});
