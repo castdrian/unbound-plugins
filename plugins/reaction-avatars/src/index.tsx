@@ -723,18 +723,37 @@ function invalidateReactionLayout(entry: ReactionLayoutEntry): void {
 	if (!objc || entry.invalidationScheduled) return;
 	entry.invalidationScheduled = true;
 	const token = lifecycle;
+	const key = nativeKey(entry.collection);
 	setTimeout(() => {
-		entry.invalidationScheduled = false;
-		if (token !== lifecycle || reactionLayouts.get(nativeKey(entry.collection)) !== entry) return;
-		nativeCall(entry.layout, 'invalidateLayout');
-		nativeCall(entry.collection, 'setNeedsLayout');
-		nativeCall(entry.list, 'invalidateIntrinsicContentSize');
-		nativeCall(entry.list, 'setNeedsLayout');
-		if (entry.ownerCell) scheduleCell(entry.ownerCell, true);
-		const table = entry.ownerCell
-			? ancestorNativeViewByClass(entry.ownerCell, 'DCDTableView', 12)
-			: null;
-		if (table) scheduleReactionTableLayout(reactionTableLayout(table));
+		if (token !== lifecycle || !objc || reactionLayouts.get(key) !== entry) {
+			entry.invalidationScheduled = false;
+			return;
+		}
+		try {
+			void objc
+				.batch([
+					{ target: entry.layout, selector: 'invalidateLayout', args: [] },
+					{ target: entry.collection, selector: 'setNeedsLayout', args: [] },
+					{ target: entry.list, selector: 'invalidateIntrinsicContentSize', args: [] },
+					{ target: entry.list, selector: 'setNeedsLayout', args: [] },
+				])
+				.then(
+					() => {
+						entry.invalidationScheduled = false;
+						if (token !== lifecycle || reactionLayouts.get(key) !== entry) return;
+						if (entry.ownerCell) scheduleCell(entry.ownerCell, true);
+						const table = entry.ownerCell
+							? ancestorNativeViewByClass(entry.ownerCell, 'DCDTableView', 12)
+							: null;
+						if (table) scheduleReactionTableLayout(reactionTableLayout(table));
+					},
+					() => {
+						entry.invalidationScheduled = false;
+					},
+				);
+		} catch {
+			entry.invalidationScheduled = false;
+		}
 	}, 0);
 }
 
