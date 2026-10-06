@@ -59,6 +59,7 @@ type Message = AnyRecord & {
 type MessageStore = {
 	addChangeListener?: (listener: () => void) => void;
 	getMessage?: (channelId: string, messageId: string) => Message | null;
+	getMessages?: (channelId: string) => { _array?: Message[] } | null;
 	getLastMessage?: (channelId: string) => Message | null;
 	removeChangeListener?: (listener: () => void) => void;
 };
@@ -152,7 +153,9 @@ let embeddedAnimationSupport: ReturnType<typeof installEmbeddedAnimationSupport>
 let moduleListenerCleanup: (() => boolean) | null = null;
 let messageStoreListener: (() => void) | null = null;
 let messageSyncTimer: ReturnType<typeof setTimeout> | null = null;
-let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
+let messageWindowScanTimer: ReturnType<typeof setTimeout> | null = null;
+let messageWindowSignature = '';
+let initialScanTimers: ReturnType<typeof setTimeout>[] = [];
 let hooks: NativeHookToken[] = [];
 let lifecycle = 0;
 let surfaceModuleName = '';
@@ -160,6 +163,7 @@ let surfaceModuleName = '';
 const cachedMessages = new Map<string, Message>();
 const pendingMessages = new Set<string>();
 const activeCells = new Map<string, NativeObjectHandle>();
+const visibleCellIds = new Map<string, string>();
 const pendingCells = new Set<string>();
 const completedCells = new Set<string>();
 const retryCounts = new Map<string, number>();
@@ -234,6 +238,22 @@ function handleMessageStoreChange(): void {
 		}
 	}
 	scheduleMessageSync();
+	scheduleMessageWindowScan();
+}
+
+function scheduleMessageWindowScan(): void {
+	const channelId = currentChannelId();
+	const window = channelId ? messages?.getMessages?.(channelId)?._array : undefined;
+	if (!channelId || !window) return;
+	const signature = `${channelId}:${window.length}:${window[0]?.id}:${window[window.length - 1]?.id}`;
+	if (signature === messageWindowSignature) return;
+	messageWindowSignature = signature;
+	if (messageWindowScanTimer) clearTimeout(messageWindowScanTimer);
+	const token = lifecycle;
+	messageWindowScanTimer = setTimeout(() => {
+		messageWindowScanTimer = null;
+		if (token === lifecycle) void scanVisibleMessageCells();
+	}, 150);
 }
 
 function installMessageStoreListener(): void {
@@ -324,48 +344,48 @@ function textViewsInView(
 	return result;
 }
 
-function visibleMessageCellsInCell(cell: NativeObjectHandle): NativeObjectHandle[] {
-	if (!objc) return [];
-	let table = nativeCall(cell, 'superview') as NativeObjectHandle | null;
-	for (let depth = 0; table && depth < MAX_NATIVE_VIEW_DEPTH; depth++) {
-		if ((objc.className(table) ?? '').includes('DCDTableView')) break;
-		table = nativeCall(table, 'superview') as NativeObjectHandle | null;
-	}
-	if (!table || !(objc.className(table) ?? '').includes('DCDTableView')) return [];
-	const visibleCells = nativeCall(table, 'visibleCells');
+async function scanVisibleMessageCells(): Promise<void> {
+	if (!objc || hooks.length === 0) return;
+	const bridge = objc;
+	const token = lifecycle;
+	const application = bridge.getClass('UIApplication');
+	if (!application) return;
 	try {
-		const cells = Array.isArray(visibleCells)
-			? (visibleCells as NativeObjectHandle[])
-			: visibleCells && typeof visibleCells === 'object'
-				? objc.array(visibleCells as NativeObjectHandle)
-				: [];
-		return cells.filter((value) =>
-			(objc.className(value) ?? '').includes('DCDMessageTableViewCell'),
-		);
-	} catch {
-		return [];
-	}
-}
-
-function visibleMessageCells(): NativeObjectHandle[] {
-	if (!objc) return [];
-	const application = objc.getClass('UIApplication');
-	if (!application) return [];
-	const shared = nativeCall(application, 'sharedApplication') as NativeObjectHandle | null;
-	const window = shared ? (nativeCall(shared, 'keyWindow') as NativeObjectHandle | null) : null;
-	if (!window) return [];
-	const pending = [window];
-	let inspected = 0;
-	while (pending.length && inspected < 800) {
-		const view = pending.pop();
-		if (!view) continue;
-		inspected++;
-		if ((objc.className(view) ?? '').includes('DCDMessageTableViewCell')) {
-			return visibleMessageCellsInCell(view);
+		const values = await bridge.batch([
+			{ target: application, selector: 'sharedApplication', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'windows', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'keyWindow', args: [] },
+		]);
+		if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
+		const keyWindow = values[2] as NativeObjectHandle | null;
+		const windows = keyWindow
+			? [keyWindow]
+			: Array.isArray(values[1])
+				? values[1]
+				: bridge.array(values[1]);
+		for (const window of windows) {
+			const cells = await bridge.findViews(window, 'DCDMessageTableViewCell', {
+				maxDepth: 40,
+				maxVisited: 800,
+				maxResults: 256,
+				attachedOnly: true,
+				stopAtMatch: true,
+			});
+			if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
+			for (const cell of cells) {
+				const key = cellKey(cell);
+				const info = messageInfoForCell(cell);
+				if (!key || !info) continue;
+				const previousId = visibleCellIds.get(key) ?? cellStates.get(key)?.messageId;
+				if (previousId && previousId !== info.messageId) clearCell(key);
+				else if (!previousId) completedCells.delete(key);
+				visibleCellIds.set(key, info.messageId);
+				scheduleCell(cell);
+			}
 		}
-		pending.push(...nativeChildren(view));
+	} catch {
+		return;
 	}
-	return [];
 }
 
 function textForView(view: NativeObjectHandle): string | undefined {
@@ -1189,6 +1209,7 @@ function scheduleCell(cell: NativeObjectHandle): void {
 
 function clearCell(key: string): void {
 	activeCells.delete(key);
+	visibleCellIds.delete(key);
 	pendingCells.delete(key);
 	completedCells.delete(key);
 	retryCounts.delete(key);
@@ -1258,15 +1279,6 @@ function observeCellLabels(cell: NativeObjectHandle): void {
 
 function installNativeHooks(): void {
 	if (!objc || hooks.length > 0) return;
-	let initialScan: NativeHookToken;
-	initialScan = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {
-		after: ({ self }) => {
-			const cells = visibleMessageCellsInCell(self);
-			if (cells.length === 0) return;
-			initialScan.remove();
-			for (const cell of cells) scheduleCell(cell);
-		},
-	});
 	const visibility = objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
 		after: ({ self }) => {
 			const key = cellKey(self);
@@ -1286,12 +1298,14 @@ function installNativeHooks(): void {
 			setTimeout(() => scheduleCell(self), 0);
 		},
 	});
-	hooks = [initialScan, visibility, reuse];
-	initialScanTimer = setTimeout(() => {
-		initialScanTimer = null;
-		if (!objc || hooks.length === 0) return;
-		for (const cell of visibleMessageCells()) scheduleCell(cell);
-	}, 300);
+	hooks = [visibility, reuse];
+	for (const delay of [0, 300, 1_500]) {
+		const timer = setTimeout(() => {
+			initialScanTimers = initialScanTimers.filter((candidate) => candidate !== timer);
+			void scanVisibleMessageCells();
+		}, delay);
+		initialScanTimers.push(timer);
+	}
 }
 
 function dependenciesReady(): boolean {
@@ -1312,8 +1326,6 @@ function captureDependency(candidate: unknown): void {
 	) {
 		messages = value as MessageStore;
 	}
-	if (!messageActions && typeof value.fetchMessage === 'function')
-		messageActions = value as MessageActions;
 	if (!messageRecord && typeof candidate === 'function' && value.name === 'MessageRecord') {
 		messageRecord = candidate as MessageRecordConstructor;
 	}
@@ -1365,6 +1377,12 @@ function initialize(): void {
 		moduleListenerCleanup = metro.addListener((module, id) => captureLoadedModule(module, id));
 	}
 	captureInitializedModules();
+	if (!messageActions) {
+		messageActions =
+			(metro.findByProps('fetchMessage', 'sendMessage', '_sendMessage') as
+				| MessageActions
+				| undefined) ?? null;
+	}
 	if (!chatItem) {
 		const module = metro.findByFilePath(CHAT_ITEM_PATH, { cacheOnly: false, interop: false });
 		if (module) {
@@ -1387,8 +1405,11 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycle++;
-	if (initialScanTimer) clearTimeout(initialScanTimer);
-	initialScanTimer = null;
+	if (messageWindowScanTimer) clearTimeout(messageWindowScanTimer);
+	messageWindowScanTimer = null;
+	messageWindowSignature = '';
+	for (const timer of initialScanTimers) clearTimeout(timer);
+	initialScanTimers = [];
 	removeMessageStoreListener();
 	for (const token of hooks) token.remove();
 	hooks = [];
@@ -1398,6 +1419,7 @@ function stop(): void {
 	embeddedAnimationSupport?.dispose();
 	embeddedAnimationSupport = null;
 	activeCells.clear();
+	visibleCellIds.clear();
 	pendingCells.clear();
 	completedCells.clear();
 	retryCounts.clear();
