@@ -208,6 +208,7 @@ let hydratedMessageKey: string | null = null;
 let lifecycleToken = 0;
 let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
 let currentChannelId: string | undefined;
+let visibleScanRevision = 0;
 
 function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
 	if (!objc) return null;
@@ -814,48 +815,42 @@ function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {
 	}, 0);
 }
 
-function scheduleVisibleCells(view: NativeValue): void {
+async function scanVisibleMessageCells(): Promise<void> {
 	if (!objc) return;
-	const queue = [{ depth: 0, view }];
-	for (let index = 0; index < queue.length && index < MAX_VISIBLE_CELL_SCAN_NODES; index++) {
-		const node = queue[index];
-		if (!node) continue;
-		const className = objc.className(node.view) ?? '';
-		if (className.includes('DCDMessageTableViewCell')) {
-			if (nativeCall(node.view, 'window')) {
-				scheduleCellRender(node.view);
-			}
-			continue;
-		}
-		if (node.depth >= MAX_VISIBLE_CELL_SCAN_DEPTH) continue;
-		const children = nativeCall(node.view, 'subviews');
-		if (Array.isArray(children)) {
-			for (const child of children) queue.push({ depth: node.depth + 1, view: child });
-			continue;
-		}
-		if (!children || typeof children !== 'object') continue;
-		try {
-			for (const child of objc.array(children)) queue.push({ depth: node.depth + 1, view: child });
-		} catch {
-			continue;
-		}
-	}
-}
-
-function scanVisibleMessageCells(): void {
-	if (!objc) return;
-	const applicationClass = objc.getClass('UIApplication');
-	const application = applicationClass ? nativeCall(applicationClass, 'sharedApplication') : null;
-	if (!application) return;
-	const windows = nativeCall(application, 'windows');
-	if (Array.isArray(windows)) {
-		for (const window of windows) scheduleVisibleCells(window);
-		return;
-	}
-	if (!windows || typeof windows !== 'object') return;
+	const bridge = objc;
+	const applicationClass = bridge.getClass('UIApplication');
+	if (!applicationClass) return;
+	const token = lifecycleToken;
+	const revision = ++visibleScanRevision;
+	const channelId = currentChannelId;
 	try {
-		const windowList = objc.array(windows);
-		for (const window of windowList) scheduleVisibleCells(window);
+		const values = await bridge.batch([
+			{ target: applicationClass, selector: 'sharedApplication', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'windows', args: [] },
+		]);
+		if (
+			token !== lifecycleToken ||
+			revision !== visibleScanRevision ||
+			channelId !== currentChannelId
+		)
+			return;
+		const windows = Array.isArray(values[1]) ? values[1] : bridge.array(values[1]);
+		for (const window of windows) {
+			const cells = await bridge.findViews(window, 'DCDMessageTableViewCell', {
+				maxDepth: MAX_VISIBLE_CELL_SCAN_DEPTH,
+				maxVisited: MAX_VISIBLE_CELL_SCAN_NODES,
+				maxResults: 256,
+				attachedOnly: true,
+				stopAtMatch: true,
+			});
+			if (
+				token !== lifecycleToken ||
+				revision !== visibleScanRevision ||
+				channelId !== currentChannelId
+			)
+				return;
+			for (const cell of cells) scheduleCellRender(cell);
+		}
 	} catch {
 		return;
 	}
@@ -869,7 +864,7 @@ function scheduleVisibleCellScans(): void {
 		const timeout = setTimeout(() => {
 			channelScanTimeouts = channelScanTimeouts.filter((candidate) => candidate !== timeout);
 			if (token !== lifecycleToken || !objc) return;
-			scanVisibleMessageCells();
+			void scanVisibleMessageCells();
 		}, delay);
 		channelScanTimeouts.push(timeout);
 	}
@@ -880,6 +875,7 @@ function onSelectedChannelChange(): void {
 		selectedChannel?.getChannelId?.() ?? selectedChannel?.getLastSelectedChannelId?.();
 	if (!shouldHandleChannelChange(currentChannelId, nextChannelId)) return;
 	currentChannelId = nextChannelId;
+	visibleScanRevision++;
 	for (const cell of [...activeCells.values()]) clearCell(cell);
 	activeCells.clear();
 	pendingCells.clear();
@@ -940,6 +936,7 @@ function start(context?: PluginContext): void {
 
 function stop(): void {
 	lifecycleToken++;
+	visibleScanRevision++;
 	unpatch?.();
 	unpatch = null;
 	for (const token of hookTokens) token.remove();

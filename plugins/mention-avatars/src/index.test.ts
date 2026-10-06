@@ -18,9 +18,17 @@ const native = {
 	objc: {
 		array: (value: unknown) => value,
 		alloc: (value: unknown) => value,
+		batch: async () => {
+			nativeCalls.push('UIApplication:sharedApplication', 'application:windows');
+			return [{ name: 'application' }, [{ name: 'window' }]];
+		},
 		className: (target: { name?: string }) =>
 			target?.name === 'cell' ? 'DCDMessageTableViewCell' : 'UIView',
 		data: () => ({ imageData: true }),
+		findViews: async () => {
+			nativeCalls.push('window:findViews');
+			return [{ name: 'cell' }];
+		},
 		getClass: (name: string) => ({ name }),
 		getIvar: () => null,
 		invoke: (target: { name?: string }, selector: string) => {
@@ -250,6 +258,26 @@ describe('mention avatars native lifecycle', () => {
 
 		expect(nativeCalls).toContain('UIApplication:sharedApplication');
 		expect(nativeCalls).toContain('application:windows');
-		expect(nativeCalls).toContain('cell:window');
+		expect(nativeCalls).toContain('window:findViews');
+		expect(nativeCalls).not.toContain('window:subviews');
+	});
+
+	test('discards a visible-cell search after the plugin stops', async () => {
+		const originalFindViews = native.objc.findViews;
+		let resolveSearch: ((cells: { name: string }[]) => void) | undefined;
+		native.objc.findViews = () =>
+			new Promise((resolve) => {
+				resolveSearch = resolve;
+			});
+		try {
+			plugin.start?.({ native } as never);
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			plugin.stop?.();
+			resolveSearch?.([{ name: 'cell' }]);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(nativeCalls).not.toContain('cell:hash');
+		} finally {
+			native.objc.findViews = originalFindViews;
+		}
 	});
 });
