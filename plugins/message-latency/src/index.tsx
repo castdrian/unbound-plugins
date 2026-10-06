@@ -11,6 +11,7 @@ import type {
 	NativeHookToken,
 	NativeObjCBridge,
 	NativeObjectHandle,
+	NativeViewSnapshotNode,
 	PluginContext,
 } from '@unbound-app/api/native';
 import type { ReactNode } from 'react';
@@ -181,6 +182,8 @@ const activeCells = new Map<string, NativeObjectHandle>();
 const activeCellMessageIds = new Map<string, string>();
 const cellsByMessageId = new Map<string, NativeObjectHandle>();
 const pendingCells = new Set<string>();
+const cellRevisions = new Map<string, number>();
+let nextCellRevision = 0;
 const latencyViews = new Map<string, LatencyViewState>();
 
 export function snowflakeTimestamp(value: unknown): number | null {
@@ -300,7 +303,7 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 
 function nativeKey(handle: NativeObjectHandle): string | null {
 	try {
-		const value = nativeCall(handle, 'hash');
+		const value = objc?.call(handle, 'hash');
 		return value == null ? null : `${objc?.className(handle) ?? 'NSObject'}:${String(value)}`;
 	} catch {
 		return null;
@@ -351,63 +354,51 @@ function setNativeFrame(view: NativeObjectHandle, frame: NativeFrame): void {
 	}
 }
 
-function cellMessageId(cell: NativeObjectHandle): string | null {
+async function cellMessageId(cell: NativeObjectHandle): Promise<string | null> {
 	if (!objc) return null;
 	try {
 		const viewModel = objc.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
-		if (!viewModel || !objc.respondsTo(viewModel, 'message')) return null;
-		const message = nativeCall(viewModel, 'message') as NativeObjectHandle | null;
-		if (!message || !objc.respondsTo(message, 'id')) return null;
-		const id = nativeCall(message, 'id');
+		if (!viewModel) return null;
+		const values = await objc.batch([
+			{ target: viewModel, selector: 'message', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'id', args: [] },
+		]);
+		const id = values[1];
 		return id == null ? null : String(id);
 	} catch {
 		return null;
 	}
 }
 
-function labelForUsername(cell: NativeObjectHandle, username: string): NativeObjectHandle | null {
-	if (!objc) return null;
-	const queue: Array<{ depth: number; view: NativeObjectHandle }> = [{ depth: 0, view: cell }];
-	for (let index = 0; index < queue.length && index < MAX_CELL_NODES; index++) {
-		const current = queue[index];
-		if (!current) continue;
-		let isMatchingLabel = false;
-		try {
-			isMatchingLabel =
-				objc.className(current.view) === 'DCDLabel' &&
-				nativeCall(current.view, 'text') === username;
-		} catch {
-			isMatchingLabel = false;
-		}
-		if (isMatchingLabel) {
-			const frame = nativeFrame(current.view);
-			if (frame && frame.width > 0 && frame.height > 0) return current.view;
-		}
-		if (current.depth >= MAX_CELL_DEPTH) continue;
-		for (const child of nativeArray(nativeCall(current.view, 'subviews'))) {
-			queue.push({ depth: current.depth + 1, view: child });
-		}
-	}
-	return null;
+function labelForUsername(nodes: NativeViewSnapshotNode[], username: string): number {
+	return nodes.findIndex(
+		(node) =>
+			node.className === 'DCDLabel' &&
+			node.text === username &&
+			node.frame.width > 0 &&
+			node.frame.height > 0,
+	);
 }
 
-function headerForUsername(label: NativeObjectHandle): NativeObjectHandle | null {
-	if (!objc) return null;
-	const labelFrame = nativeFrame(label);
-	if (!labelFrame) return null;
-	let current: NativeObjectHandle | null = label;
-	for (let depth = 0; current && depth < 8; depth++) {
-		current = nativeCall(current, 'superview') as NativeObjectHandle | null;
-		if (!current) return null;
-		const frame = nativeFrame(current);
+function headerForUsername(
+	nodes: NativeViewSnapshotNode[],
+	labelIndex: number,
+): NativeObjectHandle | null {
+	const label = nodes[labelIndex];
+	if (!label) return null;
+	let parentIndex = label.parent;
+	for (let depth = 0; parentIndex >= 0 && depth < 8; depth++) {
+		const parent = nodes[parentIndex];
+		if (!parent) return null;
+		const frame = parent.frame;
 		if (
-			frame &&
-			frame.height <= labelFrame.height + 4 &&
+			frame.height <= label.frame.height + 4 &&
 			frame.width >= 120 &&
-			frame.width > labelFrame.width * 1.5
+			frame.width > label.frame.width * 1.5
 		) {
-			return current;
+			return parent.view;
 		}
+		parentIndex = parent.parent;
 	}
 	return null;
 }
@@ -918,11 +909,33 @@ function showLatencyTooltip(state: LatencyViewState): void {
 	}
 }
 
-function renderCell(cell: NativeObjectHandle): void {
+async function renderCell(
+	cell: NativeObjectHandle,
+	key: string,
+	token: number,
+	revision: number,
+): Promise<void> {
 	if (!objc) return;
-	const key = nativeKey(cell);
-	const messageId = cellMessageId(cell);
-	if (!key || !messageId) return;
+	const nodes = await objc.snapshot(cell, {
+		maxDepth: MAX_CELL_DEPTH,
+		maxNodes: MAX_CELL_NODES,
+	});
+	if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+	if (!nodes[0]?.visible) {
+		disposeCell(cell);
+		return;
+	}
+	activeCells.set(key, cell);
+	const messageId = await cellMessageId(cell);
+	if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+	const previousMessageId = activeCellMessageIds.get(key);
+	if (previousMessageId && previousMessageId !== messageId) {
+		cellsByMessageId.delete(previousMessageId);
+		activeCellMessageIds.delete(key);
+	}
+	if (!messageId) return;
+	activeCellMessageIds.set(key, messageId);
+	cellsByMessageId.set(messageId, cell);
 	const existing = latencyViews.get(key);
 	if (existing && existing.messageId !== messageId) restoreLatencyView(existing);
 	const record = latencyRecords.get(messageId);
@@ -937,9 +950,10 @@ function renderCell(cell: NativeObjectHandle): void {
 		return;
 	}
 	try {
-		const label = labelForUsername(cell, record.username);
+		const labelIndex = labelForUsername(nodes, record.username);
+		const label = nodes[labelIndex]?.view;
 		if (!label) return;
-		const header = headerForUsername(label);
+		const header = headerForUsername(nodes, labelIndex);
 		if (!header) return;
 		createLatencyView(key, messageId, record, label, header);
 	} catch {
@@ -953,27 +967,17 @@ function scheduleCell(cell: NativeObjectHandle): void {
 	if (!key || pendingCells.has(key)) return;
 	pendingCells.add(key);
 	const token = lifecycle;
+	const revision = ++nextCellRevision;
+	cellRevisions.set(key, revision);
 	setTimeout(() => {
-		pendingCells.delete(key);
-		if (token !== lifecycle || !objc) return;
-		if (nativeCall(cell, 'window')) {
-			activeCells.set(key, cell);
-			const messageId = cellMessageId(cell);
-			const previousMessageId = activeCellMessageIds.get(key);
-			if (previousMessageId && previousMessageId !== messageId) {
-				cellsByMessageId.delete(previousMessageId);
-				activeCellMessageIds.delete(key);
-			}
-			if (messageId) {
-				activeCellMessageIds.set(key, messageId);
-				cellsByMessageId.set(messageId, cell);
-			}
-			try {
-				renderCell(cell);
-			} catch {
-				disposeCell(cell);
-			}
-		}
+		if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+		void renderCell(cell, key, token, revision)
+			.catch(() => {
+				if (token === lifecycle && cellRevisions.get(key) === revision) disposeCell(cell);
+			})
+			.finally(() => {
+				if (cellRevisions.get(key) === revision) pendingCells.delete(key);
+			});
 	}, 0);
 }
 
@@ -987,6 +991,7 @@ function disposeCell(cell: NativeObjectHandle): void {
 	if (messageId && cellsByMessageId.get(messageId) === cell) cellsByMessageId.delete(messageId);
 	activeCellMessageIds.delete(key);
 	pendingCells.delete(key);
+	cellRevisions.delete(key);
 }
 
 function installNativeHooks(): void {
@@ -1009,11 +1014,7 @@ function installNativeHooks(): void {
 		installed.push(
 			objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
 				after: ({ self }) => {
-					if (nativeCall(self, 'window')) {
-						scheduleCell(self);
-					} else {
-						disposeCell(self);
-					}
+					scheduleCell(self);
 				},
 			}),
 		);
@@ -1176,6 +1177,7 @@ function cleanup(): void {
 	activeCellMessageIds.clear();
 	cellsByMessageId.clear();
 	pendingCells.clear();
+	cellRevisions.clear();
 	latencyRecords.clear();
 	rowUnpatch?.();
 	rowUnpatch = null;

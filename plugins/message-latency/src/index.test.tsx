@@ -353,23 +353,33 @@ describe('message row and native lifecycle', () => {
 		const cell = {};
 		const viewModel = {};
 		const message = {};
-		const window = {};
 		const messageId = snowflake(DISCORD_EPOCH + 20_000);
-		const calls: string[] = [];
+		const snapshots: number[] = [];
+		const batches: number[] = [];
 		const handlers = new Map<string, TestHookHandlers>();
 		const context = {
 			native: {
 				objc: {
 					className: () => 'DCDMessageTableViewCell',
 					getIvar: () => viewModel,
-					respondsTo: () => true,
-					invoke: (_handle: unknown, selector: string) => {
-						calls.push(selector);
-						if (selector === 'hash') return 1;
-						if (selector === 'window') return window;
-						if (selector === 'message') return message;
-						if (selector === 'id') return messageId;
-						return null;
+					call: () => 1,
+					snapshot: () => {
+						snapshots.push(1);
+						return Promise.resolve([
+							{
+								view: cell,
+								parent: -1,
+								depth: 0,
+								className: 'DCDMessageTableViewCell',
+								frame: { x: 0, y: 0, width: 100, height: 40 },
+								text: null,
+								visible: true,
+							},
+						]);
+					},
+					batch: () => {
+						batches.push(1);
+						return Promise.resolve([message, messageId]);
 					},
 					hook: (_className: string, selector: string, callback: TestHookHandlers) => {
 						handlers.set(selector, callback);
@@ -387,11 +397,12 @@ describe('message row and native lifecycle', () => {
 		expect(typeof reuse.after).toBe('function');
 		entered.after({ self: cell });
 		await Bun.sleep(5);
-		expect(calls.filter((selector) => selector === 'message')).toHaveLength(2);
+		expect(snapshots).toHaveLength(1);
+		expect(batches).toHaveLength(1);
 		reuse.after({ self: cell });
 		await Bun.sleep(5);
-		expect(calls.filter((selector) => selector === 'message')).toHaveLength(4);
-		const windowCalls = calls.filter((selector) => selector === 'window').length;
+		expect(snapshots).toHaveLength(2);
+		expect(batches).toHaveLength(2);
 		afterHandler?.({
 			args: [
 				{
@@ -405,7 +416,58 @@ describe('message row and native lifecycle', () => {
 			result: { message: { username: 'adrián' } },
 		});
 		await Bun.sleep(5);
-		expect(calls.filter((selector) => selector === 'window').length).toBeGreaterThan(windowCalls);
+		expect(snapshots.length).toBeGreaterThan(2);
+	});
+
+	test('discards a cell snapshot that resolves after reuse', async () => {
+		const cell = {};
+		const messageId = snowflake(DISCORD_EPOCH + 20_000);
+		const snapshots: Array<(nodes: unknown[]) => void> = [];
+		const handlers = new Map<string, TestHookHandlers>();
+		let batches = 0;
+		plugin.start({
+			native: {
+				objc: {
+					className: () => 'DCDMessageTableViewCell',
+					call: () => 1,
+					getIvar: () => ({}),
+					snapshot: () => new Promise((resolve) => snapshots.push(resolve)),
+					batch: () => {
+						batches++;
+						return Promise.resolve([{}, messageId]);
+					},
+					hook: (_className: string, selector: string, callback: TestHookHandlers) => {
+						handlers.set(selector, callback);
+						return { remove: () => undefined };
+					},
+				},
+			},
+		} as Parameters<typeof plugin.start>[0]);
+		const entered = handlers.get('didMoveToWindow');
+		const reuse = handlers.get('prepareForReuse');
+		if (!entered?.after || !reuse?.after) throw new Error('Expected cell lifecycle hooks');
+		entered.after({ self: cell });
+		await Bun.sleep(5);
+		reuse.after({ self: cell });
+		await Bun.sleep(5);
+		expect(snapshots).toHaveLength(2);
+		const nodes = [
+			{
+				view: cell,
+				parent: -1,
+				depth: 0,
+				className: 'DCDMessageTableViewCell',
+				frame: { x: 0, y: 0, width: 100, height: 40 },
+				text: null,
+				visible: true,
+			},
+		];
+		snapshots[0]?.(nodes);
+		await Bun.sleep(5);
+		expect(batches).toBe(0);
+		snapshots[1]?.(nodes);
+		await Bun.sleep(5);
+		expect(batches).toBe(1);
 	});
 
 	test('uses row generation as metadata only without changing Discord row text', () => {
