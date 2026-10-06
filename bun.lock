@@ -9,6 +9,7 @@
         "@unbound-app/api": "latest",
         "@unbound-app/cli": "latest",
         "@unbound-plugins/rollup-path-aliases": "workspace:*",
+        "react": "^19.2.7",
       },
     },
     "plugins/aussie-mode": {
