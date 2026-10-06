@@ -4,6 +4,8 @@
 		"includes": [
 			"plugins/**/*.ts",
 			"plugins/**/*.tsx",
+			"scripts/device-matrix.ts",
+			"scripts/device-matrix.test.ts",
 			"scripts/generate-plugins-readme.ts",
 			"scripts/sync-plugin-icons.ts"
 		]
