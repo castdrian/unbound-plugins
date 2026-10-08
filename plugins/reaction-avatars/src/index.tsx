@@ -182,6 +182,7 @@ type ReactionTableLayout = {
 	layoutHookInstalled: boolean;
 	layoutScheduled: boolean;
 	dirty: boolean;
+	pending: ReturnType<NativeObjCBridge['batch']> | null;
 	table: NativeObjectHandle;
 };
 type ReactionLayoutFrame = {
@@ -1224,6 +1225,7 @@ function reactionTableLayout(table: NativeObjectHandle): ReactionTableLayout {
 		layoutHookInstalled: false,
 		layoutScheduled: false,
 		dirty: true,
+		pending: null,
 		table,
 	};
 	reactionTableLayouts.set(key, entry);
@@ -1231,10 +1233,32 @@ function reactionTableLayout(table: NativeObjectHandle): ReactionTableLayout {
 }
 
 function applyReactionTableLayout(entry: ReactionTableLayout): void {
-	if (!objc || !entry.dirty) return;
+	if (!objc || !entry.dirty || entry.pending) return;
+	const bridge = objc;
+	const token = lifecycle;
 	entry.dirty = false;
-	nativeCall(entry.table, 'beginUpdates');
-	nativeCall(entry.table, 'endUpdates');
+	try {
+		const pending = bridge.batch([
+			{ target: entry.table, selector: 'beginUpdates', args: [] },
+			{ target: entry.table, selector: 'endUpdates', args: [] },
+		]);
+		entry.pending = pending;
+		void pending.then(
+			() => {
+				if (entry.pending !== pending) return;
+				entry.pending = null;
+				if (token !== lifecycle || objc !== bridge) return;
+				if (entry.dirty) scheduleReactionTableLayout(entry);
+			},
+			() => {
+				if (entry.pending !== pending) return;
+				entry.pending = null;
+				if (token === lifecycle && objc === bridge) entry.dirty = true;
+			},
+		);
+	} catch {
+		entry.dirty = true;
+	}
 }
 
 function scheduleReactionTableLayout(entry: ReactionTableLayout): void {
@@ -1361,11 +1385,14 @@ function applyReactionLayout(entry: ReactionLayoutEntry): void {
 
 function restoreReactionTableLayout(entry: ReactionTableLayout): void {
 	if (!objc) return;
+	entry.pending?.cancel();
+	entry.pending = null;
 	for (const layout of reactionLayouts.values()) {
 		if (layout.ownerTableKey === nativeKey(entry.table)) restoreReactionLayoutEntry(layout);
 	}
-	entry.dirty = true;
-	applyReactionTableLayout(entry);
+	entry.dirty = false;
+	nativeCall(entry.table, 'beginUpdates');
+	nativeCall(entry.table, 'endUpdates');
 }
 
 function updateCell(cell: NativeObjectHandle): void {
