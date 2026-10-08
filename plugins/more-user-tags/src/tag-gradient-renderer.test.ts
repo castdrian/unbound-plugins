@@ -5,6 +5,7 @@ import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer
 test('keeps an unchanged tag layer stable across repeated layout callbacks', async () => {
 	const handlers = new Map<string, (context: any) => void>();
 	const calls: string[] = [];
+	const currentCalls: string[] = [];
 	const frame = { value: { origin: { x: 0, y: 0 }, size: { width: 42, height: 18 } } };
 	const clearColor = { kind: 'color', description: 'UIExtendedGrayColorSpace 0 0' };
 	const originalColor = { kind: 'color', description: 'UIExtendedSRGBColorSpace 0.14 0.5 0.27 1' };
@@ -25,6 +26,10 @@ test('keeps an unchanged tag layer stable across repeated layout callbacks', asy
 		setAssociatedObject: () => {},
 		struct: (_name: string, value: unknown) => ({ value }),
 		className: (target: any) => (target === label ? 'DCDLabel' : target.kind),
+		call(target: any, selector: string) {
+			currentCalls.push(`${target.kind}:${selector}`);
+			return selector === 'retain' ? target : null;
+		},
 		invoke(target: any, selector: string, args: any[]) {
 			calls.push(`${target.kind}:${selector}`);
 			if (selector === 'retain') return target;
@@ -70,5 +75,11 @@ test('keeps an unchanged tag layer stable across repeated layout callbacks', asy
 	expect(calls.filter((call) => call === 'gradientLayer:setColors:')).toHaveLength(1);
 	expect(calls.filter((call) => call === 'gradientLayer:setFrame:')).toHaveLength(1);
 	expect(calls.filter((call) => call === 'gradientLayer:setNeedsDisplay')).toHaveLength(1);
+	layout?.({ self: tagView });
 	renderer?.stop();
+	await Bun.sleep(10);
+	expect(currentCalls.filter((call) => call === 'label:retain')).toHaveLength(3);
+	expect(currentCalls.filter((call) => call === 'label:release')).toHaveLength(3);
+	expect(calls).not.toContain('label:retain');
+	expect(calls).not.toContain('label:release');
 });

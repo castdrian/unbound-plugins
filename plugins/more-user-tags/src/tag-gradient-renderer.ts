@@ -505,7 +505,7 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 
 		let retainedLabel: NativeObjectHandle;
 		try {
-			retainedLabel = invoke(objc, label, 'retain') as NativeObjectHandle;
+			retainedLabel = objc.call(label, 'retain') as NativeObjectHandle;
 		} catch {
 			return;
 		}
@@ -515,7 +515,7 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 			try {
 				updateLabel(retainedLabel);
 			} finally {
-				attempt(() => invoke(objc, retainedLabel, 'release'));
+				attempt(() => objc.call(retainedLabel, 'release'));
 			}
 		}, 0);
 		pendingUpdates.set(id, { label: retainedLabel, timer });
@@ -622,7 +622,7 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 			stopped = true;
 			for (const { label, timer } of pendingUpdates.values()) {
 				clearTimeout(timer);
-				attempt(() => invoke(objc, label, 'release'));
+				attempt(() => objc.call(label, 'release'));
 			}
 			pendingUpdates.clear();
 			for (const hook of hookTokens) hook.remove();
