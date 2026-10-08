@@ -174,9 +174,19 @@ type SelectedChannel = {
 };
 
 type TextViewState = {
+	avatarRevision: number;
+	expiresAt: number;
 	messageID: string;
 	original: NativeValue;
 	originalString: string;
+	rendered: NativeValue;
+	signature: string;
+};
+
+type CellTextViews = {
+	expiresAt: number;
+	messageID: string | undefined;
+	views: NativeValue[];
 };
 
 let unpatch: (() => void) | null = null;
@@ -204,11 +214,13 @@ const imageCache = new Map<string, ImageCacheEntry>();
 const messageMentionIndex = new Map<string, Mention[]>();
 const unresolvedMessageIDs = new Set<string>();
 const textViewStates = new Map<string, TextViewState>();
+const cellTextViews = new Map<string, CellTextViews>();
 let hydratedMessageKey: string | null = null;
 let lifecycleToken = 0;
 let channelScanTimeouts: ReturnType<typeof setTimeout>[] = [];
 let currentChannelId: string | undefined;
 let visibleScanRevision = 0;
+let avatarRevision = 0;
 
 function nativeCall(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
 	if (!objc) return null;
@@ -471,39 +483,42 @@ function attributedStringText(value: NativeValue): string | undefined {
 	return typeof string === 'string' ? string : undefined;
 }
 
-function nextHighlightedRange(
-	value: NativeValue,
-	string: string,
-	start: number,
-): HighlightedRange | null {
-	if (!objc) return null;
-	for (let index = start; index < string.length; index++) {
-		const values = attributes(value, index);
-		if (!values?.YYTextHighlight) continue;
-		let end = index + 1;
-		while (end < string.length) {
-			const nextValues = attributes(value, end);
-			if (!nextValues?.YYTextHighlight) break;
-			end++;
-		}
-		return { index, length: end - index, text: string.slice(index, end) };
-	}
-	return null;
-}
-
 function nextMentionRange(
 	value: NativeValue,
 	string: string,
 	start: number,
 	labels: string[],
 ): HighlightedRange | null {
-	let searchIndex = start;
-	while (searchIndex < string.length) {
-		const highlighted = nextHighlightedRange(value, string, searchIndex);
-		if (!highlighted) return null;
-		searchIndex = highlighted.index + highlighted.length;
-		if (!highlighted.text.includes('@')) continue;
-		if (selectMentionLabel(highlighted.text, labels)) return highlighted;
+	let mentionIndex = string.indexOf('@', start);
+	while (mentionIndex !== -1) {
+		const matchedLabel = selectMentionLabel(string.slice(mentionIndex), labels);
+		if (!matchedLabel || !attributes(value, mentionIndex)?.YYTextHighlight) {
+			mentionIndex = string.indexOf('@', mentionIndex + 1);
+			continue;
+		}
+		const mentionEnd = mentionIndex + matchedLabel.length + 1;
+		let highlighted = true;
+		for (let index = mentionIndex + 1; index < mentionEnd; index++) {
+			if (attributes(value, index)?.YYTextHighlight) continue;
+			highlighted = false;
+			break;
+		}
+		if (!highlighted) {
+			mentionIndex = string.indexOf('@', mentionIndex + 1);
+			continue;
+		}
+		let begin = mentionIndex;
+		while (
+			begin > start &&
+			string[begin - 1] === MENTION_PLACEHOLDER &&
+			attributes(value, begin - 1)?.YYTextHighlight
+		)
+			begin--;
+		return {
+			index: begin,
+			length: mentionEnd - begin,
+			text: string.slice(begin, mentionEnd),
+		};
 	}
 	return null;
 }
@@ -538,6 +553,7 @@ function imageForMention(metadata: Mention): NativeValue | null {
 				metadata.avatarURL!,
 				image ? { image } : { image: null, retryAt: Date.now() + 5000 },
 			);
+			avatarRevision++;
 			for (const cell of activeCells.values()) scheduleCellRender(cell);
 		});
 	}
@@ -679,15 +695,51 @@ function mentionAvatarText(original: NativeValue, mentions: Mention[]): NativeVa
 	return result;
 }
 
-function textViewsInView(view: NativeValue): NativeValue[] {
+function textViewsInView(root: NativeValue): NativeValue[] {
 	if (!objc) return [];
 	const views: NativeValue[] = [];
-	if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText'))
-		views.push(view);
-	if (!objc.respondsTo(view, 'subviews')) return views;
-	const children = nativeCall(view, 'subviews');
-	if (!Array.isArray(children)) return views;
-	for (const child of children) views.push(...textViewsInView(child));
+	const pending: [NativeValue, number][] = [[root, 0]];
+	let visited = 0;
+	while (pending.length > 0 && visited < MAX_VISIBLE_CELL_SCAN_NODES) {
+		const [view, depth] = pending.pop()!;
+		visited++;
+		if (objc.respondsTo(view, 'setAttributedText:') && objc.respondsTo(view, 'attributedText'))
+			views.push(view);
+		if (
+			depth >= MAX_VISIBLE_CELL_SCAN_DEPTH ||
+			!objc.respondsTo(view, 'subviews') ||
+			objc.className(view) === 'DCDReactionListView'
+		)
+			continue;
+		const children = nativeCall(view, 'subviews');
+		if (!Array.isArray(children)) continue;
+		const remaining = MAX_VISIBLE_CELL_SCAN_NODES - visited - pending.length;
+		for (let index = Math.min(children.length, remaining) - 1; index >= 0; index--)
+			pending.push([children[index], depth + 1]);
+	}
+	return views;
+}
+
+function textViewsForCell(
+	cell: NativeValue,
+	key: string | undefined,
+	messageID: string | undefined,
+): NativeValue[] {
+	if (!key) return textViewsInView(cell);
+	const cached = cellTextViews.get(key);
+	if (
+		cached &&
+		cached.messageID === messageID &&
+		cached.expiresAt > Date.now() &&
+		cached.views.every((view) => Boolean(nativeCall(view, 'window')))
+	)
+		return cached.views;
+	const views = textViewsInView(cell);
+	cellTextViews.set(key, {
+		expiresAt: Date.now() + (views.length > 0 ? 1_000 : 50),
+		messageID,
+		views,
+	});
 	return views;
 }
 
@@ -731,6 +783,22 @@ function updateTextView(
 		return false;
 	}
 	const currentState = textViewStates.get(key);
+	if (
+		!currentString.includes('@') &&
+		(!currentState || !currentString.includes(MENTION_PLACEHOLDER))
+	) {
+		textViewStates.delete(key);
+		return false;
+	}
+	const signature = JSON.stringify(mentions);
+	if (
+		currentState?.messageID === messageID &&
+		currentState.signature === signature &&
+		currentState.avatarRevision === avatarRevision &&
+		currentState.expiresAt > Date.now() &&
+		nativeCall(current, 'isEqual:', currentState.rendered)
+	)
+		return false;
 	let original = currentState?.original;
 	let originalString = currentState?.originalString;
 	if (
@@ -750,9 +818,13 @@ function updateTextView(
 	const updated = mentionAvatarText(original, mentions);
 	if (!updated) return false;
 	textViewStates.set(key, {
+		avatarRevision,
+		expiresAt: Date.now() + 5_000,
 		messageID,
 		original,
 		originalString: originalString ?? currentString,
+		rendered: updated,
+		signature,
 	});
 	if (current && nativeCall(updated, 'isEqual:', current)) return false;
 	nativeCall(view, 'setAttributedText:', updated);
@@ -772,6 +844,7 @@ function resetCell(cell: NativeValue): void {
 	const key = cellKey(cell);
 	if (key) {
 		activeCells.delete(key);
+		cellTextViews.delete(key);
 		pendingCells.delete(key);
 		pendingCellRefs.delete(key);
 	}
@@ -781,18 +854,27 @@ function renderCell(cell: NativeValue): boolean {
 	if (!objc) return false;
 	hydrateMentions();
 	const key = cellKey(cell);
-	if (key) activeCells.set(key, cell);
 	const id = messageIDForCell(cell);
 	const messageHydrated = hydrateMessage(id);
 	const mentions = id ? (messageMentionIndex.get(id) ?? []) : [];
-	const views = textViewsInView(cell);
+	const decision = cellRenderDecision(id, messageHydrated, unresolvedMessageIDs.has(id), mentions);
+	if (mentions.length === 0 && (!key || !cellTextViews.has(key))) {
+		if (key) activeCells.delete(key);
+		return decision === 'retry';
+	}
+	if (key) activeCells.set(key, cell);
+	const views = textViewsForCell(cell, key, id);
 	let changed = false;
 	for (const view of views) {
 		const viewChanged = updateTextView(view, id, mentions);
 		changed ||= viewChanged;
 	}
 	if (changed) nativeCall(cell, 'setNeedsLayout');
-	return cellRenderDecision(id, messageHydrated, unresolvedMessageIDs.has(id), mentions) !== 'idle';
+	if (mentions.length === 0 && key) {
+		cellTextViews.delete(key);
+		activeCells.delete(key);
+	}
+	return decision === 'retry';
 }
 
 function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {
@@ -800,13 +882,14 @@ function scheduleCellRender(cell: NativeValue, attempt: number = 0): void {
 	const key = cellKey(cell);
 	if (!key || pendingCells.has(key)) return;
 	const bridge = objc;
+	const token = lifecycleToken;
 	pendingCells.add(key);
 	pendingCellRefs.set(key, cell);
 	setTimeout(() => {
 		pendingCells.delete(key);
 		const retainedCell = pendingCellRefs.get(key);
 		pendingCellRefs.delete(key);
-		if (objc !== bridge) return;
+		if (token !== lifecycleToken || objc !== bridge) return;
 		if (!retainedCell) return;
 		const retry = renderCell(retainedCell);
 		if (retry && attempt < 12) {
@@ -881,6 +964,7 @@ function onSelectedChannelChange(): void {
 	pendingCells.clear();
 	pendingCellRefs.clear();
 	textViewStates.clear();
+	cellTextViews.clear();
 	messageMentionIndex.clear();
 	unresolvedMessageIDs.clear();
 	hydratedMessageKey = null;
@@ -950,6 +1034,7 @@ function stop(): void {
 	activeCells.clear();
 	pendingCellRefs.clear();
 	textViewStates.clear();
+	cellTextViews.clear();
 	users = null;
 	members = null;
 	channels = null;
@@ -960,6 +1045,7 @@ function stop(): void {
 	messageMentionIndex.clear();
 	unresolvedMessageIDs.clear();
 	hydratedMessageKey = null;
+	avatarRevision = 0;
 }
 
 export default { start, stop };
