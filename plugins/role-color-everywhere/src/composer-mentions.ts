@@ -59,9 +59,36 @@ export function installComposerMentionColors(
 	const updating = new Set<string>();
 	const colors = new Map<string, NativeValue>();
 	const aliases = new Map<string, Map<string, string>>();
+	const dirty = new Set<string>();
 	let stopped = false;
 
 	function call(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
+		if (!handle) return null;
+		try {
+			return bridge.call(handle, selector, ...args);
+		} catch {
+			return null;
+		}
+	}
+
+	async function callMain(
+		handle: NativeValue,
+		selector: string,
+		...args: NativeValue[]
+	): Promise<NativeValue> {
+		if (!handle) return null;
+		try {
+			return await bridge.invokeAsync(handle, selector, args);
+		} catch {
+			return null;
+		}
+	}
+
+	function callMainSynchronously(
+		handle: NativeValue,
+		selector: string,
+		...args: NativeValue[]
+	): NativeValue {
 		if (!handle) return null;
 		try {
 			return bridge.invoke(handle, selector, args, { thread: 'main' });
@@ -105,12 +132,12 @@ export function installComposerMentionColors(
 		return result;
 	}
 
-	function nativeColor(hex: string): NativeValue {
+	async function nativeColor(hex: string): Promise<NativeValue> {
 		const cached = colors.get(hex);
 		if (cached) return cached;
 		if (!/^#[\da-f]{6}$/i.test(hex)) return null;
 		const value = Number.parseInt(hex.slice(1), 16);
-		const color = call(
+		const color = await callMain(
 			bridge.getClass('UIColor'),
 			'colorWithRed:green:blue:alpha:',
 			((value >> 16) & 0xff) / 255,
@@ -123,12 +150,12 @@ export function installComposerMentionColors(
 		return color;
 	}
 
-	function colorToken(
+	async function colorToken(
 		attributed: NativeValue,
 		text: string,
 		location: number,
 		stops: string[],
-	): void {
+	): Promise<void> {
 		const characters = stops.length === 1 ? [text] : Array.from(text);
 		let position = location;
 		for (let index = 0; index < characters.length; index++) {
@@ -137,7 +164,7 @@ export function installComposerMentionColors(
 				stops,
 				characters.length === 1 ? 0 : index / (characters.length - 1),
 			);
-			const native = color ? nativeColor(color) : null;
+			const native = color ? await nativeColor(color) : null;
 			if (native)
 				call(
 					attributed,
@@ -150,14 +177,29 @@ export function installComposerMentionColors(
 		}
 	}
 
-	function update(view: NativeValue): void {
+	async function update(view: NativeValue): Promise<void> {
 		if (stopped || !enabled()) return;
 		const key = keyFor(view);
-		if (!key || updating.has(key)) return;
+		if (!key) return;
+		if (updating.has(key)) {
+			dirty.add(key);
+			return;
+		}
+		updating.add(key);
+		try {
+			await apply(view, key);
+		} finally {
+			updating.delete(key);
+			if (dirty.delete(key) && !stopped) schedule(view);
+		}
+	}
+
+	async function apply(view: NativeValue, key: string): Promise<void> {
+		if (!(await callMain(view, 'window')) || stopped) return;
 		const channelId = selectedStore.getChannelId();
 		const guildId = channelId ? channelStore.getChannel(channelId)?.guild_id : undefined;
 		if (!guildId) return;
-		const original = call(view, 'attributedText');
+		const original = await callMain(view, 'attributedText');
 		if (!original) return;
 		const state = states.get(key);
 		if (state && call(original, 'isEqual:', state.applied)) return;
@@ -196,21 +238,27 @@ export function installComposerMentionColors(
 			const member = userId ? members.getMember(guildId, userId) : null;
 			const appearance = getRoleColorAppearance(member?.colorStrings, member?.colorString);
 			if (!appearance.colors.length) continue;
-			colorToken(colored, token, at, appearance.colors);
+			await colorToken(colored, token, at, appearance.colors);
 			at += token.length - 1;
 			changed = true;
 		}
 
-		if (!changed) return;
-		const selection = call(view, 'selectedRange');
-		updating.add(key);
-		try {
-			call(view, 'setAttributedText:', colored);
-			if (selection) call(view, 'setSelectedRange:', selection);
-			states.set(key, { applied: colored, original, view });
-		} finally {
-			updating.delete(key);
+		if (!changed || stopped) return;
+		const selection = await callMain(view, 'selectedRange');
+		const latest = await callMain(view, 'attributedText');
+		if (!latest || !call(latest, 'isEqual:', original)) {
+			dirty.add(key);
+			return;
 		}
+		if (
+			stopped ||
+			guildId !== channelStore.getChannel(selectedStore.getChannelId() ?? '')?.guild_id
+		)
+			return;
+		states.set(key, { applied: colored, original, view });
+		await callMain(view, 'setAttributedText:', colored);
+		if (stopped) return;
+		if (selection) await callMain(view, 'setSelectedRange:', selection);
 	}
 
 	function schedule(view: NativeValue): void {
@@ -219,43 +267,39 @@ export function installComposerMentionColors(
 		if (!key || pending.has(key)) return;
 		const timer = setTimeout(() => {
 			pending.delete(key);
-			try {
-				update(view);
-			} catch (error) {
+			void update(view).catch((error) => {
 				console.error('Role Color Everywhere composer rendering failed:', error);
-			}
+			});
 		}, 0);
 		pending.set(key, timer);
 	}
 
-	function scanVisible(): void {
-		const application = call(bridge.getClass('UIApplication'), 'sharedApplication');
-		const windows = call(application, 'windows');
+	async function scanVisible(): Promise<void> {
+		const application = await callMain(bridge.getClass('UIApplication'), 'sharedApplication');
+		const windows = await callMain(application, 'windows');
 		if (!windows) return;
-		const queue = Array.isArray(windows) ? [...windows] : bridge.array(windows);
-		for (let index = 0; index < queue.length && index < MAX_SCAN_NODES; index++) {
-			const view = queue[index];
-			if (bridge.className(view) === 'DCDChatInputComponentView') schedule(view);
-			const children = call(view, 'subviews');
-			if (!children) continue;
-			try {
-				queue.push(...(Array.isArray(children) ? children : bridge.array(children)));
-			} catch {
-				continue;
-			}
+		for (const window of Array.isArray(windows) ? windows : bridge.array(windows)) {
+			if (stopped) return;
+			const views = await bridge.findViews(window, 'DCDChatInputComponentView', {
+				maxDepth: 40,
+				maxVisited: MAX_SCAN_NODES,
+				maxResults: 8,
+				stopAtMatch: true,
+			});
+			for (const view of views) schedule(view);
 		}
 	}
 
 	function restore(key: string): void {
 		const state = states.get(key);
 		if (!state) return;
-		const current = call(state.view, 'attributedText');
+		const current = callMainSynchronously(state.view, 'attributedText');
 		if (call(current, 'isEqual:', state.applied)) {
-			const selection = call(state.view, 'selectedRange');
+			const selection = callMainSynchronously(state.view, 'selectedRange');
 			updating.add(key);
 			try {
-				call(state.view, 'setAttributedText:', state.original);
-				if (selection) call(state.view, 'setSelectedRange:', selection);
+				callMainSynchronously(state.view, 'setAttributedText:', state.original);
+				if (selection) callMainSynchronously(state.view, 'setSelectedRange:', selection);
 			} finally {
 				updating.delete(key);
 			}
@@ -275,12 +319,12 @@ export function installComposerMentionColors(
 				after: ({ self }) => schedule(self),
 			}),
 			bridge.hook('DCDChatInputComponentView', 'didMoveToWindow', {
-				after: ({ self }) => {
-					if (call(self, 'window')) schedule(self);
-				},
+				after: ({ self }) => schedule(self),
 			}),
 		);
-		scanVisible();
+		void scanVisible().catch((error) => {
+			console.error('Role Color Everywhere composer scan failed:', error);
+		});
 	} catch (error) {
 		console.error('Role Color Everywhere composer hook failed:', error);
 		for (const hook of hooks) hook.remove();
@@ -293,6 +337,7 @@ export function installComposerMentionColors(
 		for (const timer of pending.values()) clearTimeout(timer);
 		for (const key of [...states.keys()]) restore(key);
 		pending.clear();
+		dirty.clear();
 		aliases.clear();
 		colors.clear();
 	};
