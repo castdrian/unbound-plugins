@@ -12,16 +12,14 @@ const STORE = storage.getStore(ADDON_ID);
 const API_URL = 'https://pronoundb.org/api/v2/lookup';
 const REQUEST_BATCH_SIZE = 50;
 const REQUEST_INTERVAL_MS = 2000;
-const AUTO_MODERATION_ACTION = 24;
 
 type Format = 'capitalized' | 'lowercase';
 type Source = 'discord' | 'pronoundb';
 type Priority = 'discord' | 'pronoundb';
 
 type Message = {
-	author?: { bot?: boolean; id?: string; system?: boolean };
+	author?: { bot?: boolean; id?: string; system?: boolean; username?: string };
 	channel_id?: string;
-	id?: string;
 	type?: number;
 };
 
@@ -46,12 +44,11 @@ const pronounMapping: Record<string, string> = {
 
 const cache = new Map<string, string | null>();
 const queue = new Set<string>();
-const touchedMessages = new Map<string, Message>();
 let unpatch: (() => void) | null = null;
 let profiles: ProfileStore | null = null;
 let users: { getCurrentUser?: () => { id?: string } | undefined } | null = null;
 let channels: { getChannel?: (id: string) => { guild_id?: string } | undefined } | null = null;
-let dispatcher: { dispatch?: (event: unknown) => void } | null = null;
+let messageStore: { emitChange?: () => void } | null = null;
 let processing = false;
 let scheduled = false;
 let runId = 0;
@@ -94,10 +91,7 @@ function resolvePronouns(userId: string, channelId?: string): string | null {
 }
 
 function refreshMessages(): void {
-	for (const message of touchedMessages.values()) {
-		if (!message.id) continue;
-		dispatcher?.dispatch?.({ type: 'MESSAGE_UPDATE', message: { ...message }, log_edit: false });
-	}
+	messageStore?.emitChange?.();
 }
 
 async function requestPronouns(ids: string[], currentRunId: number): Promise<void> {
@@ -125,7 +119,7 @@ async function processQueue(currentRunId: number): Promise<void> {
 		for (const id of ids) queue.delete(id);
 		await requestPronouns(ids, currentRunId);
 		if (queue.size > 0 && runId === currentRunId) {
-			await new Promise((resolve) => setTimeout(resolve, REQUEST_INTERVAL_MS));
+			await new Promise<void>((resolve) => setTimeout(() => resolve(), REQUEST_INTERVAL_MS));
 		}
 	}
 	processing = false;
@@ -144,24 +138,58 @@ function enqueue(userId: string): void {
 
 function shouldShow(message: Message | undefined): message is Message {
 	if (!message) return false;
+	if (message.type !== 0 && message.type !== 19) return false;
 	const author = message.author;
-	if (!author?.id || author.bot || author.system || message.type === AUTO_MODERATION_ACTION)
-		return false;
+	if (!author?.id || author.bot || author.system) return false;
 	if (!STORE.get('showSelf', true) && author.id === users?.getCurrentUser?.()?.id) return false;
 	return true;
 }
 
+function displayPronouns(pronouns: string): string {
+	const firstSegment = pronouns.split(/\s+[|•]\s+/)[0].trim();
+	if (firstSegment.length <= 12) return firstSegment;
+	return `${firstSegment.slice(0, 11).trimEnd()}…`;
+}
+
+function hasHeaderRoom(row: any, message: Message, pronouns: string): boolean {
+	const width = metro.common?.ReactNative?.Dimensions?.get?.('window')?.width;
+	if (typeof width !== 'number' || !Number.isFinite(width)) return false;
+	const characterBudget = Math.floor((width - 55) / 8);
+	const tag = row.tagText ?? row.opTagText ?? '';
+	const username = String(row.username ?? '');
+	const authorUsername = message.author?.username;
+	const projectedUsername =
+		authorUsername && !username.includes(`@${authorUsername}`)
+			? `${username} (@${authorUsername})`
+			: username;
+	const length =
+		projectedUsername.length +
+		String(tag).length +
+		row.timestamp.length +
+		pronouns.length +
+		4 +
+		(row.roleIcon ? 3 : 0);
+	return length <= characterBudget;
+}
+
 function addPronouns(row: any, message: Message | undefined): void {
 	if (!shouldShow(message) || !message.author?.id) return;
-	touchedMessages.set(message.id ?? message.author.id, message);
 	const pronouns = resolvePronouns(message.author.id, message.channel_id);
 	if (!cache.has(message.author.id)) enqueue(message.author.id);
-	if (!pronouns || typeof row?.timestamp !== 'string' || row.timestamp.includes(`• ${pronouns}`))
-		return;
-	row.timestamp = `${row.timestamp} • ${pronouns}`;
+	if (!pronouns || typeof row?.timestamp !== 'string') return;
 	if (typeof row.timestampAccessibilityLabel === 'string') {
-		row.timestampAccessibilityLabel = `${row.timestampAccessibilityLabel} • ${pronouns}`;
+		if (!row.timestampAccessibilityLabel.endsWith(` • ${pronouns}`)) {
+			row.timestampAccessibilityLabel = `${row.timestampAccessibilityLabel} • ${pronouns}`;
+		}
 	}
+	const displayed = displayPronouns(pronouns);
+	if (
+		!displayed ||
+		!hasHeaderRoom(row, message, displayed) ||
+		row.timestamp.endsWith(` • ${displayed}`)
+	)
+		return;
+	row.timestamp = `${row.timestamp} • ${displayed}`;
 }
 
 function SettingsPanel() {
@@ -213,7 +241,7 @@ export default {
 		profiles = metro.findStore('UserProfile');
 		users = metro.findByProps('getCurrentUser');
 		channels = metro.findByProps('getChannel');
-		dispatcher = metro.findByProps('dispatch', 'subscribe');
+		messageStore = metro.findStore('Message');
 		const target = metro.findByProps('generateMessageRowData');
 		if (!profiles || !users?.getCurrentUser || !target?.generateMessageRowData) return;
 
@@ -227,11 +255,10 @@ export default {
 		unpatch = null;
 		cache.clear();
 		queue.clear();
-		touchedMessages.clear();
 		profiles = null;
 		users = null;
 		channels = null;
-		dispatcher = null;
+		messageStore = null;
 		processing = false;
 		scheduled = false;
 	},
