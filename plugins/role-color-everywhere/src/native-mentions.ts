@@ -56,6 +56,8 @@ interface SelectedChannelStore {
 const MAX_SCAN_NODES = 1_600;
 const MAX_SCAN_DEPTH = 40;
 const MAX_TEXT_VIEWS = 80;
+const MAX_TEXT_VIEW_DEPTH = 12;
+const SCAN_DELAYS = [0, 100, 500, 1_500, 3_000];
 
 function selectMentionLabel(text: string, labels: string[]): string | undefined {
 	const at = text.indexOf('@');
@@ -100,12 +102,42 @@ export function installNativeMentionColors(
 	const hooks: NativeHookToken[] = [];
 	const textViews = new Map<string, TextViewState>();
 	const pendingCells = new Set<string>();
+	const dirtyCells = new Set<string>();
 	const timers = new Set<ReturnType<typeof setTimeout>>();
 	const colors = new Map<string, NativeValue>();
+	const cellTextViews = new Map<string, Set<string>>();
+	const cellRevisions = new Map<string, number>();
 	let currentChannelId = selected.getChannelId();
+	let channelRevision = 0;
 	let stopped = false;
 
 	function call(handle: NativeValue, selector: string, ...args: NativeValue[]): NativeValue {
+		if (!handle) return null;
+		try {
+			return bridge.call(handle, selector, ...args);
+		} catch {
+			return null;
+		}
+	}
+
+	async function callMain(
+		handle: NativeValue,
+		selector: string,
+		...args: NativeValue[]
+	): Promise<NativeValue> {
+		if (!handle) return null;
+		try {
+			return await bridge.invokeAsync(handle, selector, args);
+		} catch {
+			return null;
+		}
+	}
+
+	function callMainSynchronously(
+		handle: NativeValue,
+		selector: string,
+		...args: NativeValue[]
+	): NativeValue {
 		if (!handle) return null;
 		try {
 			return bridge.invoke(handle, selector, args, { thread: 'main' });
@@ -146,12 +178,12 @@ export function installNativeMentionColors(
 		return result;
 	}
 
-	function colorFor(hex: string): NativeValue {
+	async function colorFor(hex: string): Promise<NativeValue> {
 		const cached = colors.get(hex);
 		if (cached) return cached;
 		const channels = hexChannels(hex);
 		if (!channels) return null;
-		const color = call(
+		const color = await callMain(
 			bridge.getClass('UIColor'),
 			'colorWithRed:green:blue:alpha:',
 			...channels,
@@ -162,12 +194,12 @@ export function installNativeMentionColors(
 		return color;
 	}
 
-	function colorMention(
+	async function colorMention(
 		attributed: NativeValue,
 		text: string,
 		location: number,
 		colors: string[],
-	): void {
+	): Promise<void> {
 		const characters = colors.length === 1 ? [text] : Array.from(text);
 		let position = location;
 		for (let index = 0; index < characters.length; index++) {
@@ -176,7 +208,7 @@ export function installNativeMentionColors(
 				colors,
 				characters.length === 1 ? 0 : index / (characters.length - 1),
 			);
-			const color = hex ? colorFor(hex) : null;
+			const color = hex ? await colorFor(hex) : null;
 			if (color)
 				call(
 					attributed,
@@ -189,42 +221,43 @@ export function installNativeMentionColors(
 		}
 	}
 
-	function childViews(root: NativeValue): NativeValue[] {
-		const queue = [root];
-		const result: NativeValue[] = [];
-		for (let index = 0; index < queue.length && index < MAX_TEXT_VIEWS; index++) {
-			const view = queue[index];
-			if (
-				bridge.respondsTo(view, 'attributedText') &&
-				bridge.respondsTo(view, 'setAttributedText:')
-			) {
-				result.push(view);
-			}
-			const children = call(view, 'subviews');
-			if (!children) continue;
-			try {
-				queue.push(...(Array.isArray(children) ? children : bridge.array(children)));
-			} catch {
-				continue;
-			}
-		}
-		return result;
+	async function childViews(root: NativeValue): Promise<NativeValue[]> {
+		const nodes = await bridge.snapshot(root, {
+			maxDepth: MAX_TEXT_VIEW_DEPTH,
+			maxNodes: MAX_TEXT_VIEWS,
+		});
+		return nodes
+			.map((node) => node.view)
+			.filter(
+				(view) =>
+					bridge.respondsTo(view, 'attributedText') &&
+					bridge.respondsTo(view, 'setAttributedText:'),
+			);
 	}
 
 	function restoreView(key: string): void {
 		const state = textViews.get(key);
 		if (!state) return;
-		const current = call(state.view, 'attributedText');
+		const current = callMainSynchronously(state.view, 'attributedText');
 		if (call(current, 'isEqual:', state.applied)) {
-			call(state.view, 'setAttributedText:', state.original);
+			callMainSynchronously(state.view, 'setAttributedText:', state.original);
 		}
 		textViews.delete(key);
 	}
 
-	function updateView(view: NativeValue, messageId: string, mentions: Mention[]): void {
+	async function updateView(
+		cell: NativeValue,
+		cellKey: string,
+		cellRevision: number,
+		channelId: string,
+		activeChannelRevision: number,
+		view: NativeValue,
+		messageId: string,
+		mentions: Mention[],
+	): Promise<void> {
 		const key = keyFor(view);
 		if (!key) return;
-		const current = call(view, 'attributedText');
+		const current = await callMain(view, 'attributedText');
 		if (!current) return;
 		const state = textViews.get(key);
 		if (state?.messageId === messageId && call(current, 'isEqual:', state.applied)) return;
@@ -243,90 +276,123 @@ export function installNativeMentionColors(
 				const attributes = call(current, 'attributesAtIndex:effectiveRange:', at, null);
 				if (!attributes?.YYTextHighlight) continue;
 				const length = label.length + 1;
-				colorMention(updated, text.slice(at, at + length), at, mention.colors);
+				await colorMention(updated, text.slice(at, at + length), at, mention.colors);
 				offset = at + length;
 				changed = true;
 				break;
 			}
 		}
 
-		if (!changed) return;
+		if (!changed || stopped) return;
+		const latest = await callMain(view, 'attributedText');
+		if (
+			!latest ||
+			!call(latest, 'isEqual:', current) ||
+			currentChannelId !== channelId ||
+			channelRevision !== activeChannelRevision ||
+			(cellRevisions.get(cellKey) ?? 0) !== cellRevision ||
+			messageIdForCell(cell) !== messageId
+		)
+			return;
 		textViews.set(key, { applied: updated, messageId, original: current, view });
-		call(view, 'setAttributedText:', updated);
+		let views = cellTextViews.get(cellKey);
+		if (!views) {
+			views = new Set<string>();
+			cellTextViews.set(cellKey, views);
+		}
+		views.add(key);
+		await callMain(view, 'setAttributedText:', updated);
 	}
 
-	function renderCell(cell: NativeValue): void {
+	async function renderCell(cell: NativeValue): Promise<void> {
 		if (stopped || !enabled() || !currentChannelId) return;
+		const cellKey = keyFor(cell);
+		if (!cellKey) return;
+		if (!(await callMain(cell, 'window'))) {
+			forgetCell(cell);
+			return;
+		}
+		const channelId = currentChannelId;
+		const activeChannelRevision = channelRevision;
+		const cellRevision = cellRevisions.get(cellKey) ?? 0;
 		const messageId = messageIdForCell(cell);
 		if (!messageId) return;
-		const message = messages.getMessage(currentChannelId, messageId);
+		const message = messages.getMessage(channelId, messageId);
 		if (!message) return;
-		const guildId = message.guildId ?? channels.getChannel(currentChannelId)?.guild_id;
+		const guildId = message.guildId ?? channels.getChannel(channelId)?.guild_id;
 		if (!guildId) return;
 		const mentions = mentionsFor(message, guildId);
 		if (!mentions.length) return;
-		for (const view of childViews(cell)) updateView(view, messageId, mentions);
+		for (const view of await childViews(cell)) {
+			await updateView(
+				cell,
+				cellKey,
+				cellRevision,
+				channelId,
+				activeChannelRevision,
+				view,
+				messageId,
+				mentions,
+			);
+		}
 	}
 
 	function scheduleCell(cell: NativeValue): void {
 		if (stopped || !enabled()) return;
 		const key = keyFor(cell);
-		if (!key || pendingCells.has(key)) return;
+		if (!key) return;
+		if (pendingCells.has(key)) {
+			dirtyCells.add(key);
+			return;
+		}
 		pendingCells.add(key);
 		const timer = setTimeout(() => {
 			timers.delete(timer);
-			pendingCells.delete(key);
-			if (stopped) return;
-			try {
-				renderCell(cell);
-			} catch (error) {
-				console.error('Role Color Everywhere native mention rendering failed:', error);
-			}
+			void renderCell(cell)
+				.catch((error) => {
+					console.error('Role Color Everywhere native mention rendering failed:', error);
+				})
+				.finally(() => {
+					pendingCells.delete(key);
+					if (dirtyCells.delete(key) && !stopped) scheduleCell(cell);
+				});
 		}, 0);
 		timers.add(timer);
 	}
 
 	function forgetCell(cell: NativeValue): void {
-		for (const view of childViews(cell)) {
-			const viewKey = keyFor(view);
-			if (viewKey) textViews.delete(viewKey);
-		}
+		const cellKey = keyFor(cell);
+		if (!cellKey) return;
+		cellRevisions.set(cellKey, (cellRevisions.get(cellKey) ?? 0) + 1);
+		for (const viewKey of cellTextViews.get(cellKey) ?? []) textViews.delete(viewKey);
+		cellTextViews.delete(cellKey);
 	}
 
-	function scanVisible(): void {
+	async function scanVisible(): Promise<void> {
 		if (stopped || !enabled()) return;
-		const application = call(bridge.getClass('UIApplication'), 'sharedApplication');
-		const windows = call(application, 'windows');
+		const application = await callMain(bridge.getClass('UIApplication'), 'sharedApplication');
+		const windows = await callMain(application, 'windows');
 		if (!windows) return;
 		const roots = Array.isArray(windows) ? windows : bridge.array(windows);
-		const queue = roots.map((view) => ({ depth: 0, view }));
-		for (let index = 0; index < queue.length && index < MAX_SCAN_NODES; index++) {
-			const { depth, view } = queue[index];
-			if ((bridge.className(view) ?? '').includes('DCDMessageTableViewCell')) {
-				if (call(view, 'window')) scheduleCell(view);
-				continue;
-			}
-			if (depth >= MAX_SCAN_DEPTH) continue;
-			const children = call(view, 'subviews');
-			if (!children) continue;
-			try {
-				for (const child of Array.isArray(children) ? children : bridge.array(children)) {
-					queue.push({ depth: depth + 1, view: child });
-				}
-			} catch {
-				continue;
-			}
+		for (const root of roots) {
+			if (stopped) return;
+			const cells = await bridge.findViews(root, 'DCDMessageTableViewCell', {
+				maxDepth: MAX_SCAN_DEPTH,
+				maxVisited: MAX_SCAN_NODES,
+				maxResults: MAX_TEXT_VIEWS,
+				attachedOnly: true,
+				stopAtMatch: true,
+			});
+			for (const cell of cells) scheduleCell(cell);
 		}
 	}
 
 	function scheduleScan(delay: number): void {
 		const timer = setTimeout(() => {
 			timers.delete(timer);
-			try {
-				scanVisible();
-			} catch (error) {
+			void scanVisible().catch((error) => {
 				console.error('Role Color Everywhere visible-cell scan failed:', error);
-			}
+			});
 		}, delay);
 		timers.add(timer);
 	}
@@ -335,17 +401,16 @@ export function installNativeMentionColors(
 		const nextChannelId = selected.getChannelId();
 		if (!nextChannelId || nextChannelId === currentChannelId) return;
 		currentChannelId = nextChannelId;
-		pendingCells.clear();
+		channelRevision++;
+		for (const key of pendingCells) dirtyCells.add(key);
 		textViews.clear();
-		for (const delay of [0, 100, 500]) scheduleScan(delay);
+		cellTextViews.clear();
+		for (const delay of SCAN_DELAYS) scheduleScan(delay);
 	}
 
 	hooks.push(
 		bridge.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
-			after: ({ self }) => {
-				if (call(self, 'window')) scheduleCell(self);
-				else forgetCell(self);
-			},
+			after: ({ self }) => scheduleCell(self),
 		}),
 		bridge.hook('DCDMessageTableViewCell', 'layoutSubviews', {
 			after: ({ self }) => scheduleCell(self),
@@ -355,7 +420,7 @@ export function installNativeMentionColors(
 		}),
 	);
 	selected.addChangeListener?.(onChannelChange);
-	for (const delay of [0, 100, 500]) scheduleScan(delay);
+	for (const delay of SCAN_DELAYS) scheduleScan(delay);
 
 	return () => {
 		stopped = true;
@@ -364,6 +429,9 @@ export function installNativeMentionColors(
 		for (const timer of timers) clearTimeout(timer);
 		for (const key of [...textViews.keys()]) restoreView(key);
 		pendingCells.clear();
+		dirtyCells.clear();
+		cellTextViews.clear();
+		cellRevisions.clear();
 		colors.clear();
 	};
 }
