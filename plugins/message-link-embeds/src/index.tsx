@@ -1046,6 +1046,7 @@ function createSurfaceState(
 		} catch {
 			void 0;
 		}
+		nativeCall(state.host, 'removeFromSuperview');
 		surfaces.delete(surfaceId);
 		return null;
 	}
@@ -1071,6 +1072,7 @@ function teardownSurface(key: string, restore: boolean): void {
 			void 0;
 		}
 	}
+	nativeCall(state.host, 'removeFromSuperview');
 	surfaces.delete(state.surfaceId);
 	cellStates.delete(key);
 	const rebindTimer = surfaceRebindTimers.get(key);
