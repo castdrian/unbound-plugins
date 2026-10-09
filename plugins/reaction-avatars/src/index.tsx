@@ -44,6 +44,7 @@ import type {
 } from '@unbound-app/api/native';
 
 const REACTION_ACTIONS_PATH = 'modules/reactions/ReactionActionCreators.tsx';
+const USER_SUMMARY_ITEM_PATH = 'components_native/common/UserSummaryItem.tsx';
 const MAX_NATIVE_VIEW_DEPTH = 8;
 const MAX_NATIVE_VIEW_NODES = 100;
 const MAX_REACTION_CELL_NODES = 40;
@@ -460,7 +461,9 @@ function itemForCollectionCell(
 }
 
 function userSummaryComponent(): unknown {
-	return metro.findByName('UserSummaryItem');
+	const module = metro.findByFilePath(USER_SUMMARY_ITEM_PATH, { interop: false });
+	const component = module?.default ?? module;
+	return typeof component === 'function' ? component : metro.findByName('UserSummaryItem');
 }
 
 function surfaceRegistry(): {
