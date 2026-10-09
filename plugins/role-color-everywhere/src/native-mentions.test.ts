@@ -31,6 +31,7 @@ mock.module('@unbound-app/api', () => ({
 }));
 
 const { installNativeMentionColors } = await import('@role-color-everywhere/native-mentions');
+const { installComposerMentionColors } = await import('@role-color-everywhere/composer-mentions');
 
 function bridge() {
 	return {
@@ -110,7 +111,20 @@ test('renders a native mention after an asynchronous view read', async () => {
 	]);
 	expect(appliedCount).toBe(1);
 	expect(label.attributed).not.toBe(original);
-	stop();
+	await stop();
+});
+
+test('restores the original attributed text before asynchronous cleanup completes', async () => {
+	const stop = start();
+	const applied = new Promise<void>((resolve) => {
+		onApplied = resolve;
+	});
+	handlers.get('layoutSubviews')?.({ self: cell });
+	await applied;
+	expect(label.attributed).not.toBe(original);
+
+	await stop();
+	expect(label.attributed).toBe(original);
 });
 
 test('discards a stale render after the cell is reused', async () => {
@@ -128,5 +142,57 @@ test('discards a stale render after the cell is reused', async () => {
 	release?.(original);
 	await Bun.sleep(0);
 	expect(appliedCount).toBe(0);
-	stop();
+	await stop();
+});
+
+test('restores composer mention text and selection through asynchronous native calls', async () => {
+	delayedText = null;
+	const composer = {
+		className: 'DCDChatInputComponentView',
+		hash: 21,
+		attributed: original,
+	};
+	const font = { className: 'UIFont', hash: 22 };
+	const selection = { className: 'NSRange', hash: 23 };
+	const base = bridge();
+	let restoredSelection = false;
+	let applied: (() => void) | undefined;
+	const appliedText = new Promise<void>((resolve) => {
+		applied = resolve;
+	});
+	const nativeBridge = Object.assign(Object.create(null) as NativeObjCBridge, base, {
+		call(target: NativeHandle, selector: string, ...args: unknown[]) {
+			if (selector === 'attributesAtIndex:effectiveRange:') return { NSFont: font };
+			if (selector === 'fontName') return 'Discord-Semibold';
+			return base.call(target, selector, ...args);
+		},
+		async invokeAsync(target: NativeHandle, selector: string, args: unknown[]) {
+			if (selector === 'selectedRange') return selection;
+			if (selector === 'setSelectedRange:') {
+				restoredSelection = args[0] === selection;
+				return null;
+			}
+			if (selector === 'setAttributedText:') {
+				target.attributed = args[0] as NativeHandle;
+				applied?.();
+				return null;
+			}
+			return base.invokeAsync(target, selector, args);
+		},
+	});
+	const stop = installComposerMentionColors(
+		nativeBridge,
+		{
+			getMember: () => ({ userId: '123', colorString: '#1abc9c' }),
+			getMembers: () => [{ userId: '123', nick: 'Alice', colorString: '#1abc9c' }],
+		},
+		() => true,
+	);
+	handlers.get('layoutSubviews')?.({ self: composer });
+	await appliedText;
+	expect(composer.attributed).not.toBe(original);
+
+	await stop();
+	expect(composer.attributed).toBe(original);
+	expect(restoredSelection).toBe(true);
 });

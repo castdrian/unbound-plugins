@@ -31,13 +31,15 @@ let members: MemberStore | null = null;
 let nativeObjC: NativeObjCBridge | null = null;
 let unpatchRows: (() => void) | null = null;
 let unpatchMemberList: (() => void) | null = null;
-let unpatchNativeMentions: (() => void) | null = null;
-let unpatchComposerMentions: (() => void) | null = null;
+let unpatchNativeMentions: (() => Promise<void>) | null = null;
+let unpatchComposerMentions: (() => Promise<void>) | null = null;
 let unpatchTypingNames: (() => void) | null = null;
 let unpatchReactionUsers: (() => void) | null = null;
 let unpatchPollVoters: (() => void) | null = null;
 let unpatchVoiceUsers: (() => void) | null = null;
 let removeModuleListener: (() => boolean) | null = null;
+let nativeMentionRevision = 0;
+let pendingNativeMentionCleanup = Promise.resolve();
 
 function chatOptions(): ChatColorOptions {
 	return {
@@ -62,20 +64,40 @@ function patchRows(): boolean {
 	return true;
 }
 
-function setNativeMentions(enabled: boolean): void {
-	unpatchNativeMentions?.();
+async function setNativeMentions(enabled: boolean): Promise<void> {
+	const revision = ++nativeMentionRevision;
+	const stopNative = unpatchNativeMentions;
 	unpatchNativeMentions = null;
-	unpatchComposerMentions?.();
+	const stopComposer = unpatchComposerMentions;
 	unpatchComposerMentions = null;
-	if (!enabled || !nativeObjC || !members) return;
-	unpatchNativeMentions = installNativeMentionColors(nativeObjC, members, () =>
-		STORE.get('chatMentions', true),
-	);
-	unpatchComposerMentions = installComposerMentionColors(
-		nativeObjC,
-		members as Parameters<typeof installComposerMentionColors>[1],
-		() => STORE.get('chatMentions', true),
-	);
+	pendingNativeMentionCleanup = Promise.allSettled([
+		pendingNativeMentionCleanup,
+		Promise.resolve().then(() => stopNative?.()),
+		Promise.resolve().then(() => stopComposer?.()),
+	]).then((results) => {
+		for (const result of results) {
+			if (result.status === 'rejected') {
+				console.error('Role Color Everywhere native mention cleanup failed:', result.reason);
+			}
+		}
+	});
+	await pendingNativeMentionCleanup;
+	if (revision !== nativeMentionRevision || !enabled || !nativeObjC || !members) return;
+	try {
+		unpatchNativeMentions = installNativeMentionColors(nativeObjC, members, () =>
+			STORE.get('chatMentions', true),
+		);
+		unpatchComposerMentions = installComposerMentionColors(
+			nativeObjC,
+			members as Parameters<typeof installComposerMentionColors>[1],
+			() => STORE.get('chatMentions', true),
+		);
+	} catch (error) {
+		await unpatchNativeMentions?.();
+		unpatchNativeMentions = null;
+		unpatchComposerMentions = null;
+		throw error;
+	}
 }
 
 function RoleColorSettings() {
@@ -93,7 +115,9 @@ function RoleColorSettings() {
 					value={settings.get('chatMentions', true)}
 					onValueChange={(value: boolean) => {
 						settings.set('chatMentions', value);
-						setNativeMentions(value);
+						void setNativeMentions(value).catch((error) => {
+							console.error('Role Color Everywhere native mention update failed:', error);
+						});
 					}}
 				/>
 				<SettingsSwitchRow
@@ -172,7 +196,9 @@ export default {
 		if (members)
 			unpatchVoiceUsers = installVoiceUserColors(members, () => STORE.get('voiceUsers', true));
 		nativeObjC = context?.native.objc ?? null;
-		setNativeMentions(STORE.get('chatMentions', true));
+		void setNativeMentions(STORE.get('chatMentions', true)).catch((error) => {
+			console.error('Role Color Everywhere native mention startup failed:', error);
+		});
 		const roles = metro.findStore('GuildRole') as
 			| Parameters<typeof installMemberListColors>[0]
 			| null;
@@ -188,8 +214,7 @@ export default {
 		});
 	},
 	stop() {
-		unpatchComposerMentions?.();
-		unpatchComposerMentions = null;
+		const nativeCleanup = setNativeMentions(false);
 		unpatchTypingNames?.();
 		unpatchTypingNames = null;
 		unpatchReactionUsers?.();
@@ -198,8 +223,6 @@ export default {
 		unpatchPollVoters = null;
 		unpatchVoiceUsers?.();
 		unpatchVoiceUsers = null;
-		unpatchNativeMentions?.();
-		unpatchNativeMentions = null;
 		unpatchMemberList?.();
 		unpatchMemberList = null;
 		unpatchRows?.();
@@ -208,6 +231,7 @@ export default {
 		removeModuleListener = null;
 		nativeObjC = null;
 		members = null;
+		return nativeCleanup;
 	},
 	getSettingsPanel: () => <RoleColorSettings />,
 };

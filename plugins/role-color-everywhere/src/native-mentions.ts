@@ -85,7 +85,7 @@ export function installNativeMentionColors(
 	bridge: NativeObjCBridge,
 	members: MemberStore,
 	enabled: () => boolean,
-): () => void {
+): () => Promise<void> {
 	const messageStore = metro.findStore('Message') as MessageStore | null;
 	const channelStore = metro.findStore('Channel') as ChannelStore | null;
 	const userStore = metro.findStore('User') as UserStore | null;
@@ -93,7 +93,7 @@ export function installNativeMentionColors(
 		'getChannelId',
 		'getLastSelectedChannelId',
 	) as SelectedChannelStore | null;
-	if (!messageStore || !channelStore || !userStore || !selectedStore) return () => {};
+	if (!messageStore || !channelStore || !userStore || !selectedStore) return async () => undefined;
 	const messages = messageStore;
 	const channels = channelStore;
 	const users = userStore;
@@ -128,19 +128,6 @@ export function installNativeMentionColors(
 		if (!handle) return null;
 		try {
 			return await bridge.invokeAsync(handle, selector, args);
-		} catch {
-			return null;
-		}
-	}
-
-	function callMainSynchronously(
-		handle: NativeValue,
-		selector: string,
-		...args: NativeValue[]
-	): NativeValue {
-		if (!handle) return null;
-		try {
-			return bridge.invoke(handle, selector, args, { thread: 'main' });
 		} catch {
 			return null;
 		}
@@ -235,14 +222,17 @@ export function installNativeMentionColors(
 			);
 	}
 
-	function restoreView(key: string): void {
+	async function restoreView(key: string): Promise<void> {
 		const state = textViews.get(key);
 		if (!state) return;
-		const current = callMainSynchronously(state.view, 'attributedText');
-		if (call(current, 'isEqual:', state.applied)) {
-			callMainSynchronously(state.view, 'setAttributedText:', state.original);
+		try {
+			const current = await callMain(state.view, 'attributedText');
+			if (call(current, 'isEqual:', state.applied)) {
+				await callMain(state.view, 'setAttributedText:', state.original);
+			}
+		} finally {
+			textViews.delete(key);
 		}
-		textViews.delete(key);
 	}
 
 	async function updateView(
@@ -287,6 +277,7 @@ export function installNativeMentionColors(
 		const latest = await callMain(view, 'attributedText');
 		if (
 			!latest ||
+			stopped ||
 			!call(latest, 'isEqual:', current) ||
 			currentChannelId !== channelId ||
 			channelRevision !== activeChannelRevision ||
@@ -422,12 +413,12 @@ export function installNativeMentionColors(
 	selected.addChangeListener?.(onChannelChange);
 	for (const delay of SCAN_DELAYS) scheduleScan(delay);
 
-	return () => {
+	return async () => {
 		stopped = true;
 		selected.removeChangeListener?.(onChannelChange);
 		for (const hook of hooks) hook.remove();
 		for (const timer of timers) clearTimeout(timer);
-		for (const key of [...textViews.keys()]) restoreView(key);
+		await Promise.all([...textViews.keys()].map(restoreView));
 		pendingCells.clear();
 		dirtyCells.clear();
 		cellTextViews.clear();

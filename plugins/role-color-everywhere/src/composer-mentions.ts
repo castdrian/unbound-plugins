@@ -40,7 +40,7 @@ export function installComposerMentionColors(
 	bridge: NativeObjCBridge,
 	members: MemberStore,
 	enabled: () => boolean,
-): () => void {
+): () => Promise<void> {
 	const users = metro.findStore('User') as UserStore | null;
 	const channels = metro.findStore('Channel') as {
 		getChannel(channelId: string): { guild_id?: string } | null | undefined;
@@ -48,7 +48,7 @@ export function installComposerMentionColors(
 	const selected = metro.findByProps('getChannelId', 'getLastSelectedChannelId') as {
 		getChannelId(): string | undefined;
 	} | null;
-	if (!users || !channels || !selected) return () => {};
+	if (!users || !channels || !selected) return async () => undefined;
 	const userStore = users;
 	const channelStore = channels;
 	const selectedStore = selected;
@@ -79,19 +79,6 @@ export function installComposerMentionColors(
 		if (!handle) return null;
 		try {
 			return await bridge.invokeAsync(handle, selector, args);
-		} catch {
-			return null;
-		}
-	}
-
-	function callMainSynchronously(
-		handle: NativeValue,
-		selector: string,
-		...args: NativeValue[]
-	): NativeValue {
-		if (!handle) return null;
-		try {
-			return bridge.invoke(handle, selector, args, { thread: 'main' });
 		} catch {
 			return null;
 		}
@@ -290,21 +277,24 @@ export function installComposerMentionColors(
 		}
 	}
 
-	function restore(key: string): void {
+	async function restore(key: string): Promise<void> {
 		const state = states.get(key);
 		if (!state) return;
-		const current = callMainSynchronously(state.view, 'attributedText');
-		if (call(current, 'isEqual:', state.applied)) {
-			const selection = callMainSynchronously(state.view, 'selectedRange');
-			updating.add(key);
-			try {
-				callMainSynchronously(state.view, 'setAttributedText:', state.original);
-				if (selection) callMainSynchronously(state.view, 'setSelectedRange:', selection);
-			} finally {
-				updating.delete(key);
+		try {
+			const current = await callMain(state.view, 'attributedText');
+			if (call(current, 'isEqual:', state.applied)) {
+				const selection = await callMain(state.view, 'selectedRange');
+				updating.add(key);
+				try {
+					await callMain(state.view, 'setAttributedText:', state.original);
+					if (selection) await callMain(state.view, 'setSelectedRange:', selection);
+				} finally {
+					updating.delete(key);
+				}
 			}
+		} finally {
+			states.delete(key);
 		}
-		states.delete(key);
 	}
 
 	try {
@@ -328,14 +318,14 @@ export function installComposerMentionColors(
 	} catch (error) {
 		console.error('Role Color Everywhere composer hook failed:', error);
 		for (const hook of hooks) hook.remove();
-		return () => {};
+		return async () => undefined;
 	}
 
-	return () => {
+	return async () => {
 		stopped = true;
 		for (const hook of hooks) hook.remove();
 		for (const timer of pending.values()) clearTimeout(timer);
-		for (const key of [...states.keys()]) restore(key);
+		await Promise.all([...states.keys()].map(restore));
 		pending.clear();
 		dirty.clear();
 		aliases.clear();
