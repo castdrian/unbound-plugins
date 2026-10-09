@@ -1,6 +1,7 @@
 import { assets, metro, patcher, plugins, storage } from '@unbound-app/api';
 
 import { extractUrls, fetchLinkEmbed, type LinkEmbed } from '@preview-message/embeds';
+import { subscribeToStore } from '@preview-message/store-listener';
 import { applyRules, normalizeRules } from '@text-replace/rules';
 
 const RIGHT_ACTIONS_PATH = 'modules/chat_input/native/action_buttons/ChatInputRightActions.tsx';
@@ -283,17 +284,11 @@ function PreviewButton({ channelId }: { channelId: string }) {
 	);
 
 	const draft = React.useSyncExternalStore(
-		(onChange: () => void) => {
-			drafts.addChangeListener(onChange);
-			return () => drafts.removeChangeListener(onChange);
-		},
-		() => drafts.getDraft(channelId, CHANNEL_MESSAGE_DRAFT_TYPE) ?? '',
+		(onChange: () => void) => subscribeToStore(drafts, onChange),
+		() => drafts?.getDraft?.(channelId, CHANNEL_MESSAGE_DRAFT_TYPE) ?? '',
 	);
 	const stickers = React.useSyncExternalStore(
-		(onChange: () => void) => {
-			stickerPreviews?.addChangeListener?.(onChange);
-			return () => stickerPreviews?.removeChangeListener?.(onChange);
-		},
+		(onChange: () => void) => subscribeToStore(stickerPreviews, onChange),
 		() => stickerPreviews?.getStickerPreview?.(channelId, false) ?? EMPTY_STICKERS,
 	);
 
