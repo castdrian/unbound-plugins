@@ -211,6 +211,7 @@ const activeCells = new Map<string, NativeValue>();
 const pendingCells = new Set<string>();
 const pendingCellRefs = new Map<string, NativeValue>();
 const imageCache = new Map<string, ImageCacheEntry>();
+const roleImageCache = new Map<number, NativeValue>();
 const messageMentionIndex = new Map<string, Mention[]>();
 const unresolvedMessageIDs = new Set<string>();
 const textViewStates = new Map<string, TextViewState>();
@@ -367,8 +368,71 @@ export function tintRoleSymbol(image: NativeValue, tint: NativeValue): NativeVal
 	return image;
 }
 
+function rasterizeRoleSymbol(image: NativeValue, tint: NativeValue): NativeValue {
+	if (!objc || !tint) return image;
+	const imageClass = objc.getClass('UIImage');
+	const ciImageClass = objc.getClass('CIImage');
+	const ciColorClass = objc.getClass('CIColor');
+	const filterClass = objc.getClass('CIFilter');
+	const contextClass = objc.getClass('CIContext');
+	if (!imageClass || !ciImageClass || !ciColorClass || !filterClass || !contextClass) return image;
+
+	const sourceCGImage = nativeCall(image, 'CGImage');
+	const tintCGColor = nativeCall(tint, 'CGColor');
+	if (!sourceCGImage || !tintCGColor) return image;
+	const source = nativeCall(ciImageClass, 'imageWithCGImage:', sourceCGImage);
+	const color = nativeCall(ciColorClass, 'colorWithCGColor:', tintCGColor);
+	const filter = nativeCall(filterClass, 'filterWithName:', 'CIFalseColor');
+	if (!source || !color || !filter) return image;
+	nativeCall(filter, 'setValue:forKey:', source, 'inputImage');
+	nativeCall(filter, 'setValue:forKey:', color, 'inputColor0');
+	nativeCall(filter, 'setValue:forKey:', color, 'inputColor1');
+	const output = nativeCall(filter, 'outputImage');
+	if (!output) return image;
+	const imageSize = nativeCall(image, 'size')?.value;
+	const outputExtent = nativeCall(output, 'extent')?.value;
+	const scale = asNumber(nativeCall(image, 'scale'));
+	const dimensions = [
+		imageSize?.width,
+		imageSize?.height,
+		outputExtent?.size?.width,
+		outputExtent?.size?.height,
+		scale,
+	];
+	const sizedOutput = dimensions.every((value) => Number.isFinite(value) && value > 0)
+		? (nativeCall(
+				output,
+				'imageByApplyingTransform:',
+				objc.struct('CGAffineTransform', {
+					a: (imageSize.width * scale) / outputExtent.size.width,
+					b: 0,
+					c: 0,
+					d: (imageSize.height * scale) / outputExtent.size.height,
+					tx: 0,
+					ty: 0,
+				}),
+			) ?? output)
+		: output;
+	const extent = nativeCall(sizedOutput, 'extent');
+	const context = nativeCall(contextClass, 'contextWithOptions:', null);
+	const bitmap =
+		extent && context ? nativeCall(context, 'createCGImage:fromRect:', sizedOutput, extent) : null;
+	if (!bitmap) return image;
+	return (
+		nativeCall(
+			imageClass,
+			'imageWithCGImage:scale:orientation:',
+			bitmap,
+			scale || 1,
+			nativeCall(image, 'imageOrientation') ?? 0,
+		) ?? image
+	);
+}
+
 function roleImage(metadata: Mention): NativeValue | null {
 	if (!objc) return null;
+	const cached = metadata.roleColor ? roleImageCache.get(metadata.roleColor) : null;
+	if (cached) return cached;
 	const imageClass = objc.getClass('UIImage');
 	const configurationClass = objc.getClass('UIImageSymbolConfiguration');
 	const configuration = configurationClass
@@ -397,7 +461,12 @@ function roleImage(metadata: Mention): NativeValue | null {
 		: colorClass
 			? nativeCall(colorClass, 'labelColor')
 			: null;
-	return tintRoleSymbol(image, tint);
+	const result = rasterizeRoleSymbol(tintRoleSymbol(image, tint), tint);
+	if (metadata.roleColor && result !== image) {
+		if (roleImageCache.size >= 64) roleImageCache.delete(roleImageCache.keys().next().value!);
+		roleImageCache.set(metadata.roleColor, result);
+	}
+	return result;
 }
 
 function roundedImage(image: NativeValue): NativeValue | null {
@@ -1042,6 +1111,7 @@ function stop(): void {
 	objc = null;
 	pendingCells.clear();
 	imageCache.clear();
+	roleImageCache.clear();
 	messageMentionIndex.clear();
 	unresolvedMessageIDs.clear();
 	hydratedMessageKey = null;
