@@ -17,7 +17,9 @@ import {
 	reactionAvatarStackWidth,
 	reactionAvatarSummaryProps,
 	reactionCellLifecycleAction,
+	reactionCellHeightDelta,
 	reactionCellWidth,
+	reactionAncestorHeightDelta,
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
@@ -309,6 +311,18 @@ describe('reaction avatar state', () => {
 				{ contentHeight: 374, frameHeight: 374 },
 			),
 		).toBe(true);
+	});
+
+	test('keeps the reaction list as tall as its reflowed collection', () => {
+		expect(reactionAncestorHeightDelta(306, 170)).toBe(136);
+		expect(reactionAncestorHeightDelta(170, 170)).toBe(0);
+		expect(reactionAncestorHeightDelta(136, 170)).toBe(0);
+	});
+
+	test('shares one row-height reservation across reaction-list duplicates', () => {
+		expect(reactionCellHeightDelta([136, 136])).toBe(136);
+		expect(reactionCellHeightDelta([68, 136])).toBe(136);
+		expect(reactionCellHeightDelta([])).toBe(0);
 	});
 
 	test('resets a reused reaction collection when its message changes', () => {
