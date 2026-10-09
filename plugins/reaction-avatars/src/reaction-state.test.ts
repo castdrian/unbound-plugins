@@ -17,7 +17,7 @@ import {
 	reactionAvatarStackWidth,
 	reactionAvatarSummaryProps,
 	reactionCellLifecycleAction,
-	reactionCellHeightDelta,
+	reactionCellHeightFloor,
 	reactionCellWidth,
 	reactionAncestorHeightDelta,
 	reactionLayoutFrameMatches,
@@ -320,9 +320,9 @@ describe('reaction avatar state', () => {
 	});
 
 	test('shares one row-height reservation across reaction-list duplicates', () => {
-		expect(reactionCellHeightDelta([136, 136])).toBe(136);
-		expect(reactionCellHeightDelta([68, 136])).toBe(136);
-		expect(reactionCellHeightDelta([])).toBe(0);
+		expect(reactionCellHeightFloor([741, 741])).toBe(741);
+		expect(reactionCellHeightFloor([337, 741])).toBe(741);
+		expect(reactionCellHeightFloor([])).toBe(0);
 	});
 
 	test('resets a reused reaction collection when its message changes', () => {

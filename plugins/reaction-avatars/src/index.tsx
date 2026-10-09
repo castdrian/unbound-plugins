@@ -14,7 +14,7 @@ import {
 	reactionAvatarSelection,
 	reactionAvatarStackWidth,
 	reactionAncestorHeightDelta,
-	reactionCellHeightDelta,
+	reactionCellHeightFloor,
 	reactionCellLifecycleAction,
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
@@ -223,8 +223,7 @@ type ReactionLayoutEntry = {
 type ReactionCellSizeEntry = {
 	cell: NativeObjectHandle;
 	contributions: Map<string, number>;
-	delta: number;
-	hook: NativeHookToken;
+	floor: number;
 	messageKey: string;
 	width: number;
 };
@@ -242,6 +241,7 @@ const nativeIds = new WeakMap<object, number>();
 const reactionLayoutRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
 
 let objc: NativeObjCBridge | null = null;
+let reactionCellSizeHook: NativeHookToken | null = null;
 let fabric: NativeFabricBridge | null = null;
 let reactionActions: ReactionActions | null = null;
 let messages: MessageStore | null = null;
@@ -1164,32 +1164,53 @@ function setReactionAncestorFrames(entry: ReactionLayoutEntry, delta: number): v
 	}
 }
 
+function reactionCollectionBottomInCell(entry: ReactionLayoutEntry): number | undefined {
+	if (!entry.ownerCell || !entry.plan) return;
+	let offset = 0;
+	let current: NativeObjectHandle | null = entry.collection;
+	for (let depth = 0; current && depth < 12; depth++) {
+		if (nativeKey(current) === entry.ownerCellKey) return offset + entry.plan.height + 2;
+		const frame = nativeFrameForView(current);
+		if (!frame) return;
+		offset += frame.y;
+		current = nativeCall(current, 'superview') as NativeObjectHandle | null;
+	}
+}
+
+function removeReactionCellHeightFloor(state: ReactionCellSizeEntry): void {
+	if (!objc || !reactionCellSizeHook) return;
+	try {
+		reactionCellSizeHook.removeSizeHeightFloor(state.cell, [
+			objc.struct('CGSize', { width: state.width, height: 0 }),
+		]);
+	} catch {}
+}
+
 function clearReactionCellSize(entry: ReactionLayoutEntry): boolean {
 	const state = reactionCellSizes.get(entry.ownerCellKey);
 	if (!state || state.messageKey !== entry.ownerMessageKey) return false;
 	const key = nativeKey(entry.collection);
 	if (!state.contributions.delete(key)) return false;
 	if (state.contributions.size === 0) {
-		state.hook.remove();
+		removeReactionCellHeightFloor(state);
 		reactionCellSizes.delete(entry.ownerCellKey);
 		return true;
 	}
-	const delta = reactionCellHeightDelta(state.contributions.values());
-	if (Math.abs(state.delta - delta) < 0.5) return false;
-	if (!objc) {
-		state.hook.remove();
+	const floor = reactionCellHeightFloor(state.contributions.values());
+	if (Math.abs(state.floor - floor) < 0.5) return false;
+	if (!objc || !reactionCellSizeHook) {
 		reactionCellSizes.delete(entry.ownerCellKey);
 		return true;
 	}
 	try {
-		state.hook.setSizeHeightDelta(
+		reactionCellSizeHook.setSizeHeightFloor(
 			state.cell,
 			[objc.struct('CGSize', { width: state.width, height: 0 })],
-			delta,
+			floor,
 		);
-		state.delta = delta;
+		state.floor = floor;
 	} catch {
-		state.hook.remove();
+		removeReactionCellHeightFloor(state);
 		reactionCellSizes.delete(entry.ownerCellKey);
 	}
 	return true;
@@ -1202,32 +1223,36 @@ function updateReactionCellSize(entry: ReactionLayoutEntry): boolean {
 	if (baselineHeight === undefined || !cellFrame || cellFrame.width <= 0) return false;
 	const extraHeight = reactionAncestorHeightDelta(entry.plan.height, baselineHeight);
 	if (extraHeight < 1) return clearReactionCellSize(entry);
+	const floor = reactionCollectionBottomInCell(entry);
+	if (floor === undefined || floor <= 0 || floor > 4096) return false;
 	let state = reactionCellSizes.get(entry.ownerCellKey);
 	if (
 		state &&
 		(state.messageKey !== entry.ownerMessageKey || Math.abs(state.width - cellFrame.width) >= 0.5)
 	) {
-		state.hook.remove();
+		removeReactionCellHeightFloor(state);
 		reactionCellSizes.delete(entry.ownerCellKey);
 		state = undefined;
 	}
 	if (!state) {
 		try {
-			const hook = objc.hook(
-				'DCDMessageTableViewCell',
-				'sizeThatFits:',
-				{},
-				{ cacheOnly: true, instance: entry.ownerCell, thread: 'main' },
-			);
-			if (typeof hook.setSizeHeightDelta !== 'function') {
-				hook.remove();
-				return false;
+			if (!reactionCellSizeHook) {
+				const hook = objc.hook(
+					'DCDMessageTableViewCell',
+					'sizeThatFits:',
+					{},
+					{ cacheOnly: true, thread: 'main' },
+				);
+				if (typeof hook.setSizeHeightFloor !== 'function') {
+					hook.remove();
+					return false;
+				}
+				reactionCellSizeHook = hook;
 			}
 			state = {
 				cell: entry.ownerCell,
 				contributions: new Map(),
-				delta: 0,
-				hook,
+				floor: 0,
 				messageKey: entry.ownerMessageKey,
 				width: cellFrame.width,
 			};
@@ -1236,18 +1261,18 @@ function updateReactionCellSize(entry: ReactionLayoutEntry): boolean {
 			return false;
 		}
 	}
-	state.contributions.set(nativeKey(entry.collection), extraHeight);
-	const delta = reactionCellHeightDelta(state.contributions.values());
-	if (Math.abs(state.delta - delta) < 0.5) return false;
+	state.contributions.set(nativeKey(entry.collection), floor);
+	const targetFloor = reactionCellHeightFloor(state.contributions.values());
+	if (Math.abs(state.floor - targetFloor) < 0.5) return false;
 	try {
-		state.hook.setSizeHeightDelta(
+		reactionCellSizeHook.setSizeHeightFloor(
 			state.cell,
 			[objc.struct('CGSize', { width: state.width, height: 0 })],
-			delta,
+			targetFloor,
 		);
-		state.delta = delta;
+		state.floor = targetFloor;
 	} catch {
-		state.hook.remove();
+		removeReactionCellHeightFloor(state);
 		reactionCellSizes.delete(entry.ownerCellKey);
 		return false;
 	}
@@ -1890,7 +1915,8 @@ function stop(): void {
 	reactionLayoutRefreshes.clear();
 	for (const [key, state] of reactionStates) disposeReactionState(key, state, true);
 	for (const table of reactionTableLayouts.values()) restoreReactionTableLayout(table);
-	for (const state of reactionCellSizes.values()) state.hook.remove();
+	reactionCellSizeHook?.remove();
+	reactionCellSizeHook = null;
 	reactionCellSizes.clear();
 	reactionLayouts.clear();
 	reactionTableLayouts.clear();

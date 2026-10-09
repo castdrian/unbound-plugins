@@ -193,7 +193,7 @@ export function reactionAncestorHeightDelta(targetHeight: number, baselineHeight
 	return Math.max(0, targetHeight - baselineHeight);
 }
 
-export function reactionCellHeightDelta(contributions: Iterable<number>): number {
+export function reactionCellHeightFloor(contributions: Iterable<number>): number {
 	return Math.max(0, ...contributions);
 }
 
