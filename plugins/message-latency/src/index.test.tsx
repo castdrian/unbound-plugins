@@ -487,7 +487,7 @@ describe('message row and native lifecycle', () => {
 		expect(batches).toBe(1);
 	});
 
-	test('shows and dismisses tooltips through asynchronous native calls', async () => {
+	test('shows and dismisses tooltips when the displayed name differs from the account name', async () => {
 		type Handle = { id: number; name: string };
 		type Frame = { x: number; y: number; width: number; height: number };
 		let nextId = 0;
@@ -623,7 +623,7 @@ describe('message row and native lifecycle', () => {
 					},
 				},
 			],
-			result: { message: { username: 'adrián' } },
+			result: { message: { username: 'dylib.dev' } },
 		});
 		handlers.get('didMoveToWindow')?.after?.({ self: cell });
 		await Bun.sleep(10);

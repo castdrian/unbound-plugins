@@ -381,13 +381,29 @@ async function cellMessageId(cell: NativeObjectHandle): Promise<string | null> {
 }
 
 function labelForUsername(nodes: NativeViewSnapshotNode[], username: string): number {
-	return nodes.findIndex(
+	const exact = nodes.findIndex(
 		(node) =>
 			node.className === 'DCDLabel' &&
 			node.text === username &&
 			node.frame.width > 0 &&
 			node.frame.height > 0,
 	);
+	if (exact >= 0) return exact;
+	let candidate = -1;
+	for (let index = 0; index < nodes.length; index++) {
+		const node = nodes[index];
+		if (
+			node.className !== 'DCDLabel' ||
+			!node.text ||
+			node.frame.width <= 0 ||
+			node.frame.height <= 0 ||
+			!headerForUsername(nodes, index)
+		)
+			continue;
+		if (candidate >= 0) return -1;
+		candidate = index;
+	}
+	return candidate;
 }
 
 function headerForUsername(
