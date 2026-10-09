@@ -49,7 +49,21 @@ let nativeHooks: Array<{ className: string; selector: string }> = [];
 
 mock.module('@unbound-app/api', () => ({
 	metro: {
-		common: { Theme: { themes: { DARK: 'darker' } } },
+		common: {
+			ReactNative: { AppRegistry: { registerComponent: () => undefined } },
+			Theme: {
+				colors: {
+					BACKGROUND_SURFACE_HIGHEST: '#222222',
+					STATUS_DANGER: '#ff0000',
+					STATUS_POSITIVE: '#00ff00',
+					STATUS_WARNING: '#ffff00',
+					TEXT_DEFAULT: '#ffffff',
+					TEXT_MUTED: '#888888',
+				},
+				internal: { resolveSemanticColor: (_theme: string, color: string) => color },
+				themes: { DARK: 'darker' },
+			},
+		},
 		find: () => null,
 		findByProps: (...props: string[]) => {
 			if (props.includes('generateMessageRowData')) {
@@ -111,8 +125,8 @@ const {
 
 const DISCORD_EPOCH = 1_420_070_400_000;
 
-afterEach(() => {
-	plugin.stop();
+afterEach(async () => {
+	await plugin.stop();
 	patchCount = 0;
 	unpatchCount = 0;
 	removeListenerCount = 0;
@@ -308,11 +322,11 @@ describe('message create events', () => {
 		expect(messageFromCreateEvent({ type: 'MESSAGE_CREATE' })).toBeNull();
 	});
 
-	test('subscribes to live messages and releases the subscription on stop', () => {
+	test('subscribes to live messages and releases the subscription on stop', async () => {
 		plugin.start(nativeContext() as Parameters<typeof plugin.start>[0]);
 		expect(subscribedEvents).toContain('MESSAGE_CREATE');
 
-		plugin.stop();
+		await plugin.stop();
 		expect(unsubscribedEvents).toContain('MESSAGE_CREATE');
 	});
 });
@@ -328,16 +342,16 @@ describe('latency formatting', () => {
 });
 
 describe('message row and native lifecycle', () => {
-	test('installs one row patch and removes it when stopped', () => {
+	test('installs one row patch and removes it when stopped', async () => {
 		plugin.start();
 		plugin.start();
 		expect(patchCount).toBe(1);
 
-		plugin.stop();
+		await plugin.stop();
 		expect(unpatchCount).toBe(1);
 	});
 
-	test('uses the native ABI cell hooks and disposes their tokens', () => {
+	test('uses the native ABI cell hooks and disposes their tokens', async () => {
 		plugin.start(nativeContext() as Parameters<typeof plugin.start>[0]);
 		expect(nativeHooks).toEqual([
 			{ className: 'UIControl', selector: 'endTrackingWithTouch:withEvent:' },
@@ -345,7 +359,10 @@ describe('message row and native lifecycle', () => {
 			{ className: 'DCDMessageTableViewCell', selector: 'prepareForReuse' },
 		]);
 
-		plugin.stop();
+		const stopped = plugin.stop();
+		expect(plugin.stop()).toBe(stopped);
+		expect(removeHookCount).toBe(3);
+		await stopped;
 		expect(removeHookCount).toBe(3);
 	});
 
@@ -468,6 +485,170 @@ describe('message row and native lifecycle', () => {
 		snapshots[1]?.(nodes);
 		await Bun.sleep(5);
 		expect(batches).toBe(1);
+	});
+
+	test('shows and dismisses tooltips through asynchronous native calls', async () => {
+		type Handle = { id: number; name: string };
+		type Frame = { x: number; y: number; width: number; height: number };
+		let nextId = 0;
+		const createHandle = (name: string): Handle => ({ id: ++nextId, name });
+		const cell = createHandle('DCDMessageTableViewCell');
+		const row = createHandle('UIView');
+		const group = createHandle('UIView');
+		const wrapper = createHandle('UIView');
+		const label = createHandle('DCDLabel');
+		const timestamp = createHandle('DCDLabel');
+		const window = createHandle('UIWindow');
+		const viewModel = createHandle('ViewModel');
+		const message = createHandle('Message');
+		const messageId = snowflake(DISCORD_EPOCH + 20_000);
+		const frames = new Map<Handle, Frame>([
+			[row, { x: 0, y: 0, width: 300, height: 20 }],
+			[group, { x: 0, y: 0, width: 140, height: 20 }],
+			[wrapper, { x: 0, y: 0, width: 70, height: 18 }],
+			[label, { x: 0, y: 0, width: 70, height: 16 }],
+			[timestamp, { x: 160, y: 0, width: 50, height: 18 }],
+			[window, { x: 0, y: 0, width: 320, height: 640 }],
+		]);
+		const parents = new Map<Handle, Handle>([
+			[label, wrapper],
+			[wrapper, group],
+			[group, row],
+		]);
+		const children = new Map<Handle, Handle[]>([
+			[group, [wrapper]],
+			[row, [group, timestamp]],
+		]);
+		const handlers = new Map<string, TestHookHandlers>();
+		const asyncSelectors: string[] = [];
+		const synchronousSelectors: string[] = [];
+		const surfaces: Handle[] = [];
+		const unmounted: Handle[] = [];
+		let pauseMount = false;
+		let releaseMount: ((surface: Handle) => void) | null = null;
+		let icon: Handle | null = null;
+		const invoke = (target: Handle, selector: string): unknown => {
+			if (selector === 'frame' || selector === 'bounds') {
+				const frame = frames.get(target);
+				return frame
+					? {
+							origin: { x: frame.x, y: frame.y },
+							size: { width: frame.width, height: frame.height },
+						}
+					: null;
+			}
+			if (selector === 'superview') return parents.get(target) ?? null;
+			if (selector === 'subviews') return children.get(target) ?? [];
+			if (selector === 'window') return window;
+			if (selector === 'translatesAutoresizingMaskIntoConstraints') return true;
+			if (selector === 'layer') return createHandle('CALayer');
+			if (selector === 'colorWithRed:green:blue:alpha:') return createHandle('UIColor');
+			if (
+				selector === 'constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:'
+			)
+				return createHandle('NSLayoutConstraint');
+			if (selector === 'systemFontOfSize:') return createHandle('UIFont');
+			if (selector === 'sizeThatFits:') return { width: 120, height: 18 };
+			if (selector === 'convertRect:toView:')
+				return { origin: { x: 100, y: 100 }, size: { width: 12, height: 12 } };
+			return null;
+		};
+		const context = {
+			native: {
+				objc: {
+					alloc: (name: string) => {
+						const handle = createHandle(name);
+						if (name === 'UIButton') icon = handle;
+						return handle;
+					},
+					batch: () => Promise.resolve([message, messageId]),
+					call: (handle: Handle) => handle.id,
+					className: (handle: Handle) => handle.name,
+					getClass: (name: string) => createHandle(name),
+					getIvar: () => viewModel,
+					hook: (_className: string, selector: string, callbacks: TestHookHandlers) => {
+						handlers.set(selector, callbacks);
+						return { remove: () => undefined };
+					},
+					invoke: (handle: Handle, selector: string) => {
+						synchronousSelectors.push(selector);
+						return invoke(handle, selector);
+					},
+					invokeAsync: (handle: Handle, selector: string) => {
+						asyncSelectors.push(selector);
+						return Promise.resolve(invoke(handle, selector));
+					},
+					snapshot: () =>
+						Promise.resolve([
+							{ view: cell, parent: -1, visible: true, frame: frames.get(row) },
+							{ view: row, parent: 0, visible: true, frame: frames.get(row) },
+							{
+								view: label,
+								parent: 1,
+								visible: true,
+								className: 'DCDLabel',
+								frame: frames.get(label),
+								text: 'adrián',
+							},
+						]),
+					struct: (_name: string, value: unknown) => ({ value }),
+				},
+				fabric: {
+					mountAsync: () => {
+						const surface = createHandle('Surface');
+						surfaces.push(surface);
+						if (pauseMount)
+							return new Promise<Handle>((resolve) => {
+								releaseMount = resolve;
+							});
+						return Promise.resolve(surface);
+					},
+					setFrameAsync: () => Promise.resolve(),
+					setSizeAsync: () => Promise.resolve(),
+					unmountAsync: (surface: Handle) => {
+						unmounted.push(surface);
+						return Promise.resolve();
+					},
+				},
+			},
+		};
+		plugin.start(context as Parameters<typeof plugin.start>[0]);
+		afterHandler?.({
+			args: [
+				{
+					message: {
+						author: { id: 'other' },
+						id: messageId,
+						nonce: snowflake(DISCORD_EPOCH + 17_000),
+					},
+				},
+			],
+			result: { message: { username: 'adrián' } },
+		});
+		handlers.get('didMoveToWindow')?.after?.({ self: cell });
+		await Bun.sleep(10);
+		expect(icon).not.toBeNull();
+		if (!icon) throw new Error('Expected a latency icon');
+		handlers.get('endTrackingWithTouch:withEvent:')?.after?.({ self: icon });
+		await Bun.sleep(10);
+		expect(surfaces).toHaveLength(1);
+		expect(asyncSelectors).toContain('sizeThatFits:');
+		expect(asyncSelectors).toContain('addSubview:');
+		expect(synchronousSelectors).not.toContain('sizeThatFits:');
+		expect(synchronousSelectors).not.toContain('convertRect:toView:');
+		handlers.get('sendEvent:')?.after?.({ self: window });
+		await Bun.sleep(10);
+		expect(unmounted).toEqual(surfaces);
+		expect(asyncSelectors).toContain('removeFromSuperview');
+		pauseMount = true;
+		handlers.get('endTrackingWithTouch:withEvent:')?.after?.({ self: icon });
+		await Bun.sleep(10);
+		expect(surfaces).toHaveLength(2);
+		expect(releaseMount).not.toBeNull();
+		const stopped = plugin.stop();
+		releaseMount?.(surfaces[1]);
+		await stopped;
+		expect(unmounted).toEqual(surfaces);
 	});
 
 	test('uses row generation as metadata only without changing Discord row text', () => {

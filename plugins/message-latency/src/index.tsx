@@ -171,11 +171,13 @@ let activeTooltipOwnerKey: string | null = null;
 let tooltipTimer: ReturnType<typeof setTimeout> | null = null;
 let tooltipDismissHook: NativeHookToken | null = null;
 let tooltipGeneration = 0;
+const tooltipTasks = new Set<Promise<void>>();
 let tooltipSurfaceModuleName = '';
 let removeModuleListener: (() => boolean) | null = null;
 let removeMessageCreateListener: (() => void) | null = null;
 let removeThemeListener: (() => void) | null = null;
 let lifecycle = 0;
+let cleanupTask: Promise<void> | null = null;
 let cellHooks: NativeHookToken[] = [];
 const latencyRecords = new Map<string, LatencyRecord>();
 const activeCells = new Map<string, NativeObjectHandle>();
@@ -301,6 +303,25 @@ function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unkno
 	}
 }
 
+async function nativeCallAsync(
+	handle: NativeObjectHandle,
+	selector: string,
+	...args: unknown[]
+): Promise<unknown> {
+	if (!objc) return null;
+	try {
+		return await objc.invokeAsync(handle, selector, args);
+	} catch {
+		return null;
+	}
+}
+
+function trackTooltipTask(task: Promise<void>): void {
+	const settled = task.catch(() => undefined);
+	tooltipTasks.add(settled);
+	void settled.finally(() => tooltipTasks.delete(settled));
+}
+
 function nativeKey(handle: NativeObjectHandle): string | null {
 	try {
 		const value = objc?.call(handle, 'hash');
@@ -352,6 +373,18 @@ function setNativeFrame(view: NativeObjectHandle, frame: NativeFrame): void {
 	} catch {
 		return;
 	}
+}
+
+async function setNativeFrameAsync(view: NativeObjectHandle, frame: NativeFrame): Promise<void> {
+	if (!objc) return;
+	await nativeCallAsync(
+		view,
+		'setFrame:',
+		objc.struct('CGRect', {
+			origin: { x: frame.x, y: frame.y },
+			size: { width: frame.width, height: frame.height },
+		}),
+	);
 }
 
 async function cellMessageId(cell: NativeObjectHandle): Promise<string | null> {
@@ -703,7 +736,7 @@ function fillKey(fill: LatencyFill): string {
 }
 
 function restoreLatencyView(state: LatencyViewState): void {
-	if (activeTooltipOwnerKey === state.cellKey) dismissLatencyTooltip();
+	if (activeTooltipOwnerKey === state.cellKey) trackTooltipTask(dismissLatencyTooltip());
 	restoreLatencyLayout(state.layout);
 	if (objc) {
 		nativeCall(state.icon, 'removeFromSuperview');
@@ -761,17 +794,20 @@ function updateLatencyView(state: LatencyViewState, record: LatencyRecord): void
 	}
 }
 
-function dismissLatencyTooltip(): void {
+async function dismissLatencyTooltip(): Promise<void> {
 	if (tooltipTimer) clearTimeout(tooltipTimer);
 	tooltipTimer = null;
 	tooltipGeneration++;
 	tooltipDismissHook?.remove();
 	tooltipDismissHook = null;
-	if (activeTooltipSurface && fabric) fabric.unmount(activeTooltipSurface);
+	const surface = activeTooltipSurface;
+	const host = activeTooltip;
+	const bridge = fabric;
 	activeTooltipSurface = null;
-	if (activeTooltip) nativeCall(activeTooltip, 'removeFromSuperview');
 	activeTooltip = null;
 	activeTooltipOwnerKey = null;
+	if (surface && bridge) await bridge.unmountAsync(surface).catch(() => undefined);
+	if (host) await nativeCallAsync(host, 'removeFromSuperview');
 }
 
 function installTooltipDismissHook(generation: number): void {
@@ -779,7 +815,7 @@ function installTooltipDismissHook(generation: number): void {
 	try {
 		tooltipDismissHook = objc.hook('UIWindow', 'sendEvent:', {
 			after: () => {
-				if (generation === tooltipGeneration) dismissLatencyTooltip();
+				if (generation === tooltipGeneration) trackTooltipTask(dismissLatencyTooltip());
 			},
 		});
 	} catch {
@@ -833,26 +869,36 @@ function registerTooltipSurface(): boolean {
 	}
 }
 
-function showLatencyTooltip(state: LatencyViewState): void {
+async function showLatencyTooltip(state: LatencyViewState): Promise<void> {
 	if (!objc || !fabric || !registerTooltipSurface()) return;
-	dismissLatencyTooltip();
-	const window = nativeCall(state.icon, 'window') as NativeObjectHandle | null;
-	const windowFrame = window ? frameFromRect(nativeCall(window, 'bounds')) : null;
+	const token = lifecycle;
+	await dismissLatencyTooltip();
+	const generation = tooltipGeneration;
+	if (!started || token !== lifecycle || !objc || !fabric) return;
+	const window = (await nativeCallAsync(state.icon, 'window')) as NativeObjectHandle | null;
+	const windowFrame = window ? frameFromRect(await nativeCallAsync(window, 'bounds')) : null;
 	if (!window || !windowFrame) return;
+	let host: NativeObjectHandle | null = null;
+	let surface: NativeFabricSurface | null = null;
 	try {
 		const label = objc.alloc('UILabel');
-		nativeCall(label, 'setText:', state.tooltip);
-		nativeCall(label, 'setNumberOfLines:', 0);
+		await nativeCallAsync(label, 'setText:', state.tooltip);
+		await nativeCallAsync(label, 'setNumberOfLines:', 0);
 		const fonts = objc.getClass('UIFont');
 		if (!fonts) return;
-		nativeCall(label, 'setFont:', nativeCall(fonts, 'systemFontOfSize:', 13));
+		const font = (await nativeCallAsync(
+			fonts,
+			'systemFontOfSize:',
+			13,
+		)) as NativeObjectHandle | null;
+		if (!font) return;
+		await nativeCallAsync(label, 'setFont:', font);
 		const maximumWidth = Math.max(120, Math.min(TOOLTIP_MAX_WIDTH, windowFrame.width - 32));
-		const measured = objc.invoke(
+		const measured = (await nativeCallAsync(
 			label,
 			'sizeThatFits:',
-			[objc.struct('CGSize', { width: maximumWidth - 20, height: 1000 })],
-			{ thread: 'main' },
-		) as { value?: unknown } | null;
+			objc.struct('CGSize', { width: maximumWidth - 20, height: 1000 }),
+		)) as { value?: unknown } | null;
 		const measuredSize = (measured?.value ?? measured) as Record<string, unknown> | null;
 		const textWidth = Math.min(maximumWidth - 20, Number(measuredSize?.width));
 		const textHeight = Number(measuredSize?.height);
@@ -865,7 +911,7 @@ function showLatencyTooltip(state: LatencyViewState): void {
 			size: { width: LATENCY_ICON_WIDTH, height: LATENCY_ICON_HEIGHT },
 		});
 		const iconFrame = frameFromRect(
-			nativeCall(state.icon, 'convertRect:toView:', iconRect, window),
+			await nativeCallAsync(state.icon, 'convertRect:toView:', iconRect, window),
 		);
 		if (!iconFrame) return;
 		const x = Math.max(
@@ -878,34 +924,66 @@ function showLatencyTooltip(state: LatencyViewState): void {
 		const belowY = iconFrame.y + iconFrame.height + TOOLTIP_ANCHOR_GAP;
 		const below = belowY + bubbleHeight <= windowFrame.height - 8;
 		const y = below ? belowY : Math.max(8, iconFrame.y - bubbleHeight - TOOLTIP_ANCHOR_GAP);
-		const host = objc.alloc('UIView');
-		nativeCall(host, 'setUserInteractionEnabled:', false);
-		nativeCall(host, 'setAccessibilityIdentifier:', 'message-latency-tooltip');
-		setNativeFrame(host, { height: bubbleHeight, width: bubbleWidth, x, y });
-		nativeCall(window, 'addSubview:', host);
-		activeTooltip = host;
-		const surface = fabric.mount(host, tooltipSurfaceModuleName, {
+		host = objc.alloc('UIView');
+		await nativeCallAsync(host, 'setUserInteractionEnabled:', false);
+		await nativeCallAsync(host, 'setAccessibilityIdentifier:', 'message-latency-tooltip');
+		await setNativeFrameAsync(host, { height: bubbleHeight, width: bubbleWidth, x, y });
+		if (
+			generation !== tooltipGeneration ||
+			token !== lifecycle ||
+			!started ||
+			latencyViews.get(state.cellKey) !== state
+		)
+			return;
+		await nativeCallAsync(window, 'addSubview:', host);
+		if (
+			generation !== tooltipGeneration ||
+			token !== lifecycle ||
+			!started ||
+			latencyViews.get(state.cellKey) !== state
+		)
+			return;
+		const bridge = fabric;
+		if (!bridge) return;
+		surface = await bridge.mountAsync(host, tooltipSurfaceModuleName, {
 			arrowDirection: below ? 'UP' : 'DOWN',
 			arrowOffset: iconFrame.x + iconFrame.width / 2 - x - 8,
 			label: state.tooltip,
 			width: bubbleWidth,
 		});
-		fabric.setSize(
+		await bridge.setSizeAsync(
 			surface,
 			{ width: bubbleWidth, height: bubbleHeight },
 			{ width: bubbleWidth, height: bubbleHeight },
 		);
-		fabric.setFrame(surface, { x: 0, y: 0, width: bubbleWidth, height: bubbleHeight });
+		await bridge.setFrameAsync(surface, {
+			x: 0,
+			y: 0,
+			width: bubbleWidth,
+			height: bubbleHeight,
+		});
+		if (
+			generation !== tooltipGeneration ||
+			token !== lifecycle ||
+			!started ||
+			latencyViews.get(state.cellKey) !== state
+		)
+			return;
+		activeTooltip = host;
 		activeTooltipSurface = surface;
 		activeTooltipOwnerKey = state.cellKey;
-		const generation = tooltipGeneration;
+		host = null;
+		surface = null;
 		setTimeout(() => installTooltipDismissHook(generation), 0);
 		tooltipTimer = setTimeout(() => {
 			if (generation !== tooltipGeneration) return;
-			dismissLatencyTooltip();
+			trackTooltipTask(dismissLatencyTooltip());
 		}, 3000);
 	} catch {
-		dismissLatencyTooltip();
+		if (generation === tooltipGeneration) await dismissLatencyTooltip();
+	} finally {
+		if (surface && fabric) await fabric.unmountAsync(surface).catch(() => undefined);
+		if (host) await nativeCallAsync(host, 'removeFromSuperview');
 	}
 }
 
@@ -1005,7 +1083,7 @@ function installNativeHooks(): void {
 					if (!key) return;
 					for (const state of latencyViews.values()) {
 						if (nativeKey(state.icon) !== key) continue;
-						showLatencyTooltip(state);
+						trackTooltipTask(showLatencyTooltip(state));
 						return;
 					}
 				},
@@ -1167,18 +1245,9 @@ function MessageLatencySettings() {
 	);
 }
 
-function cleanup(): void {
-	dismissLatencyTooltip();
-	for (const state of [...latencyViews.values()]) restoreLatencyView(state);
+async function cleanup(): Promise<void> {
 	for (const hook of cellHooks) hook.remove();
 	cellHooks = [];
-	for (const cell of activeCells.values()) pendingCells.delete(nativeKey(cell) ?? '');
-	activeCells.clear();
-	activeCellMessageIds.clear();
-	cellsByMessageId.clear();
-	pendingCells.clear();
-	cellRevisions.clear();
-	latencyRecords.clear();
 	rowUnpatch?.();
 	rowUnpatch = null;
 	removeModuleListener?.();
@@ -1187,6 +1256,16 @@ function cleanup(): void {
 	removeMessageCreateListener = null;
 	removeThemeListener?.();
 	removeThemeListener = null;
+	await dismissLatencyTooltip();
+	await Promise.all([...tooltipTasks]);
+	for (const state of [...latencyViews.values()]) restoreLatencyView(state);
+	for (const cell of activeCells.values()) pendingCells.delete(nativeKey(cell) ?? '');
+	activeCells.clear();
+	activeCellMessageIds.clear();
+	cellsByMessageId.clear();
+	pendingCells.clear();
+	cellRevisions.clear();
+	latencyRecords.clear();
 	users = null;
 	themeStore = null;
 	started = false;
@@ -1203,10 +1282,14 @@ export default {
 		fabric = context?.native.fabric ?? null;
 		waitForMessageRows();
 	},
-	stop() {
+	stop(): Promise<void> {
+		if (!started) return cleanupTask ?? Promise.resolve();
 		started = false;
 		lifecycle++;
-		cleanup();
+		cleanupTask = cleanup().finally(() => {
+			cleanupTask = null;
+		});
+		return cleanupTask;
 	},
 	getSettingsPanel: () => <MessageLatencySettings />,
 };

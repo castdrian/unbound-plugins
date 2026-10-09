@@ -17,11 +17,13 @@
 	"capabilities": [
 		"native.objc.classes",
 		"native.objc.invoke",
+		"native.objc.invokeAsync",
 		"native.objc.batch",
 		"native.objc.snapshot",
 		"native.objc.ivars",
 		"native.objc.hooks",
-		"native.fabric.mount"
+		"native.fabric.mount",
+		"native.fabric.async"
 	],
 	"minNativePluginApi": "1.0.0",
 	"main": "index.tsx"
