@@ -628,6 +628,8 @@ describe('message row and native lifecycle', () => {
 		handlers.get('didMoveToWindow')?.after?.({ self: cell });
 		await Bun.sleep(10);
 		expect(icon).not.toBeNull();
+		expect(asyncSelectors).toContain('frame');
+		expect(synchronousSelectors).not.toContain('frame');
 		if (!icon) throw new Error('Expected a latency icon');
 		handlers.get('endTrackingWithTouch:withEvent:')?.after?.({ self: icon });
 		await Bun.sleep(10);

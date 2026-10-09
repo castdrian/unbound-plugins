@@ -185,6 +185,8 @@ const activeCellMessageIds = new Map<string, string>();
 const cellsByMessageId = new Map<string, NativeObjectHandle>();
 const pendingCells = new Set<string>();
 const cellRevisions = new Map<string, number>();
+const cellQueues = new Map<string, Promise<void>>();
+const cellTasks = new Set<Promise<void>>();
 let nextCellRevision = 0;
 const latencyViews = new Map<string, LatencyViewState>();
 
@@ -294,15 +296,6 @@ function currentOptions(): LatencyOptions {
 	};
 }
 
-function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
-	if (!objc) return null;
-	try {
-		return objc.invoke(handle, selector, args, { thread: 'main' });
-	} catch {
-		return null;
-	}
-}
-
 async function nativeCallAsync(
 	handle: NativeObjectHandle,
 	selector: string,
@@ -355,24 +348,8 @@ function frameFromRect(value: unknown): NativeFrame | null {
 	return { height, width, x, y };
 }
 
-function nativeFrame(view: NativeObjectHandle): NativeFrame | null {
-	return frameFromRect(nativeCall(view, 'frame'));
-}
-
-function setNativeFrame(view: NativeObjectHandle, frame: NativeFrame): void {
-	if (!objc) return;
-	try {
-		nativeCall(
-			view,
-			'setFrame:',
-			objc.struct('CGRect', {
-				origin: { x: frame.x, y: frame.y },
-				size: { width: frame.width, height: frame.height },
-			}),
-		);
-	} catch {
-		return;
-	}
+async function nativeFrame(view: NativeObjectHandle): Promise<NativeFrame | null> {
+	return frameFromRect(await nativeCallAsync(view, 'frame'));
 }
 
 async function setNativeFrameAsync(view: NativeObjectHandle, frame: NativeFrame): Promise<void> {
@@ -436,7 +413,7 @@ function headerForUsername(
 	return null;
 }
 
-function iconColors(fill: LatencyFill): Array<NativeObjectHandle | null> {
+async function iconColors(fill: LatencyFill): Promise<Array<NativeObjectHandle | null>> {
 	if (!objc) return [];
 	const theme = metro.common.Theme as ThemeModule;
 	const appearance = themeStore?.theme ?? theme.themes.DARK;
@@ -448,40 +425,42 @@ function iconColors(fill: LatencyFill): Array<NativeObjectHandle | null> {
 	};
 	const uiColor = objc.getClass('UIColor');
 	if (!uiColor) return [];
-	return fill.map((color) => {
-		try {
-			const hex = theme.internal.resolveSemanticColor(appearance, theme.colors[tokens[color]]);
-			const match = /^#([0-9a-f]{6})$/i.exec(hex);
-			if (!match?.[1]) return null;
-			const value = Number.parseInt(match[1], 16);
-			return nativeCall(
-				uiColor,
-				'colorWithRed:green:blue:alpha:',
-				((value >> 16) & 255) / 255,
-				((value >> 8) & 255) / 255,
-				(value & 255) / 255,
-				1,
-			) as NativeObjectHandle;
-		} catch {
-			return null;
-		}
-	});
+	return Promise.all(
+		fill.map(async (color) => {
+			try {
+				const hex = theme.internal.resolveSemanticColor(appearance, theme.colors[tokens[color]]);
+				const match = /^#([0-9a-f]{6})$/i.exec(hex);
+				if (!match?.[1]) return null;
+				const value = Number.parseInt(match[1], 16);
+				return (await nativeCallAsync(
+					uiColor,
+					'colorWithRed:green:blue:alpha:',
+					((value >> 16) & 255) / 255,
+					((value >> 8) & 255) / 255,
+					(value & 255) / 255,
+					1,
+				)) as NativeObjectHandle;
+			} catch {
+				return null;
+			}
+		}),
+	);
 }
 
-function createLatencyIcon(record: LatencyRecord): NativeObjectHandle | null {
+async function createLatencyIcon(record: LatencyRecord): Promise<NativeObjectHandle | null> {
 	if (!objc) return null;
 	const view = objc.alloc('UIButton');
-	nativeCall(view, 'setUserInteractionEnabled:', true);
-	nativeCall(view, 'setExclusiveTouch:', true);
-	nativeCall(view, 'setIsAccessibilityElement:', true);
-	nativeCall(view, 'setAccessibilityIdentifier:', 'message-latency');
-	nativeCall(
+	await nativeCallAsync(view, 'setUserInteractionEnabled:', true);
+	await nativeCallAsync(view, 'setExclusiveTouch:', true);
+	await nativeCallAsync(view, 'setIsAccessibilityElement:', true);
+	await nativeCallAsync(view, 'setAccessibilityIdentifier:', 'message-latency');
+	await nativeCallAsync(
 		view,
 		'setAccessibilityLabel:',
 		record.details.displayDelta ?? 'Old Discord Android client',
 	);
-	nativeCall(view, 'setAccessibilityHint:', record.tooltip);
-	const colors = iconColors(record.details.fill);
+	await nativeCallAsync(view, 'setAccessibilityHint:', record.tooltip);
+	const colors = await iconColors(record.details.fill);
 	if (colors.length !== 3 || colors.some((color) => !color)) return null;
 	const bars = [
 		{ height: 2.4, width: 2.4, x: 1.2, y: 12.4 },
@@ -493,85 +472,99 @@ function createLatencyIcon(record: LatencyRecord): NativeObjectHandle | null {
 		const frame = bars[index];
 		const color = colors[index];
 		if (!frame || !color) continue;
-		setNativeFrame(bar, { ...frame, width: frame.width, height: frame.height });
-		nativeCall(bar, 'setUserInteractionEnabled:', false);
-		nativeCall(bar, 'setBackgroundColor:', color);
-		const layer = nativeCall(bar, 'layer') as NativeObjectHandle | null;
-		if (layer) nativeCall(layer, 'setCornerRadius:', 0.5);
-		nativeCall(view, 'addSubview:', bar);
+		await setNativeFrameAsync(bar, frame);
+		await nativeCallAsync(bar, 'setUserInteractionEnabled:', false);
+		await nativeCallAsync(bar, 'setBackgroundColor:', color);
+		const layer = (await nativeCallAsync(bar, 'layer')) as NativeObjectHandle | null;
+		if (layer) await nativeCallAsync(layer, 'setCornerRadius:', 0.5);
+		await nativeCallAsync(view, 'addSubview:', bar);
 	}
 	return view;
 }
 
-function captureLatencyFrame(view: NativeObjectHandle): LatencyFrameState {
-	const frame = nativeFrame(view);
+async function captureLatencyFrame(view: NativeObjectHandle): Promise<LatencyFrameState> {
+	const frame = await nativeFrame(view);
 	if (!frame) throw new Error('Failed to read message latency layout frame');
 	return {
 		frame,
-		translates: Boolean(nativeCall(view, 'translatesAutoresizingMaskIntoConstraints')),
+		translates: Boolean(await nativeCallAsync(view, 'translatesAutoresizingMaskIntoConstraints')),
 		view,
 	};
 }
 
-function removeLatencyConstraints(constraints: LatencyConstraintState[]): void {
+async function removeLatencyConstraints(constraints: LatencyConstraintState[]): Promise<void> {
 	if (!objc) return;
 	for (const { constraint, container } of constraints) {
-		nativeCall(container, 'removeConstraint:', constraint);
+		await nativeCallAsync(container, 'removeConstraint:', constraint);
 	}
 }
 
-function restoreLatencyLayout(layout: LatencyLayoutState): void {
-	removeLatencyConstraints(layout.constraints);
+async function restoreLatencyLayout(layout: LatencyLayoutState): Promise<void> {
+	await removeLatencyConstraints(layout.constraints);
 	for (const { frame, translates, view } of layout.views) {
-		setNativeFrame(view, frame);
-		nativeCall(view, 'setTranslatesAutoresizingMaskIntoConstraints:', translates);
+		await setNativeFrameAsync(view, frame);
+		await nativeCallAsync(view, 'setTranslatesAutoresizingMaskIntoConstraints:', translates);
 	}
 }
 
-function addLatencyConstraints(
+async function addLatencyConstraints(
 	container: NativeObjectHandle,
 	specs: LatencyConstraintSpec[],
 	state: LatencyLayoutState,
-): void {
+): Promise<void> {
 	if (!objc) throw new Error('Native Objective-C bridge is unavailable');
 	const constraintClass = objc.getClass('NSLayoutConstraint');
 	if (!constraintClass) throw new Error('NSLayoutConstraint is unavailable');
 	for (const [firstItem, firstAttribute, secondItem, secondAttribute, constant] of specs) {
-		const constraint = objc.invoke(
+		const constraint = (await objc.invokeAsync(
 			constraintClass,
 			'constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:',
 			[firstItem, firstAttribute, LAYOUT_RELATION_EQUAL, secondItem, secondAttribute, 1, constant],
-			{ thread: 'main' },
-		) as NativeObjectHandle | null;
+		)) as NativeObjectHandle | null;
 		if (!constraint) throw new Error('Failed to create message latency layout constraint');
-		objc.invoke(container, 'addConstraint:', [constraint], { thread: 'main' });
+		await objc.invokeAsync(container, 'addConstraint:', [constraint]);
 		state.constraints.push({ constraint, container });
 	}
 }
 
-function installLatencyLayout(
+async function installLatencyLayout(
 	icon: NativeObjectHandle,
 	username: NativeObjectHandle,
 	row: NativeObjectHandle,
-): LatencyLayoutState {
+): Promise<LatencyLayoutState> {
 	if (!objc) throw new Error('Native Objective-C bridge is unavailable');
-	const usernameWrapper = nativeCall(username, 'superview') as NativeObjectHandle | null;
+	const usernameWrapper = (await nativeCallAsync(
+		username,
+		'superview',
+	)) as NativeObjectHandle | null;
 	const group = usernameWrapper
-		? (nativeCall(usernameWrapper, 'superview') as NativeObjectHandle | null)
+		? ((await nativeCallAsync(usernameWrapper, 'superview')) as NativeObjectHandle | null)
 		: null;
-	const groupRow = group ? (nativeCall(group, 'superview') as NativeObjectHandle | null) : null;
+	const groupRow = group
+		? ((await nativeCallAsync(group, 'superview')) as NativeObjectHandle | null)
+		: null;
 	if (!usernameWrapper || !group || !groupRow || nativeKey(groupRow) !== nativeKey(row)) {
 		throw new Error('Message latency username row has an unsupported native layout');
 	}
-	const groupFrame = nativeFrame(group);
-	const rowFrame = nativeFrame(row);
-	const usernameFrame = nativeFrame(usernameWrapper);
+	const [groupFrame, rowFrame, usernameFrame] = await Promise.all([
+		nativeFrame(group),
+		nativeFrame(row),
+		nativeFrame(usernameWrapper),
+	]);
 	if (!groupFrame || !rowFrame || !usernameFrame) {
 		throw new Error('Message latency username row has an unsupported native frame');
 	}
-	const trailingViews = nativeArray(nativeCall(group, 'subviews'))
-		.filter((view) => nativeKey(view) !== nativeKey(usernameWrapper))
-		.map((view) => ({ frame: nativeFrame(view), view }))
+	const groupChildren = nativeArray(await nativeCallAsync(group, 'subviews')).filter(
+		(view) => nativeKey(view) !== nativeKey(usernameWrapper),
+	);
+	const trailingViews = (
+		await Promise.all(
+			groupChildren.map(async (view) => ({
+				frame: await nativeFrame(view),
+				view,
+			})),
+		)
+	)
 		.filter((entry): entry is LatencyViewFrame =>
 			Boolean(
 				entry.frame &&
@@ -580,32 +573,40 @@ function installLatencyLayout(
 			),
 		)
 		.sort((left, right) => left.frame.x - right.frame.x);
-	const timestamp = nativeArray(nativeCall(row, 'subviews')).find((view) => {
-		const frame = nativeFrame(view);
-		return (
+	const rowChildren = nativeArray(await nativeCallAsync(row, 'subviews'));
+	const rowFrames = await Promise.all(
+		rowChildren.map(async (view) => ({
+			frame: await nativeFrame(view),
+			view,
+		})),
+	);
+	const timestampEntry = rowFrames.find(
+		({ frame, view }) =>
 			objc?.className(view) === 'DCDLabel' &&
 			frame != null &&
 			frame.width > 0 &&
-			frame.x >= groupFrame.x + groupFrame.width - 0.5
-		);
-	});
-	const timestampFrame = timestamp ? nativeFrame(timestamp) : null;
+			frame.x >= groupFrame.x + groupFrame.width - 0.5,
+	);
+	const timestamp = timestampEntry?.view;
+	const timestampFrame = timestampEntry?.frame;
 	if (!timestamp || !timestampFrame) {
 		throw new Error('Message latency timestamp row is unavailable');
 	}
 	const layout: LatencyLayoutState = {
 		constraints: [],
-		views: [group, usernameWrapper, ...trailingViews.map(({ view }) => view), timestamp].map(
-			captureLatencyFrame,
+		views: await Promise.all(
+			[group, usernameWrapper, ...trailingViews.map(({ view }) => view), timestamp].map(
+				captureLatencyFrame,
+			),
 		),
 	};
 	try {
 		for (const { view } of layout.views) {
-			nativeCall(view, 'setTranslatesAutoresizingMaskIntoConstraints:', false);
+			await nativeCallAsync(view, 'setTranslatesAutoresizingMaskIntoConstraints:', false);
 		}
-		nativeCall(icon, 'setTranslatesAutoresizingMaskIntoConstraints:', false);
-		nativeCall(group, 'addSubview:', icon);
-		addLatencyConstraints(
+		await nativeCallAsync(icon, 'setTranslatesAutoresizingMaskIntoConstraints:', false);
+		await nativeCallAsync(group, 'addSubview:', icon);
+		await addLatencyConstraints(
 			row,
 			[
 				[group, LAYOUT_ATTRIBUTE_LEADING, row, LAYOUT_ATTRIBUTE_LEADING, groupFrame.x],
@@ -656,7 +657,7 @@ function installLatencyLayout(
 			layout,
 		);
 		const groupCenterOffset = usernameFrame.y + usernameFrame.height / 2 - groupFrame.height / 2;
-		addLatencyConstraints(
+		await addLatencyConstraints(
 			group,
 			[
 				[icon, LAYOUT_ATTRIBUTE_LEADING, group, LAYOUT_ATTRIBUTE_LEADING, usernameFrame.x],
@@ -704,7 +705,7 @@ function installLatencyLayout(
 		let previousFrame = usernameFrame;
 		for (const { frame, view } of trailingViews) {
 			const spacing = frame.x - previousFrame.x - previousFrame.width;
-			addLatencyConstraints(
+			await addLatencyConstraints(
 				group,
 				[
 					[view, LAYOUT_ATTRIBUTE_LEADING, previousView, LAYOUT_ATTRIBUTE_TRAILING, spacing],
@@ -724,8 +725,8 @@ function installLatencyLayout(
 			previousFrame = frame;
 		}
 	} catch (error) {
-		restoreLatencyLayout(layout);
-		nativeCall(icon, 'removeFromSuperview');
+		await restoreLatencyLayout(layout);
+		await nativeCallAsync(icon, 'removeFromSuperview');
 		throw error;
 	}
 	return layout;
@@ -735,27 +736,31 @@ function fillKey(fill: LatencyFill): string {
 	return `${themeStore?.theme ?? 'darker'}:${fill.join(':')}`;
 }
 
-function restoreLatencyView(state: LatencyViewState): void {
+async function restoreLatencyView(state: LatencyViewState): Promise<void> {
 	if (activeTooltipOwnerKey === state.cellKey) trackTooltipTask(dismissLatencyTooltip());
-	restoreLatencyLayout(state.layout);
-	if (objc) {
-		nativeCall(state.icon, 'removeFromSuperview');
-	}
 	latencyViews.delete(state.cellKey);
+	await restoreLatencyLayout(state.layout);
+	await nativeCallAsync(state.icon, 'removeFromSuperview');
 }
 
-function createLatencyView(
+async function createLatencyView(
 	cellKey: string,
 	messageId: string,
 	record: LatencyRecord,
 	username: NativeObjectHandle,
 	header: NativeObjectHandle,
-): LatencyViewState | null {
-	if (!objc) return null;
-	const icon = createLatencyIcon(record);
+	isCurrent: () => boolean,
+): Promise<LatencyViewState | null> {
+	if (!objc || !isCurrent()) return null;
+	const icon = await createLatencyIcon(record);
 	const iconKey = icon ? nativeKey(icon) : null;
-	if (!icon || !iconKey) return null;
-	const layout = installLatencyLayout(icon, username, header);
+	if (!icon || !iconKey || !isCurrent()) return null;
+	const layout = await installLatencyLayout(icon, username, header);
+	if (!isCurrent()) {
+		await restoreLatencyLayout(layout);
+		await nativeCallAsync(icon, 'removeFromSuperview');
+		return null;
+	}
 	const state: LatencyViewState = {
 		cellKey,
 		fillKey: fillKey(record.details.fill),
@@ -766,30 +771,31 @@ function createLatencyView(
 		username: record.username,
 	};
 	latencyViews.set(cellKey, state);
-	nativeCall(header, 'setNeedsLayout');
-	nativeCall(header, 'layoutIfNeeded');
+	await nativeCallAsync(header, 'setNeedsLayout');
+	await nativeCallAsync(header, 'layoutIfNeeded');
 	return state;
 }
 
-function updateLatencyView(state: LatencyViewState, record: LatencyRecord): void {
+async function updateLatencyView(state: LatencyViewState, record: LatencyRecord): Promise<void> {
 	if (!objc) return;
 	if (state.fillKey !== fillKey(record.details.fill)) {
-		const colors = iconColors(record.details.fill);
-		const bars = nativeArray(nativeCall(state.icon, 'subviews'));
+		const colors = await iconColors(record.details.fill);
+		if (latencyViews.get(state.cellKey) !== state) return;
+		const bars = nativeArray(await nativeCallAsync(state.icon, 'subviews'));
 		for (let index = 0; index < bars.length && index < colors.length; index++) {
 			const bar = bars[index];
 			const color = colors[index];
-			if (bar && color) nativeCall(bar, 'setBackgroundColor:', color);
+			if (bar && color) await nativeCallAsync(bar, 'setBackgroundColor:', color);
 		}
 		state.fillKey = fillKey(record.details.fill);
 	}
 	if (state.tooltip !== record.tooltip) {
-		nativeCall(
+		await nativeCallAsync(
 			state.icon,
 			'setAccessibilityLabel:',
 			record.details.displayDelta ?? 'Old Discord Android client',
 		);
-		nativeCall(state.icon, 'setAccessibilityHint:', record.tooltip);
+		await nativeCallAsync(state.icon, 'setAccessibilityHint:', record.tooltip);
 		state.tooltip = record.tooltip;
 	}
 }
@@ -1006,37 +1012,59 @@ async function renderCell(
 	activeCells.set(key, cell);
 	const messageId = await cellMessageId(cell);
 	if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
-	const previousMessageId = activeCellMessageIds.get(key);
-	if (previousMessageId && previousMessageId !== messageId) {
-		cellsByMessageId.delete(previousMessageId);
-		activeCellMessageIds.delete(key);
-	}
-	if (!messageId) return;
-	activeCellMessageIds.set(key, messageId);
-	cellsByMessageId.set(messageId, cell);
-	const existing = latencyViews.get(key);
-	if (existing && existing.messageId !== messageId) restoreLatencyView(existing);
-	const record = latencyRecords.get(messageId);
-	if (!record) {
+	await queueCellMutation(key, async () => {
+		if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+		const previousMessageId = activeCellMessageIds.get(key);
+		if (previousMessageId && previousMessageId !== messageId) {
+			cellsByMessageId.delete(previousMessageId);
+			activeCellMessageIds.delete(key);
+		}
+		if (!messageId) return;
+		activeCellMessageIds.set(key, messageId);
+		cellsByMessageId.set(messageId, cell);
+		const existing = latencyViews.get(key);
+		if (existing && existing.messageId !== messageId) await restoreLatencyView(existing);
+		if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+		const record = latencyRecords.get(messageId);
+		if (!record) {
+			const current = latencyViews.get(key);
+			if (current) await restoreLatencyView(current);
+			return;
+		}
 		const current = latencyViews.get(key);
-		if (current) restoreLatencyView(current);
-		return;
-	}
-	const current = latencyViews.get(key);
-	if (current) {
-		updateLatencyView(current, record);
-		return;
-	}
-	try {
+		if (current) {
+			await updateLatencyView(current, record);
+			return;
+		}
 		const labelIndex = labelForUsername(nodes, record.username);
 		const label = nodes[labelIndex]?.view;
 		if (!label) return;
 		const header = headerForUsername(nodes, labelIndex);
 		if (!header) return;
-		createLatencyView(key, messageId, record, label, header);
-	} catch {
-		return;
-	}
+		await createLatencyView(
+			key,
+			messageId,
+			record,
+			label,
+			header,
+			() => token === lifecycle && cellRevisions.get(key) === revision && Boolean(objc),
+		);
+	});
+}
+
+function queueCellMutation(key: string, work: () => Promise<void>): Promise<void> {
+	const previous = cellQueues.get(key) ?? Promise.resolve();
+	const task = previous
+		.catch(() => undefined)
+		.then(work)
+		.catch(() => undefined)
+		.finally(() => {
+			cellTasks.delete(task);
+			if (cellQueues.get(key) === task) cellQueues.delete(key);
+		});
+	cellQueues.set(key, task);
+	cellTasks.add(task);
+	return task;
 }
 
 function scheduleCell(cell: NativeObjectHandle): void {
@@ -1048,7 +1076,10 @@ function scheduleCell(cell: NativeObjectHandle): void {
 	const revision = ++nextCellRevision;
 	cellRevisions.set(key, revision);
 	setTimeout(() => {
-		if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) return;
+		if (token !== lifecycle || cellRevisions.get(key) !== revision || !objc) {
+			pendingCells.delete(key);
+			return;
+		}
 		void renderCell(cell, key, token, revision)
 			.catch(() => {
 				if (token === lifecycle && cellRevisions.get(key) === revision) disposeCell(cell);
@@ -1063,7 +1094,10 @@ function disposeCell(cell: NativeObjectHandle): void {
 	const key = nativeKey(cell);
 	if (!key) return;
 	const state = latencyViews.get(key);
-	if (state) restoreLatencyView(state);
+	if (state) {
+		latencyViews.delete(key);
+		void queueCellMutation(key, () => restoreLatencyView(state));
+	}
 	activeCells.delete(key);
 	const messageId = activeCellMessageIds.get(key);
 	if (messageId && cellsByMessageId.get(messageId) === cell) cellsByMessageId.delete(messageId);
@@ -1182,7 +1216,7 @@ function initialize(): boolean {
 		const onThemeChange = () => {
 			for (const state of latencyViews.values()) {
 				const record = latencyRecords.get(state.messageId);
-				if (record) updateLatencyView(state, record);
+				if (record) void queueCellMutation(state.cellKey, () => updateLatencyView(state, record));
 			}
 		};
 		themeStore.addChangeListener(onThemeChange);
@@ -1258,13 +1292,16 @@ async function cleanup(): Promise<void> {
 	removeThemeListener = null;
 	await dismissLatencyTooltip();
 	await Promise.all([...tooltipTasks]);
-	for (const state of [...latencyViews.values()]) restoreLatencyView(state);
+	await Promise.all([...cellTasks]);
+	await Promise.all([...latencyViews.values()].map(restoreLatencyView));
 	for (const cell of activeCells.values()) pendingCells.delete(nativeKey(cell) ?? '');
 	activeCells.clear();
 	activeCellMessageIds.clear();
 	cellsByMessageId.clear();
 	pendingCells.clear();
 	cellRevisions.clear();
+	cellQueues.clear();
+	cellTasks.clear();
 	latencyRecords.clear();
 	users = null;
 	themeStore = null;
