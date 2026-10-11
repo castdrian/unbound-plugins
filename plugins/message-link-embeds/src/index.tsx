@@ -275,18 +275,6 @@ function nativeRange(location: number, length: number): unknown {
 	return objc?.struct('NSRange', { location, length }) ?? null;
 }
 
-function nativeChildren(handle: NativeObjectHandle): NativeObjectHandle[] {
-	if (!objc) return [];
-	const subviews = nativeCall(handle, 'subviews');
-	if (Array.isArray(subviews)) return subviews as NativeObjectHandle[];
-	if (!subviews || typeof subviews !== 'object') return [];
-	try {
-		return objc.array(subviews as NativeObjectHandle);
-	} catch {
-		return [];
-	}
-}
-
 function messageKey(channelId: string, messageId: string): string {
 	return `${channelId}:${messageId}`;
 }
@@ -314,19 +302,6 @@ function cellKey(cell: NativeObjectHandle): string | undefined {
 	if (hash !== null && hash !== undefined) return String(hash);
 	const description = nativeCall(cell, 'description');
 	return typeof description === 'string' ? description : undefined;
-}
-
-function textViewsInView(
-	view: NativeObjectHandle,
-	depth: number = 0,
-	result: NativeObjectHandle[] = [],
-): NativeObjectHandle[] {
-	if (!objc || depth > MAX_NATIVE_VIEW_DEPTH || result.length >= 32) return result;
-	if (objc.respondsTo(view, 'attributedText') && objc.respondsTo(view, 'setAttributedText:')) {
-		result.push(view);
-	}
-	for (const child of nativeChildren(view)) textViewsInView(child, depth + 1, result);
-	return result;
 }
 
 async function scanVisibleMessageCells(): Promise<void> {
@@ -1162,6 +1137,7 @@ function updateExistingSurface(
 function updateCell(
 	cell: NativeObjectHandle,
 	info: NativeMessageInfo | undefined,
+	labels: NativeObjectHandle[],
 ): CellUpdateStatus {
 	if (!objc || !fabric) return 'done';
 	const key = cellKey(cell);
@@ -1200,9 +1176,7 @@ function updateCell(
 		return 'done';
 	}
 	if (existing) teardownSurface(key, false);
-	const content = nativeCall(cell, 'contentView') as NativeObjectHandle | null;
-	if (!content) return 'retry';
-	for (const label of textViewsInView(content)) {
+	for (const label of labels) {
 		const attributedText = currentAttributedText(label);
 		const text = attributedText ? textForView(label) : undefined;
 		if (!attributedText || text === undefined) continue;
@@ -1246,40 +1220,50 @@ function scheduleCell(cell: NativeObjectHandle): void {
 	setTimeout(() => {
 		const bridge = objc;
 		if (token !== lifecycle || !bridge || cellLookupVersions.get(key) !== lookupVersion) return;
-		void readNativeMessageInfo(cell, bridge)
-			.then((info) => {
-				if (token !== lifecycle || objc !== bridge || cellLookupVersions.get(key) !== lookupVersion)
-					return;
-				pendingCells.delete(key);
-				try {
-					const status = updateCell(cell, info);
-					if (status === 'done') {
-						completedCells.add(key);
-						retryCounts.delete(key);
-						return;
-					}
-					if (status === 'waiting') return;
-					observeCellLabels(cell);
-					const attempts = (retryCounts.get(key) ?? 0) + 1;
-					retryCounts.set(key, attempts);
-					if (attempts > 8) {
-						completedCells.add(key);
-						return;
-					}
-					const timer = setTimeout(() => {
-						retryTimers.delete(key);
-						if (token === lifecycle) scheduleCell(cell);
-					}, 120);
-					retryTimers.set(key, timer);
-				} catch {
+		void (async () => {
+			const info = await readNativeMessageInfo(cell, bridge);
+			const channelId = info?.channelId ?? currentChannelId();
+			const source = info && channelId ? messages?.getMessage?.(channelId, info.messageId) : null;
+			const labels =
+				source && linkedTargets(source).length > 0
+					? await bridge.findViews(cell, 'DCDReusableYYLabel', {
+							maxDepth: MAX_NATIVE_VIEW_DEPTH,
+							maxVisited: 100,
+							maxResults: 32,
+							stopAtMatch: false,
+						})
+					: [];
+			if (token !== lifecycle || objc !== bridge || cellLookupVersions.get(key) !== lookupVersion)
+				return;
+			pendingCells.delete(key);
+			try {
+				const status = updateCell(cell, info, labels);
+				if (status === 'done') {
 					completedCells.add(key);
+					retryCounts.delete(key);
+					return;
 				}
-			})
-			.catch(() => {
-				if (token !== lifecycle || cellLookupVersions.get(key) !== lookupVersion) return;
-				pendingCells.delete(key);
+				if (status === 'waiting') return;
+				observeCellLabels(cell, labels);
+				const attempts = (retryCounts.get(key) ?? 0) + 1;
+				retryCounts.set(key, attempts);
+				if (attempts > 8) {
+					completedCells.add(key);
+					return;
+				}
+				const timer = setTimeout(() => {
+					retryTimers.delete(key);
+					if (token === lifecycle) scheduleCell(cell);
+				}, 120);
+				retryTimers.set(key, timer);
+			} catch {
 				completedCells.add(key);
-			});
+			}
+		})().catch(() => {
+			if (token !== lifecycle || cellLookupVersions.get(key) !== lookupVersion) return;
+			pendingCells.delete(key);
+			completedCells.add(key);
+		});
 	}, 0);
 }
 
@@ -1312,14 +1296,12 @@ function refreshCell(cell: NativeObjectHandle): void {
 	scheduleCell(cell);
 }
 
-function observeCellLabels(cell: NativeObjectHandle): void {
+function observeCellLabels(cell: NativeObjectHandle, labels: NativeObjectHandle[]): void {
 	if (!objc) return;
 	const key = cellKey(cell);
 	if (!key || cellLabelHooks.has(key)) return;
-	const content = nativeCall(cell, 'contentView') as NativeObjectHandle | null;
-	if (!content) return;
 	const tokens: NativeHookToken[] = [];
-	for (const label of textViewsInView(content)) {
+	for (const label of labels) {
 		if (!(objc.className(label) ?? '').includes('DCDReusableYYLabel')) continue;
 		try {
 			tokens.push(
