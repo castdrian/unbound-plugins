@@ -488,6 +488,38 @@ describe('native syntax rendering', () => {
 });
 
 describe('plugin lifecycle', () => {
+	test('identifies a recycled cell without waiting for the main thread', () => {
+		let reused: ((context: { self: object }) => void) | undefined;
+		const currentThreadCalls: string[] = [];
+		const mainThreadCalls: string[] = [];
+		const native = {
+			objc: {
+				hook(
+					_className: string,
+					selector: string,
+					handlers: { after?: (context: { self: object }) => void },
+				) {
+					if (selector === 'prepareForReuse') reused = handlers.after;
+					return { active: true, remove: () => undefined };
+				},
+				call(_handle: object, selector: string) {
+					currentThreadCalls.push(selector);
+					return 123;
+				},
+				invoke(_handle: object, selector: string) {
+					mainThreadCalls.push(selector);
+					return 123;
+				},
+			},
+		};
+
+		plugin.start({ native } as never);
+		reused?.({ self: {} });
+
+		expect(currentThreadCalls).toEqual(['hash']);
+		expect(mainThreadCalls).toEqual([]);
+	});
+
 	test('declares the capabilities used by its asynchronous scan', () => {
 		expect(manifest.capabilities).toContain('native.objc.batch');
 		expect(manifest.capabilities).toContain('native.objc.snapshot');

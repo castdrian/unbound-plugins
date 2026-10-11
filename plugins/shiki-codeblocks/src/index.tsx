@@ -409,7 +409,12 @@ function nativeString(value: unknown): string | undefined {
 }
 
 function nativeLabelKey(label: NativeObjectHandle): string {
-	const hash = nativeCall(label, 'hash');
+	let hash: unknown;
+	try {
+		hash = objc?.call(label, 'hash');
+	} catch {
+		hash = null;
+	}
 	if (hash !== null && hash !== undefined) return String(hash);
 	return nativeString(nativeCall(label, 'description')) ?? 'unknown';
 }
