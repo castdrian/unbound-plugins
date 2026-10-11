@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
 	BottomAnchorTracker,
+	availableMessageWidthFromNative,
 	bottomOffsetCorrection,
 	layoutMetricsFromNative,
 	readBottomAnchor,
@@ -11,6 +12,21 @@ import {
 	shouldRefreshSurfaceRow,
 	surfaceHeightCacheKey,
 } from '@message-link-embeds/surface-layout';
+
+describe('embedded message width', () => {
+	test('uses the label position relative to the message cell', () => {
+		const label = { value: { origin: { x: 68, y: 37.5 }, size: { width: 291, height: 104 } } };
+		const cell = { value: { origin: { x: 0, y: 0 }, size: { width: 375, height: 143.5 } } };
+
+		expect(availableMessageWidthFromNative(label, cell)).toBe(295);
+	});
+
+	test('keeps the label width when cell geometry is unusable', () => {
+		const label = { value: { origin: { x: 68, y: 0 }, size: { width: 291, height: 50 } } };
+
+		expect(availableMessageWidthFromNative(label, null)).toBe(291);
+	});
+});
 
 function metrics(overrides: Partial<SurfaceLayoutMetrics> = {}): SurfaceLayoutMetrics {
 	return {

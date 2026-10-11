@@ -28,6 +28,22 @@ function nativeStructFields(raw: unknown): Record<string, unknown> {
 		: value;
 }
 
+export function availableMessageWidthFromNative(labelInCell: unknown, cellBounds: unknown): number {
+	const label = nativeStructFields(labelInCell);
+	const labelSize = nativeStructFields(label.size);
+	const labelOrigin = nativeStructFields(label.origin);
+	const cell = nativeStructFields(cellBounds);
+	const cellSize = nativeStructFields(cell.size);
+	const labelWidth = Number(labelSize.width);
+	const cellWidth = Number(cellSize.width);
+	const left = Number(labelOrigin.x);
+	if (!Number.isFinite(labelWidth)) return 0;
+	if (!Number.isFinite(cellWidth) || !Number.isFinite(left)) return labelWidth;
+	const availableWidth = cellWidth - left - 12;
+	if (!Number.isFinite(availableWidth) || availableWidth < 80) return labelWidth;
+	return Math.max(labelWidth, Math.min(cellWidth, availableWidth));
+}
+
 export function layoutMetricsFromNative(values: readonly unknown[]): SurfaceLayoutMetrics {
 	const contentSize = nativeStructFields(values[0]);
 	const contentOffset = nativeStructFields(values[1]);

@@ -14,6 +14,7 @@ import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import { readNativeMessageInfo, type NativeMessageInfo } from '@shared/native-message-info';
 import {
 	BottomAnchorTracker,
+	availableMessageWidthFromNative,
 	layoutMetricsFromNative,
 	readSurfaceAnchor,
 	SurfaceHeightCache,
@@ -560,33 +561,31 @@ function nativeFrame(width: number, height: number): unknown {
 	return objc?.struct('CGRect', { origin: { x: 0, y: 0 }, size: { width, height } }) ?? null;
 }
 
-function availableMessageWidth(cell: NativeObjectHandle, label: NativeObjectHandle): number {
-	if (!fabric) return 0;
-	const labelWidth = fabric.measure(label).width;
-	const cellWidth = fabric.measure(cell).width;
-	if (!Number.isFinite(labelWidth) || !Number.isFinite(cellWidth)) return labelWidth;
-	const targetKey = cellKey(cell);
-	let view = label;
-	let left = 0;
-	for (let depth = 0; depth < MAX_NATIVE_VIEW_DEPTH; depth++) {
-		const frame = fabric.measure(view);
-		left += frame.x;
-		const parent = nativeCall(view, 'superview') as NativeObjectHandle | null;
-		if (!parent || cellKey(parent) === targetKey) break;
-		view = parent;
-	}
-	const availableWidth = cellWidth - left - 12;
-	if (!Number.isFinite(availableWidth) || availableWidth < 80) return labelWidth;
-	return Math.max(labelWidth, Math.min(cellWidth, availableWidth));
+async function availableMessageWidth(
+	cell: NativeObjectHandle,
+	label: NativeObjectHandle,
+	bridge: NativeObjCBridge,
+): Promise<number> {
+	const values = await bridge.batch([
+		{ target: label, selector: 'bounds', args: [] },
+		{
+			target: label,
+			selector: 'convertRect:toView:',
+			args: [{ $nativeBatchResult: 0 }, cell],
+		},
+		{ target: cell, selector: 'bounds', args: [] },
+	]);
+	return availableMessageWidthFromNative(values[1], values[2]);
 }
 
-function createHost(width: number, height: number): NativeObjectHandle | null {
-	if (!objc) return null;
+async function createHost(
+	width: number,
+	height: number,
+	bridge: NativeObjCBridge,
+): Promise<NativeObjectHandle | null> {
 	try {
-		const view = objc.alloc('UIView');
-		objc.invoke(view, 'setFrame:', [nativeFrame(width, height)], {
-			thread: 'main',
-		});
+		const view = bridge.alloc('UIView');
+		await bridge.invokeAsync(view, 'setFrame:', [nativeFrame(width, height)]);
 		return view;
 	} catch {
 		return null;
@@ -990,7 +989,7 @@ function registerSurface(): boolean {
 	}
 }
 
-function createSurfaceState(
+async function createSurfaceState(
 	cell: NativeObjectHandle,
 	key: string,
 	info: NativeMessageInfo,
@@ -1001,14 +1000,37 @@ function createSurfaceState(
 	range: { location: number; length: number },
 	source: Message,
 	content: EmbeddedContent,
-): EmbeddedSurfaceState | null {
+): Promise<EmbeddedSurfaceState | null> {
 	if (!objc || !fabric) return null;
-	const width = availableMessageWidth(cell, label);
+	const bridge = objc;
+	const fabricBridge = fabric;
+	const token = lifecycle;
+	const lookupVersion = cellLookupVersions.get(key);
+	let width: number;
+	try {
+		width = await availableMessageWidth(cell, label, bridge);
+	} catch {
+		return null;
+	}
+	if (
+		bridge !== objc ||
+		fabricBridge !== fabric ||
+		token !== lifecycle ||
+		lookupVersion !== cellLookupVersions.get(key)
+	)
+		return null;
 	if (!Number.isFinite(width) || width < 80) return null;
 	const font = linkFont(attributedText, range);
 	const heightCacheKey = surfaceHeightCacheKey(target.channelId, target.messageId, width);
 	const initialHeight = surfaceHeights.get(heightCacheKey, INITIAL_SURFACE_HEIGHT);
-	const host = createHost(width, initialHeight);
+	const host = await createHost(width, initialHeight, bridge);
+	if (
+		bridge !== objc ||
+		fabricBridge !== fabric ||
+		token !== lifecycle ||
+		lookupVersion !== cellLookupVersions.get(key)
+	)
+		return null;
 	if (!host) return null;
 	const bottomAnchor = new BottomAnchorTracker();
 	const surfaceId = `message-link-${key}-${info.messageId}-${target.messageId}`;
@@ -1134,11 +1156,11 @@ function updateExistingSurface(
 	applyAttachment(state, forceRefresh);
 }
 
-function updateCell(
+async function updateCell(
 	cell: NativeObjectHandle,
 	info: NativeMessageInfo | undefined,
 	labels: NativeObjectHandle[],
-): CellUpdateStatus {
+): Promise<CellUpdateStatus> {
 	if (!objc || !fabric) return 'done';
 	const key = cellKey(cell);
 	if (!key || !info) return 'retry';
@@ -1184,7 +1206,7 @@ function updateCell(
 		if (!range) continue;
 		const built = cachedContentFor(target, targetMessage);
 		if (!built) return 'retry';
-		const state = createSurfaceState(
+		const state = await createSurfaceState(
 			cell,
 			key,
 			info,
@@ -1235,9 +1257,10 @@ function scheduleCell(cell: NativeObjectHandle): void {
 					: [];
 			if (token !== lifecycle || objc !== bridge || cellLookupVersions.get(key) !== lookupVersion)
 				return;
-			pendingCells.delete(key);
 			try {
-				const status = updateCell(cell, info, labels);
+				const status = await updateCell(cell, info, labels);
+				if (token !== lifecycle || cellLookupVersions.get(key) !== lookupVersion) return;
+				pendingCells.delete(key);
 				if (status === 'done') {
 					completedCells.add(key);
 					retryCounts.delete(key);
@@ -1257,6 +1280,8 @@ function scheduleCell(cell: NativeObjectHandle): void {
 				}, 120);
 				retryTimers.set(key, timer);
 			} catch {
+				if (token !== lifecycle || cellLookupVersions.get(key) !== lookupVersion) return;
+				pendingCells.delete(key);
 				completedCells.add(key);
 			}
 		})().catch(() => {
