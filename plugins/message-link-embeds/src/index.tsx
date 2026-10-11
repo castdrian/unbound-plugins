@@ -719,6 +719,23 @@ function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
 	return null;
 }
 
+async function findTableForCellAsync(
+	cell: NativeObjectHandle,
+	bridge: NativeObjCBridge,
+): Promise<NativeObjectHandle | null> {
+	const tables = await bridge.findViews(cell, 'UITableView', {
+		direction: 'ancestors',
+		maxDepth: 14,
+		maxResults: 1,
+		stopAtMatch: true,
+	});
+	return (
+		tables.find(
+			(view) => bridge.respondsTo(view, 'beginUpdates') && bridge.respondsTo(view, 'endUpdates'),
+		) ?? null
+	);
+}
+
 function tableLayoutMetrics(table: NativeObjectHandle): SurfaceLayoutMetrics {
 	return layoutMetricsFromNative([
 		nativeCall(table, 'contentSize'),
@@ -810,11 +827,18 @@ function scheduleBottomScrollCorrection(
 
 function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: number): void {
 	if (state.reactionLayoutTimer) clearTimeout(state.reactionLayoutTimer);
+	const token = lifecycle;
 	state.reactionLayoutTimer = setTimeout(() => {
 		state.reactionLayoutTimer = null;
-		if (cellStates.get(state.cellKey) !== state) return;
-		const table = tableForCell(state.cell);
-		if (table) scheduleBottomScrollCorrection(state, table);
+		const bridge = objc;
+		if (token !== lifecycle || cellStates.get(state.cellKey) !== state || !bridge) return;
+		void findTableForCellAsync(state.cell, bridge)
+			.then((table) => {
+				if (token !== lifecycle || objc !== bridge || cellStates.get(state.cellKey) !== state)
+					return;
+				if (table) scheduleBottomScrollCorrection(state, table);
+			})
+			.catch(() => undefined);
 	}, delay);
 }
 
@@ -826,12 +850,7 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 	const token = lifecycle;
 	async function applyRowRefresh() {
 		try {
-			const tables = await bridge.findViews(state.cell, 'UITableView', {
-				direction: 'ancestors',
-				maxDepth: 14,
-				maxResults: 1,
-				stopAtMatch: true,
-			});
+			const table = await findTableForCellAsync(state.cell, bridge);
 			if (
 				token !== lifecycle ||
 				objc !== bridge ||
@@ -839,9 +858,6 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 				state.rowRefreshGeneration !== generation
 			)
 				return;
-			const table = tables.find(
-				(view) => bridge.respondsTo(view, 'beginUpdates') && bridge.respondsTo(view, 'endUpdates'),
-			);
 			if (!table) {
 				state.lastInvalidatedHeight = -1;
 				state.bottomAnchor.clear();
