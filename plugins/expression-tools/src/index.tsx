@@ -37,6 +37,7 @@ let unpatches: Array<() => void> = [];
 let patchedSheets = new WeakSet<object>();
 let patchedOuterSheets = new WeakSet<object>();
 let patchedDetailSheets = new WeakSet<object>();
+let lifecycle = 0;
 
 function getDesignModule(): DesignModule | null {
 	const discord = (metro.components as { Discord?: DesignModule }).Discord;
@@ -671,6 +672,7 @@ function patchStickerSheet(): void {
 }
 
 function start(): void {
+	const activeLifecycle = ++lifecycle;
 	patchedSheets = new WeakSet<object>();
 	patchedOuterSheets = new WeakSet<object>();
 	patchedDetailSheets = new WeakSet<object>();
@@ -689,6 +691,7 @@ function start(): void {
 
 			void componentPromise
 				.then((instance) => {
+					if (activeLifecycle !== lifecycle) return;
 					if (instance && typeof instance === 'object') patchExpressionSheet(instance, kind, key);
 				})
 				.catch(() => undefined);
@@ -698,6 +701,7 @@ function start(): void {
 }
 
 function stop(): void {
+	lifecycle++;
 	for (const unpatch of unpatches.splice(0)) unpatch();
 	patchedSheets = new WeakSet<object>();
 	patchedOuterSheets = new WeakSet<object>();
