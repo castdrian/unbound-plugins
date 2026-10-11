@@ -33,6 +33,10 @@ import {
 	type ReactionAvatarSurfaceState,
 	setReactionAvatarSurfaceState,
 } from '@reaction-avatars/reaction-surface';
+import {
+	readReactionCellViews,
+	type ReactionCellViews,
+} from '@reaction-avatars/reaction-cell-views';
 import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import { readNativeMessageInfo } from '@shared/native-message-info';
 import { metro } from '@unbound-app/api';
@@ -423,10 +427,6 @@ function messageContextForCell(info: MessageInfo): {
 	const message = messageForCell(info);
 	if (!message) return null;
 	return { channelId: info.channelId, message, messageId: info.messageId };
-}
-
-function collectionViewForReactionList(list: NativeObjectHandle): NativeObjectHandle | null {
-	return firstNativeViewByClass(list, 'UICollectionView', MAX_NATIVE_VIEW_NODES, 3);
 }
 
 function itemForCollectionCell(
@@ -1520,28 +1520,20 @@ function restoreReactionTableLayout(entry: ReactionTableLayout): void {
 	nativeCall(entry.table, 'endUpdates');
 }
 
-function updateCell(cell: NativeObjectHandle, info: MessageInfo | undefined): void {
+function updateCell(
+	cell: NativeObjectHandle,
+	info: MessageInfo | undefined,
+	views: ReactionCellViews | undefined,
+): void {
 	if (!objc || !fabric || !messages) return;
 	const cellKey = nativeKey(cell);
 	const messageContext = info ? messageContextForCell(info) : null;
-	if (!messageContext) {
+	if (!messageContext || !views) {
 		cleanupCellReactions(cellKey);
 		return;
 	}
-	const reactionList = firstNativeViewByClass(cell, 'DCDReactionListView', 70, 8);
-	if (!reactionList) {
-		cleanupCellReactions(cellKey);
-		return;
-	}
-	const collection = collectionViewForReactionList(reactionList);
-	const layout = collection
-		? (nativeCall(collection, 'collectionViewLayout') as NativeObjectHandle | null)
-		: null;
-	if (!collection || !layout) {
-		cleanupCellReactions(cellKey);
-		return;
-	}
-	const visibleCells = nativeArray(nativeCall(collection, 'visibleCells'));
+	const { collection, layout, list: reactionList } = views;
+	const visibleCells = nativeArray(views.visibleCells);
 	const layoutEntry = reactionLayoutEntry(
 		layout,
 		collection,
@@ -1627,15 +1619,25 @@ function scheduleCell(cell: NativeObjectHandle, force: boolean = false): void {
 			scheduledCells.delete(key);
 			return;
 		}
-		void readNativeMessageInfo(cell, bridge, selectedChannelId)
-			.then((info) => {
-				if (token !== lifecycle || objc !== bridge || !activeCells.has(key)) return;
-				lastCellScans.set(key, Date.now());
-				updateCell(
-					cell,
-					info?.channelId ? { channelId: info.channelId, messageId: info.messageId } : undefined,
-				);
-			})
+		void (async () => {
+			const viewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
+			const info = await readNativeMessageInfo(cell, bridge, selectedChannelId);
+			const resolvedInfo = info?.channelId
+				? { channelId: info.channelId, messageId: info.messageId }
+				: undefined;
+			const views = resolvedInfo ? await readReactionCellViews(cell, bridge) : undefined;
+			if (resolvedInfo && viewModel) {
+				const currentViewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
+				if (
+					!currentViewModel ||
+					!(await bridge.invokeAsync(viewModel, 'isEqual:', [currentViewModel]))
+				)
+					return;
+			}
+			if (token !== lifecycle || objc !== bridge || !activeCells.has(key)) return;
+			lastCellScans.set(key, Date.now());
+			updateCell(cell, resolvedInfo, views);
+		})()
 			.catch(() => undefined)
 			.finally(() => {
 				if (token !== lifecycle) return;
