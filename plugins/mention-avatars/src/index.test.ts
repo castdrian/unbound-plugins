@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import type { NativeObjCBridge } from '@unbound-app/api/native';
 
 const removed: string[] = [];
 const hooks: string[] = [];
@@ -130,6 +131,14 @@ const target = { generateMessageRowData: () => undefined };
 
 mock.module('@unbound-app/api', () => ({
 	metro: {
+		common: {
+			ReactNative: {
+				Image: {
+					resolveAssetSource: (asset: number) =>
+						asset === 42 ? { uri: 'file:///private/Discord.app/default-avatar.png' } : null,
+				},
+			},
+		},
 		find: () => ({ getRole: () => undefined, getSortedRoles: () => [] }),
 		findByProps: (...props: string[]) => {
 			if (props.includes('generateMessageRowData')) return target;
@@ -172,6 +181,7 @@ const {
 	default: plugin,
 	extractMentionTokens,
 	imageCacheAction,
+	loadMentionImageBytes,
 	mentionImageMetrics,
 	roleImageSource,
 	userAvatarURL,
@@ -240,8 +250,26 @@ describe('mention image decisions', () => {
 		).toBe('https://cdn.discordapp.com/avatars/123/avatar-hash.png?size=32');
 	});
 
-	test('skips numeric default avatar assets without stopping mention rendering', () => {
-		expect(userAvatarURL({ getAvatarURL: () => 42, id: '123' })).toBeUndefined();
+	test('resolves numeric default avatar assets to their local image file', () => {
+		expect(userAvatarURL({ getAvatarURL: () => 42, id: '123' })).toBe(
+			'file:///private/Discord.app/default-avatar.png',
+		);
+		expect(userAvatarURL({ getAvatarURL: () => 43, id: '123' })).toBeUndefined();
+	});
+
+	test('loads a bundled default avatar through the scoped native bridge', async () => {
+		const bytes = new Uint8Array([1, 2, 3]);
+		const bridge = {
+			getClass: () => ({ name: 'NSData' }),
+			invokeAsync: async (_target: unknown, selector: string, args: unknown[]) => {
+				expect(selector).toBe('dataWithContentsOfFile:');
+				expect(args).toEqual(['/private/Discord.app/default avatar.png']);
+				return bytes;
+			},
+		} as NativeObjCBridge;
+		expect(
+			await loadMentionImageBytes('file:///private/Discord.app/default%20avatar.png', bridge),
+		).toBe(bytes);
 	});
 
 	test('retains the verified SE role symbol size', () => {

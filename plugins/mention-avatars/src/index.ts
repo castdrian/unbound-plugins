@@ -244,7 +244,28 @@ export function userAvatarURL(user: User, guildId?: string): string | undefined 
 	if (typeof resolved === 'string' && resolved) return pngURL(resolved);
 	if (typeof user.avatar === 'string' && user.avatar)
 		return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`;
+	if (typeof resolved === 'number') {
+		const asset = metro.common?.ReactNative?.Image?.resolveAssetSource?.(resolved);
+		if (typeof asset?.uri === 'string' && asset.uri.startsWith('file:///')) return asset.uri;
+	}
 	return undefined;
+}
+
+export async function loadMentionImageBytes(
+	url: string,
+	bridge: NativeObjCBridge,
+	fetchImage: typeof fetch = fetch,
+): Promise<ArrayBuffer | Uint8Array | null> {
+	if (url.startsWith('file:///')) {
+		const dataClass = bridge.getClass('NSData');
+		if (!dataClass) return null;
+		const path = decodeURIComponent(url.slice('file://'.length));
+		const bytes = await bridge.invokeAsync(dataClass, 'dataWithContentsOfFile:', [path]);
+		return bytes instanceof Uint8Array ? bytes : null;
+	}
+	if (!url.startsWith('https://')) return null;
+	const response = await fetchImage(url);
+	return response.ok ? response.arrayBuffer() : null;
 }
 
 function userMention(userId: string, guildId?: string): Mention | undefined {
@@ -613,8 +634,7 @@ function imageForMention(metadata: Mention): NativeValue | null {
 	if (action === 'pending' || action === 'retry') return null;
 	if (action === 'load') {
 		const token = lifecycleToken;
-		const pending = fetch(metadata.avatarURL)
-			.then((response) => (response.ok ? response.arrayBuffer() : null))
+		const pending = loadMentionImageBytes(metadata.avatarURL, objc)
 			.then((bytes) => {
 				if (!bytes || !objc) return null;
 				const data = objc.data(bytes);
