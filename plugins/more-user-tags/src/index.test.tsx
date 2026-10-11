@@ -45,20 +45,20 @@ mock.module('@shared/settings-ui', () => ({
 
 const { default: plugin } = await import('@more-user-tags/index');
 
-afterEach(() => {
-	plugin.stop();
+afterEach(async () => {
+	await plugin.stop();
 	afterHandler = null;
 	useOpTagStyle = true;
 	memberColors = null;
 	classLookups.length = 0;
 });
 
-test('combines Discord OP and custom tags with the resolved role color', () => {
+test('combines Discord OP and custom tags with the resolved role color', async () => {
 	memberColors = {
 		colorStrings: { primaryColor: '#123456', secondaryColor: '#789abc' },
 		colorString: '#123456',
 	};
-	plugin.start({
+	await plugin.start({
 		native: {
 			objc: {
 				getClass: (name: string) => {
@@ -95,9 +95,9 @@ test('combines Discord OP and custom tags with the resolved role color', () => {
 	expect(classLookups).not.toContain('CIColor');
 });
 
-test('keeps a combined OP and custom tag in the normal tag style when selected', () => {
+test('keeps a combined OP and custom tag in the normal tag style when selected', async () => {
 	useOpTagStyle = false;
-	plugin.start({
+	await plugin.start({
 		native: {
 			objc: {
 				getClass: (name: string) => {

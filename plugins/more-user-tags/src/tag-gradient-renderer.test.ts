@@ -6,6 +6,8 @@ test('keeps an unchanged tag layer stable across repeated layout callbacks', asy
 	const handlers = new Map<string, (context: any) => void>();
 	const calls: string[] = [];
 	const currentCalls: string[] = [];
+	let blockText = false;
+	let resumeText: (() => void) | null = null;
 	const frame = { value: { origin: { x: 0, y: 0 }, size: { width: 42, height: 18 } } };
 	const clearColor = { kind: 'color', description: 'UIExtendedGrayColorSpace 0 0' };
 	const originalColor = { kind: 'color', description: 'UIExtendedSRGBColorSpace 0.14 0.5 0.27 1' };
@@ -30,7 +32,14 @@ test('keeps an unchanged tag layer stable across repeated layout callbacks', asy
 			currentCalls.push(`${target.kind}:${selector}`);
 			return selector === 'retain' ? target : null;
 		},
-		invoke(target: any, selector: string, args: any[]) {
+		invoke() {
+			throw new Error('Synchronous main-thread invocation is unavailable');
+		},
+		async invokeAsync(target: any, selector: string, args: any[]) {
+			if (selector === 'text' && blockText)
+				await new Promise<void>((resolve) => {
+					resumeText = resolve;
+				});
 			calls.push(`${target.kind}:${selector}`);
 			if (selector === 'retain') return target;
 			if (selector === 'clearColor') return clearColor;
@@ -75,8 +84,19 @@ test('keeps an unchanged tag layer stable across repeated layout callbacks', asy
 	expect(calls.filter((call) => call === 'gradientLayer:setColors:')).toHaveLength(1);
 	expect(calls.filter((call) => call === 'gradientLayer:setFrame:')).toHaveLength(1);
 	expect(calls.filter((call) => call === 'gradientLayer:setNeedsDisplay')).toHaveLength(1);
+	blockText = true;
 	layout?.({ self: tagView });
-	renderer?.stop();
+	await Bun.sleep(10);
+	let stopped = false;
+	const stopping = renderer?.stop().then(() => {
+		stopped = true;
+	});
+	await Bun.sleep(1);
+	expect(stopped).toBe(false);
+	resumeText?.();
+	await stopping;
+	expect(stopped).toBe(true);
+	expect(calls.filter((call) => call === 'gradientLayer:setColors:')).toHaveLength(1);
 	await Bun.sleep(10);
 	expect(currentCalls.filter((call) => call === 'label:retain')).toHaveLength(3);
 	expect(currentCalls.filter((call) => call === 'label:release')).toHaveLength(3);

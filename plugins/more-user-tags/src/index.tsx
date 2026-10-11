@@ -1,9 +1,9 @@
+import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer';
 import {
 	getContrastingTextColor,
 	getRoleColorAppearance,
 	type RoleColorAppearance,
 } from '@shared/role-colors';
-import { createTagGradientRenderer } from '@more-user-tags/tag-gradient-renderer';
 
 import { SettingsScrollView, SettingsSection, SettingsSwitchRow } from '@shared/settings-ui';
 import { metro, patcher, storage } from '@unbound-app/api';
@@ -203,7 +203,7 @@ function MoreUserTagsSettings() {
 export default {
 	start(context: PluginContext) {
 		unpatch?.();
-		tagGradientRenderer?.stop();
+		void tagGradientRenderer?.stop().catch(() => {});
 		unpatch = null;
 		tagGradientRenderer = null;
 
@@ -285,9 +285,9 @@ export default {
 		});
 	},
 
-	stop() {
+	async stop() {
 		unpatch?.();
-		tagGradientRenderer?.stop();
+		await tagGradientRenderer?.stop();
 		unpatch = null;
 		tagGradientRenderer = null;
 		permissionBits = null;

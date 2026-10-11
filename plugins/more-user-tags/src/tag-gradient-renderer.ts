@@ -32,7 +32,7 @@ interface TagGradientRecord {
 
 interface TagGradientRenderer {
 	setAppearance(labels: string[], appearance: RoleColorAppearance): void;
-	stop(): void;
+	stop(): Promise<void>;
 }
 
 interface NativeRectFields {
@@ -47,22 +47,22 @@ function rectSignature(rect: unknown): string | null {
 	return coordinates.every(Number.isFinite) ? coordinates.join(':') : null;
 }
 
-function invoke(
+async function invoke(
 	objc: NativeObjC,
 	target: NativeObjectHandle,
 	selector: string,
 	args: unknown[] = [],
-): unknown {
-	return objc.invoke(target, selector, args, { thread: 'main' });
+): Promise<unknown> {
+	return objc.invokeAsync(target, selector, args);
 }
 
-function gradientColorObject(
+async function gradientColorObject(
 	objc: NativeObjC,
 	arrayClass: NativeClassHandle,
 	uiColorClass: NativeObjectHandle,
 	color: string,
 	alpha: number = 1,
-): NativeObjectHandle | null {
+): Promise<NativeObjectHandle | null> {
 	if (!/^#[\da-f]{6}$/i.test(color)) return null;
 	const value = Number.parseInt(color.slice(1), 16);
 	const red = ((value >> 16) & 0xff) / 255;
@@ -70,16 +70,16 @@ function gradientColorObject(
 	const blue = (value & 0xff) / 255;
 
 	try {
-		const uiColor = invoke(objc, uiColorClass, 'colorWithRed:green:blue:alpha:', [
+		const uiColor = (await invoke(objc, uiColorClass, 'colorWithRed:green:blue:alpha:', [
 			red,
 			green,
 			blue,
 			alpha,
-		]) as NativeObjectHandle | null;
+		])) as NativeObjectHandle | null;
 		if (!uiColor) return null;
-		const pointer = invoke(objc, uiColor, 'CGColor');
+		const pointer = await invoke(objc, uiColor, 'CGColor');
 		if (!pointer) return null;
-		const colors = invoke(objc, arrayClass, 'arrayWithObject:', [pointer]);
+		const colors = await invoke(objc, arrayClass, 'arrayWithObject:', [pointer]);
 		if (!Array.isArray(colors)) return null;
 
 		const [nativeColor] = colors;
@@ -120,25 +120,30 @@ function appearanceForLabel(
 	return unique.values().next().value ?? null;
 }
 
-function viewIdentifier(objc: NativeObjC, view: NativeObjectHandle): string {
-	return String(invoke(objc, view, 'hash'));
+async function viewIdentifier(objc: NativeObjC, view: NativeObjectHandle): Promise<string> {
+	return String(await invoke(objc, view, 'hash'));
 }
 
-function nativeChildren(objc: NativeObjC, view: NativeObjectHandle): NativeObjectHandle[] {
-	const children = invoke(objc, view, 'subviews');
+async function nativeChildren(
+	objc: NativeObjC,
+	view: NativeObjectHandle,
+): Promise<NativeObjectHandle[]> {
+	const children = await invoke(objc, view, 'subviews');
 	if (Array.isArray(children)) return children as NativeObjectHandle[];
 	if (!children || typeof children !== 'object') return [];
 
 	try {
-		return objc.array(children as NativeObjectHandle);
+		return objc
+			.array(children as NativeObjectHandle)
+			.filter((child): child is NativeObjectHandle => typeof child === 'object' && child !== null);
 	} catch {
 		return [];
 	}
 }
 
-function attempt(operation: () => unknown): boolean {
+async function attempt(operation: () => Promise<unknown>): Promise<boolean> {
 	try {
-		operation();
+		await operation();
 		return true;
 	} catch {
 		return false;
@@ -159,156 +164,160 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	if (!tagViewClass || !labelClass || !gradientLayerClass || !arrayClass || !uiColorClass) {
 		return null;
 	}
-	const resolvedTagViewClass: NativeObjectHandle = tagViewClass;
 	const resolvedGradientLayerClass: NativeObjectHandle = gradientLayerClass;
 	const resolvedArrayClass: NativeClassHandle = arrayClass;
 	const resolvedBasicAnimationClass: NativeObjectHandle | null = basicAnimationClass;
 	const resolvedTimingFunctionClass: NativeObjectHandle | null = timingFunctionClass;
 	const resolvedAccessibilityClass: NativeObjectHandle | null = accessibilityClass;
 	const resolvedUIColorClass: NativeObjectHandle = uiColorClass;
-	const clearColor = (() => {
-		try {
-			return invoke(objc, resolvedUIColorClass, 'clearColor') as NativeObjectHandle | null;
-		} catch {
-			return null;
-		}
-	})();
-	if (!clearColor) return null;
-	if (!invoke(objc, resolvedTagViewClass, 'instancesRespondToSelector:', ['layoutSubviews']))
-		return null;
+	const clearColor = invoke(objc, resolvedUIColorClass, 'clearColor').catch(
+		() => null,
+	) as Promise<NativeObjectHandle | null>;
 
 	const associationKey: NativeAssociationKey = objc.createAssociationKey();
 	const appearances = new Map<string, RoleColorAppearance>();
 	const records = new Map<string, TagGradientRecord>();
 	const updating = new Set<string>();
+	const inFlight = new Set<Promise<void>>();
 	const pendingUpdates = new Map<
 		string,
 		{ label: NativeObjectHandle; timer: ReturnType<typeof setTimeout> }
 	>();
 	const hookTokens: ReturnType<NativeObjC['hook']>[] = [];
 	let stopped = false;
-	const reduceMotion = (() => {
-		if (!resolvedAccessibilityClass) return false;
-		try {
-			return Boolean(invoke(objc, resolvedAccessibilityClass, 'isReduceMotionEnabled'));
-		} catch {
-			return false;
-		}
-	})();
+	function track(operation: Promise<void>): Promise<void> {
+		inFlight.add(operation);
+		void operation.finally(() => inFlight.delete(operation)).catch(() => {});
+		return operation;
+	}
+	const reduceMotion = resolvedAccessibilityClass
+		? invoke(objc, resolvedAccessibilityClass, 'isReduceMotionEnabled')
+				.then(Boolean)
+				.catch(() => false)
+		: Promise.resolve(false);
 
-	function isTransparent(color: NativeObjectHandle | null): boolean {
+	async function isTransparent(color: NativeObjectHandle | null): Promise<boolean> {
 		if (!color) return false;
-		if (Boolean(invoke(objc, color, 'isEqual:', [clearColor]))) return true;
-		const description = invoke(objc, color, 'description');
+		if (await invoke(objc, color, 'isEqual:', [await clearColor])) return true;
+		const description = await invoke(objc, color, 'description');
 		return typeof description === 'string' && parseNativeColorDescription(description)?.alpha === 0;
 	}
 
-	function removeRecord(record: TagGradientRecord, restoreBackground: boolean): void {
+	async function removeRecord(
+		record: TagGradientRecord,
+		restoreBackground: boolean,
+	): Promise<void> {
 		const wasUpdating = updating.has(record.id);
 		updating.add(record.id);
 
 		try {
-			attempt(() => invoke(objc, record.layer, 'removeFromSuperlayer'));
+			await attempt(() => invoke(objc, record.layer, 'removeFromSuperlayer'));
 
 			if (restoreBackground) {
-				const background = (() => {
-					try {
-						return invoke(objc, record.label, 'backgroundColor') as NativeObjectHandle | null;
-					} catch {
-						return null;
-					}
-				})();
-				if (isTransparent(background)) {
-					attempt(() =>
+				const background = (await invoke(objc, record.label, 'backgroundColor').catch(
+					() => null,
+				)) as NativeObjectHandle | null;
+				if (await isTransparent(background)) {
+					await attempt(() =>
 						invoke(objc, record.label, 'setBackgroundColor:', [record.originalBackground]),
 					);
 				}
 
-				if (!Boolean(invoke(objc, record.label, 'isOpaque'))) {
-					attempt(() => invoke(objc, record.label, 'setOpaque:', [record.originalOpaque]));
+				if (!(await invoke(objc, record.label, 'isOpaque'))) {
+					await attempt(() => invoke(objc, record.label, 'setOpaque:', [record.originalOpaque]));
 				}
 			}
-
-			attempt(() => objc.setAssociatedObject(record.label, associationKey, null, 'assign'));
-			records.delete(record.id);
 		} finally {
+			try {
+				objc.setAssociatedObject(record.label, associationKey, null, 'assign');
+			} catch {}
+			records.delete(record.id);
 			if (!wasUpdating) updating.delete(record.id);
 		}
 	}
 
-	function updateFrame(record: TagGradientRecord): void {
-		const labelLayer = invoke(objc, record.label, 'layer') as NativeObjectHandle;
-		const frame = invoke(objc, record.label, 'frame');
+	async function updateFrame(record: TagGradientRecord): Promise<void> {
+		const labelLayer = (await invoke(objc, record.label, 'layer')) as NativeObjectHandle;
+		const frame = await invoke(objc, record.label, 'frame');
 		const signature = rectSignature(frame);
-		const radius = Number(invoke(objc, labelLayer, 'cornerRadius'));
+		const radius = Number(await invoke(objc, labelLayer, 'cornerRadius'));
 		if (signature && signature !== record.frameSignature) {
-			invoke(objc, record.layer, 'setFrame:', [frame]);
+			await invoke(objc, record.layer, 'setFrame:', [frame]);
 			record.frameSignature = signature;
 		}
 		if (Number.isFinite(radius) && radius !== record.cornerRadius) {
-			invoke(objc, record.layer, 'setCornerRadius:', [radius]);
+			await invoke(objc, record.layer, 'setCornerRadius:', [radius]);
 			record.cornerRadius = radius;
 		}
 
 		if (record.sheenLayer) {
-			const layerBounds = invoke(objc, record.layer, 'bounds');
+			const layerBounds = await invoke(objc, record.layer, 'bounds');
 			const sheenSignature = rectSignature(layerBounds);
 			if (sheenSignature && sheenSignature !== record.sheenFrameSignature) {
-				invoke(objc, record.sheenLayer, 'setFrame:', [layerBounds]);
+				await invoke(objc, record.sheenLayer, 'setFrame:', [layerBounds]);
 				record.sheenFrameSignature = sheenSignature;
 			}
 			if (Number.isFinite(radius) && radius !== record.sheenCornerRadius) {
-				invoke(objc, record.sheenLayer, 'setCornerRadius:', [radius]);
+				await invoke(objc, record.sheenLayer, 'setCornerRadius:', [radius]);
 				record.sheenCornerRadius = radius;
 			}
 		}
 	}
 
-	function createHolographicSheen(parentLayer: NativeObjectHandle): NativeObjectHandle | null {
-		if (!resolvedBasicAnimationClass || reduceMotion) return null;
+	async function createHolographicSheen(
+		parentLayer: NativeObjectHandle,
+	): Promise<NativeObjectHandle | null> {
+		if (!resolvedBasicAnimationClass || (await reduceMotion)) return null;
 
 		let sheenLayer: NativeObjectHandle | null = null;
 		try {
-			sheenLayer = invoke(objc, resolvedGradientLayerClass, 'layer') as NativeObjectHandle | null;
+			sheenLayer = (await invoke(
+				objc,
+				resolvedGradientLayerClass,
+				'layer',
+			)) as NativeObjectHandle | null;
 			if (!sheenLayer) return null;
 
 			const sheenColors = [
-				gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0),
-				gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0.26),
-				gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#d8f4ff', 0.34),
-				gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0.26),
-				gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0),
+				await gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0),
+				await gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0.26),
+				await gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#d8f4ff', 0.34),
+				await gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0.26),
+				await gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, '#ffffff', 0),
 			];
 			if (sheenColors.some((color) => !color)) return null;
 
-			invoke(objc, sheenLayer, 'setColors:', [sheenColors]);
-			invoke(objc, sheenLayer, 'setLocations:', [[0, 0.1, 0.2, 0.3, 0.4]]);
-			invoke(objc, sheenLayer, 'setStartPoint:', [objc.struct('CGPoint', { x: 0, y: 0 })]);
-			invoke(objc, sheenLayer, 'setEndPoint:', [objc.struct('CGPoint', { x: 1, y: 0 })]);
-			invoke(objc, sheenLayer, 'setMasksToBounds:', [true]);
-			invoke(objc, sheenLayer, 'setZPosition:', [1]);
-			invoke(objc, parentLayer, 'addSublayer:', [sheenLayer]);
+			await invoke(objc, sheenLayer, 'setColors:', [sheenColors]);
+			await invoke(objc, sheenLayer, 'setLocations:', [[0, 0.1, 0.2, 0.3, 0.4]]);
+			await invoke(objc, sheenLayer, 'setStartPoint:', [objc.struct('CGPoint', { x: 0, y: 0 })]);
+			await invoke(objc, sheenLayer, 'setEndPoint:', [objc.struct('CGPoint', { x: 1, y: 0 })]);
+			await invoke(objc, sheenLayer, 'setMasksToBounds:', [true]);
+			await invoke(objc, sheenLayer, 'setZPosition:', [1]);
+			await invoke(objc, parentLayer, 'addSublayer:', [sheenLayer]);
 
-			const animation = invoke(objc, resolvedBasicAnimationClass, 'animationWithKeyPath:', [
+			const animation = (await invoke(objc, resolvedBasicAnimationClass, 'animationWithKeyPath:', [
 				'locations',
-			]) as NativeObjectHandle | null;
+			])) as NativeObjectHandle | null;
 			if (!animation) return sheenLayer;
 
-			invoke(objc, animation, 'setFromValue:', [[0, 0.1, 0.2, 0.3, 0.4]]);
-			invoke(objc, animation, 'setToValue:', [[0.6, 0.7, 0.8, 0.9, 1]]);
-			invoke(objc, animation, 'setDuration:', [3.2]);
-			invoke(objc, animation, 'setAutoreverses:', [true]);
-			invoke(objc, animation, 'setRepeatCount:', [100000]);
-			invoke(objc, animation, 'setRemovedOnCompletion:', [false]);
+			await invoke(objc, animation, 'setFromValue:', [[0, 0.1, 0.2, 0.3, 0.4]]);
+			await invoke(objc, animation, 'setToValue:', [[0.6, 0.7, 0.8, 0.9, 1]]);
+			await invoke(objc, animation, 'setDuration:', [3.2]);
+			await invoke(objc, animation, 'setAutoreverses:', [true]);
+			await invoke(objc, animation, 'setRepeatCount:', [100000]);
+			await invoke(objc, animation, 'setRemovedOnCompletion:', [false]);
 
 			if (resolvedTimingFunctionClass) {
-				const timingFunction = invoke(objc, resolvedTimingFunctionClass, 'functionWithName:', [
-					'easeInEaseOut',
-				]) as NativeObjectHandle | null;
-				if (timingFunction) invoke(objc, animation, 'setTimingFunction:', [timingFunction]);
+				const timingFunction = (await invoke(
+					objc,
+					resolvedTimingFunctionClass,
+					'functionWithName:',
+					['easeInEaseOut'],
+				)) as NativeObjectHandle | null;
+				if (timingFunction) await invoke(objc, animation, 'setTimingFunction:', [timingFunction]);
 			}
 
-			invoke(objc, sheenLayer, 'addAnimation:forKey:', [
+			await invoke(objc, sheenLayer, 'addAnimation:forKey:', [
 				animation,
 				'more-user-tags.holographic-sheen',
 			]);
@@ -316,54 +325,65 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 		} catch {
 			if (sheenLayer) {
 				const failedSheenLayer = sheenLayer;
-				attempt(() => invoke(objc, failedSheenLayer, 'removeFromSuperlayer'));
+				await attempt(() => invoke(objc, failedSheenLayer, 'removeFromSuperlayer'));
 			}
 			return null;
 		}
 	}
 
-	function removeHolographicSheen(record: TagGradientRecord): void {
+	async function removeHolographicSheen(record: TagGradientRecord): Promise<void> {
 		const sheenLayer = record.sheenLayer;
 		if (!sheenLayer) return;
-		attempt(() => invoke(objc, sheenLayer, 'removeFromSuperlayer'));
+		await attempt(() => invoke(objc, sheenLayer, 'removeFromSuperlayer'));
 		record.sheenLayer = null;
 		record.sheenFrameSignature = '';
 		record.sheenCornerRadius = null;
 	}
 
-	function applyAppearance(record: TagGradientRecord, appearance: RoleColorAppearance): boolean {
+	async function applyAppearance(
+		record: TagGradientRecord,
+		appearance: RoleColorAppearance,
+	): Promise<boolean> {
 		const { colors, style } = appearance;
 		if (colors.length < 1 || colors.some((color) => !/^#[\da-f]{6}$/i.test(color))) return false;
 
 		try {
-			const background = invoke(objc, record.label, 'backgroundColor') as NativeObjectHandle | null;
-			if (!isTransparent(background)) {
+			const background = (await invoke(
+				objc,
+				record.label,
+				'backgroundColor',
+			)) as NativeObjectHandle | null;
+			if (!(await isTransparent(background))) {
 				if (background) record.originalBackground = background;
-				invoke(objc, record.label, 'setBackgroundColor:', [clearColor]);
+				await invoke(objc, record.label, 'setBackgroundColor:', [await clearColor]);
 			}
-			if (Boolean(invoke(objc, record.label, 'isOpaque')))
-				invoke(objc, record.label, 'setOpaque:', [false]);
+			if (await invoke(objc, record.label, 'isOpaque'))
+				await invoke(objc, record.label, 'setOpaque:', [false]);
 
 			if (record.colors.join(':') !== colors.join(':') || record.style !== style) {
 				const renderColors = colors.length === 1 ? [colors[0], colors[0]] : colors;
-				const cgColors = renderColors.map((color) =>
-					gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, color),
+				const cgColors = await Promise.all(
+					renderColors.map((color) =>
+						gradientColorObject(objc, resolvedArrayClass, resolvedUIColorClass, color),
+					),
 				);
 				if (cgColors.some((color) => !color)) return false;
 
-				invoke(objc, record.layer, 'setColors:', [cgColors]);
-				invoke(objc, record.layer, 'setLocations:', [
+				await invoke(objc, record.layer, 'setColors:', [cgColors]);
+				await invoke(objc, record.layer, 'setLocations:', [
 					renderColors.map((_, index) => index / (renderColors.length - 1)),
 				]);
-				invoke(objc, record.layer, 'setStartPoint:', [objc.struct('CGPoint', { x: 0, y: 0 })]);
-				invoke(objc, record.layer, 'setEndPoint:', [objc.struct('CGPoint', { x: 1, y: 0 })]);
-				invoke(objc, record.layer, 'setMasksToBounds:', [true]);
-				invoke(objc, record.layer, 'setNeedsDisplay');
+				await invoke(objc, record.layer, 'setStartPoint:', [
+					objc.struct('CGPoint', { x: 0, y: 0 }),
+				]);
+				await invoke(objc, record.layer, 'setEndPoint:', [objc.struct('CGPoint', { x: 1, y: 0 })]);
+				await invoke(objc, record.layer, 'setMasksToBounds:', [true]);
+				await invoke(objc, record.layer, 'setNeedsDisplay');
 
 				if (style === 'holographic') {
-					record.sheenLayer ??= createHolographicSheen(record.layer);
+					record.sheenLayer ??= await createHolographicSheen(record.layer);
 				} else {
-					removeHolographicSheen(record);
+					await removeHolographicSheen(record);
 				}
 
 				record.colors = [...colors];
@@ -371,37 +391,47 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 
 			record.style = style;
 
-			updateFrame(record);
+			await updateFrame(record);
 			return true;
 		} catch {
 			return false;
 		}
 	}
 
-	function createRecord(
+	async function createRecord(
 		label: NativeObjectHandle,
 		labelName: string,
 		primaryColor: string,
 		appearance: RoleColorAppearance,
-	): TagGradientRecord | null {
+	): Promise<TagGradientRecord | null> {
 		let layer: NativeObjectHandle | null = null;
 		let originalBackground: NativeObjectHandle | null = null;
 		let associated = false;
-		const id = viewIdentifier(objc, label);
+		const id = await viewIdentifier(objc, label);
+		if (!(await clearColor)) return null;
 
 		try {
-			const parent = invoke(objc, label, 'superview') as NativeObjectHandle | null;
+			const parent = (await invoke(objc, label, 'superview')) as NativeObjectHandle | null;
 			if (!parent) return null;
 
-			const parentLayer = invoke(objc, parent, 'layer') as NativeObjectHandle | null;
+			const parentLayer = (await invoke(objc, parent, 'layer')) as NativeObjectHandle | null;
 			if (!parentLayer) return null;
 
-			layer = invoke(objc, resolvedGradientLayerClass, 'layer') as NativeObjectHandle | null;
+			layer = (await invoke(
+				objc,
+				resolvedGradientLayerClass,
+				'layer',
+			)) as NativeObjectHandle | null;
 			if (!layer) return null;
 
-			originalBackground = invoke(objc, label, 'backgroundColor') as NativeObjectHandle | null;
-			const originalOpaque = Boolean(invoke(objc, label, 'isOpaque'));
-			const labelLayer = invoke(objc, label, 'layer') as NativeObjectHandle;
+			originalBackground = (await invoke(
+				objc,
+				label,
+				'backgroundColor',
+			)) as NativeObjectHandle | null;
+			const originalOpaque = Boolean(await invoke(objc, label, 'isOpaque'));
+			const labelLayer = (await invoke(objc, label, 'layer')) as NativeObjectHandle;
+			if (stopped) return null;
 			const record: TagGradientRecord = {
 				id,
 				label,
@@ -419,32 +449,31 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 				sheenLayer: null,
 			};
 
-			invoke(objc, parentLayer, 'insertSublayer:below:', [layer, labelLayer]);
+			await invoke(objc, parentLayer, 'insertSublayer:below:', [layer, labelLayer]);
 			objc.setAssociatedObject(label, associationKey, layer, 'retain');
 			associated = true;
-			invoke(objc, label, 'setBackgroundColor:', [clearColor]);
-			invoke(objc, label, 'setOpaque:', [false]);
+			await invoke(objc, label, 'setBackgroundColor:', [await clearColor]);
+			await invoke(objc, label, 'setOpaque:', [false]);
 			records.set(id, record);
 
-			if (!applyAppearance(record, appearance)) {
-				removeRecord(record, true);
+			if (!(await applyAppearance(record, appearance))) {
+				await removeRecord(record, true);
 				return null;
 			}
 
 			return record;
 		} catch {
 			const failedLayer = layer;
-			if (failedLayer) attempt(() => invoke(objc, failedLayer, 'removeFromSuperlayer'));
-			if (associated)
-				attempt(() => objc.setAssociatedObject(label, associationKey, null, 'assign'));
-			attempt(() => invoke(objc, label, 'setBackgroundColor:', [originalBackground]));
+			if (failedLayer) await attempt(() => invoke(objc, failedLayer, 'removeFromSuperlayer'));
+			if (associated) objc.setAssociatedObject(label, associationKey, null, 'assign');
+			await attempt(() => invoke(objc, label, 'setBackgroundColor:', [originalBackground]));
 			return null;
 		}
 	}
 
-	function labelColors(label: NativeObjectHandle, record?: TagGradientRecord) {
-		const text = invoke(objc, label, 'text');
-		const accessibilityLabel = invoke(objc, label, 'accessibilityLabel');
+	async function labelColors(label: NativeObjectHandle, record?: TagGradientRecord) {
+		const text = await invoke(objc, label, 'text');
+		const accessibilityLabel = await invoke(objc, label, 'accessibilityLabel');
 		const labelName =
 			typeof text === 'string' && text.length > 0
 				? text
@@ -453,26 +482,27 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 					: '';
 		if (!labelName) return null;
 
-		const background = invoke(objc, label, 'backgroundColor') as NativeObjectHandle | null;
-		const description = background ? invoke(objc, background, 'description') : null;
+		const background = (await invoke(objc, label, 'backgroundColor')) as NativeObjectHandle | null;
+		const description = background ? await invoke(objc, background, 'description') : null;
 		const color = typeof description === 'string' ? parseNativeColorDescription(description) : null;
 		const primaryColor = color && color.alpha > 0 ? color.hex : (record?.primaryColor ?? null);
 		const appearance = appearanceForLabel(appearances, labelName, primaryColor);
 		return appearance ? { labelName, ...appearance } : null;
 	}
 
-	function updateLabel(label: NativeObjectHandle): void {
+	async function updateLabel(label: NativeObjectHandle): Promise<void> {
 		if (stopped || appearances.size === 0 || objc.className(label) !== 'DCDLabel') return;
 
-		const id = viewIdentifier(objc, label);
+		const id = await viewIdentifier(objc, label);
 		if (updating.has(id)) return;
 		updating.add(id);
 
 		try {
 			let record = records.get(id);
-			const result = labelColors(label, record);
+			const result = await labelColors(label, record);
+			if (stopped) return;
 			if (!result) {
-				if (record) removeRecord(record, true);
+				if (record) await removeRecord(record, true);
 				return;
 			}
 
@@ -480,16 +510,16 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 				record &&
 				(record.labelName !== result.labelName || record.primaryColor !== result.primaryColor)
 			) {
-				removeRecord(record, true);
+				await removeRecord(record, true);
 				record = undefined;
 			}
 
 			if (!record) {
-				createRecord(label, result.labelName, result.primaryColor, result.appearance);
+				await createRecord(label, result.labelName, result.primaryColor, result.appearance);
 				return;
 			}
 
-			if (!applyAppearance(record, result.appearance)) removeRecord(record, true);
+			if (!(await applyAppearance(record, result.appearance))) await removeRecord(record, true);
 		} catch {
 			return;
 		} finally {
@@ -497,11 +527,8 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 		}
 	}
 
-	function scheduleLabelUpdate(label: NativeObjectHandle): void {
+	async function scheduleLabelUpdate(label: NativeObjectHandle): Promise<void> {
 		if (stopped || appearances.size === 0 || objc.className(label) !== 'DCDLabel') return;
-
-		const id = viewIdentifier(objc, label);
-		if (pendingUpdates.has(id)) return;
 
 		let retainedLabel: NativeObjectHandle;
 		try {
@@ -510,12 +537,17 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 			return;
 		}
 
-		const timer = setTimeout(() => {
+		const id = await viewIdentifier(objc, retainedLabel).catch(() => null);
+		if (!id || stopped || pendingUpdates.has(id)) {
+			await attempt(() => Promise.resolve(objc.call(retainedLabel, 'release')));
+			return;
+		}
+		const timer = setTimeout(async () => {
 			pendingUpdates.delete(id);
 			try {
-				updateLabel(retainedLabel);
+				await track(updateLabel(retainedLabel));
 			} finally {
-				attempt(() => objc.call(retainedLabel, 'release'));
+				await attempt(() => Promise.resolve(objc.call(retainedLabel, 'release')));
 			}
 		}, 0);
 		pendingUpdates.set(id, { label: retainedLabel, timer });
@@ -524,12 +556,12 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 	function addHook(
 		className: string,
 		selector: string,
-		handler: (target: NativeObjectHandle) => void,
+		handler: (target: NativeObjectHandle) => void | Promise<void>,
 	): boolean {
 		try {
 			hookTokens.push(
 				objc.hook(className, selector, {
-					after: ({ self: target }) => handler(target),
+					after: ({ self: target }) => track(Promise.resolve(handler(target))),
 				}),
 			);
 			return true;
@@ -540,47 +572,61 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 
 	const backgroundHookAvailable = addHook('DCDLabel', 'setBackgroundColor:', scheduleLabelUpdate);
 	const textHookAvailable = addHook('DCDLabel', 'setText:', scheduleLabelUpdate);
-	const tagViewHookAvailable = addHook('DiscordChat.MessageTagView', 'layoutSubviews', (view) => {
-		if (stopped || appearances.size === 0) return;
+	const tagViewHookAvailable = addHook(
+		'DiscordChat.MessageTagView',
+		'layoutSubviews',
+		async (view) => {
+			if (stopped || appearances.size === 0) return;
 
-		try {
-			for (const label of nativeChildren(objc, view)) {
-				if (objc.className(label) === 'DCDLabel') scheduleLabelUpdate(label);
+			const retainedView = objc.call(view, 'retain') as NativeObjectHandle;
+			try {
+				for (const label of await nativeChildren(objc, retainedView)) {
+					if (objc.className(label) === 'DCDLabel') await scheduleLabelUpdate(label);
+				}
+			} catch {
+				return;
+			} finally {
+				objc.call(retainedView, 'release');
 			}
-		} catch {
-			return;
-		}
-	});
+		},
+	);
 	if (!backgroundHookAvailable && !textHookAvailable && !tagViewHookAvailable) return null;
 
 	let reuseHook: ReturnType<NativeObjC['hook']> | null = null;
 	if (objc.getClass('DCDMessageTableViewCell')) {
 		try {
 			reuseHook = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
-				after: ({ self: cell }) => {
-					try {
-						const queue = [{ view: cell, depth: 0 }];
-						while (queue.length > 0) {
-							const current = queue.pop();
-							if (!current) continue;
-							if (objc.className(current.view) === 'DCDLabel') {
-								const record = records.get(viewIdentifier(objc, current.view));
-								if (record) removeRecord(record, true);
-								continue;
-							}
+				after: ({ self: cell }) =>
+					track(
+						(async () => {
+							const retainedCell = objc.call(cell, 'retain') as NativeObjectHandle;
+							try {
+								const queue = [{ view: retainedCell, depth: 0 }];
+								while (queue.length > 0) {
+									if (stopped) return;
+									const current = queue.pop();
+									if (!current) continue;
+									if (objc.className(current.view) === 'DCDLabel') {
+										const record = records.get(await viewIdentifier(objc, current.view));
+										if (record) await removeRecord(record, true);
+										continue;
+									}
 
-							if (current.depth >= 8) continue;
-							for (const child of nativeChildren(objc, current.view).slice(0, 20)) {
-								queue.push({
-									view: child,
-									depth: current.depth + 1,
-								});
+									if (current.depth >= 8) continue;
+									for (const child of (await nativeChildren(objc, current.view)).slice(0, 20)) {
+										queue.push({
+											view: child,
+											depth: current.depth + 1,
+										});
+									}
+								}
+							} catch {
+								return;
+							} finally {
+								objc.call(retainedCell, 'release');
 							}
-						}
-					} catch {
-						return;
-					}
-				},
+						})(),
+					),
 			});
 		} catch {
 			reuseHook = null;
@@ -617,17 +663,18 @@ export function createTagGradientRenderer(context: PluginContext): TagGradientRe
 				appearances.set(key, normalizedAppearance);
 			}
 		},
-		stop() {
+		async stop() {
 			if (stopped) return;
 			stopped = true;
 			for (const { label, timer } of pendingUpdates.values()) {
 				clearTimeout(timer);
-				attempt(() => objc.call(label, 'release'));
+				await attempt(() => Promise.resolve(objc.call(label, 'release')));
 			}
 			pendingUpdates.clear();
 			for (const hook of hookTokens) hook.remove();
 			reuseHook?.remove();
-			for (const record of [...records.values()]) removeRecord(record, true);
+			await Promise.allSettled([...inFlight]);
+			for (const record of [...records.values()]) await attempt(() => removeRecord(record, true));
 			appearances.clear();
 		},
 	};
