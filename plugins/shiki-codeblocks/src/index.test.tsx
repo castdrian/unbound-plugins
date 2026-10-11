@@ -531,6 +531,34 @@ describe('plugin lifecycle', () => {
 		]);
 	});
 
+	test('discards a startup scan after the channel changes', async () => {
+		selectedChannelId = 'original';
+		let finishBatch: (values: unknown[]) => void = () => undefined;
+		let searches = 0;
+		const pending = new Promise<unknown[]>((resolve) => {
+			finishBatch = resolve;
+		});
+		const native = {
+			objc: {
+				getClass: () => ({}),
+				hook: () => ({ active: true, remove: () => undefined }),
+				batch: () => pending,
+				findViews: () => {
+					searches++;
+					return Promise.resolve([]);
+				},
+			},
+		};
+
+		plugin.start({ native } as never);
+		await Bun.sleep(320);
+		selectedChannelId = 'other';
+		finishBatch([{}, [], {}]);
+		await Bun.sleep(5);
+
+		expect(searches).toBe(0);
+	});
+
 	test('checks moved labels through one asynchronous native batch', async () => {
 		const steps: string[][] = [];
 		let moved: ((context: { self: object }) => void) | undefined;
@@ -559,6 +587,42 @@ describe('plugin lifecycle', () => {
 		await Bun.sleep(30);
 
 		expect(steps).toEqual([['window', 'attributedText']]);
+	});
+
+	test('discards a moved label after the channel changes', async () => {
+		selectedChannelId = 'original';
+		let moved: ((context: { self: object }) => void) | undefined;
+		let finishBatch: (values: unknown[]) => void = () => undefined;
+		let synchronousCalls = 0;
+		const pending = new Promise<unknown[]>((resolve) => {
+			finishBatch = resolve;
+		});
+		const native = {
+			objc: {
+				hook(
+					_className: string,
+					selector: string,
+					handlers: { after?: (context: { self: object }) => void },
+				) {
+					if (selector === 'didMoveToWindow') moved = handlers.after;
+					return { active: true, remove: () => undefined };
+				},
+				batch: () => pending,
+				invoke: () => {
+					synchronousCalls++;
+					return null;
+				},
+			},
+		};
+
+		plugin.start({ native } as never);
+		moved?.({ self: {} });
+		await Bun.sleep(30);
+		selectedChannelId = 'other';
+		finishBatch([true, {}]);
+		await Bun.sleep(5);
+
+		expect(synchronousCalls).toBe(0);
 	});
 
 	test('uses the native label hook without replacing the Markdown renderer', () => {

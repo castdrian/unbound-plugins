@@ -1317,7 +1317,8 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 
 async function renderVisibleCodeBlocks(): Promise<void> {
 	const bridge = objc;
-	if (!bridge || !nativeCodeHook?.active || !currentChannelId()) return;
+	const channelId = currentChannelId();
+	if (!bridge || !nativeCodeHook?.active || !channelId) return;
 	const applicationClass = bridge.getClass('UIApplication');
 	if (!applicationClass) return;
 	try {
@@ -1326,7 +1327,7 @@ async function renderVisibleCodeBlocks(): Promise<void> {
 			{ target: { $nativeBatchResult: 0 }, selector: 'windows', args: [] },
 			{ target: { $nativeBatchResult: 0 }, selector: 'keyWindow', args: [] },
 		]);
-		if (bridge !== objc || !nativeCodeHook?.active) return;
+		if (bridge !== objc || !nativeCodeHook?.active || channelId !== currentChannelId()) return;
 		const keyWindow = values[2] as NativeObjectHandle | null;
 		const windows = keyWindow
 			? [keyWindow]
@@ -1340,13 +1341,13 @@ async function renderVisibleCodeBlocks(): Promise<void> {
 				maxResults: 256,
 				attachedOnly: true,
 			});
-			if (bridge !== objc || !nativeCodeHook?.active) return;
+			if (bridge !== objc || !nativeCodeHook?.active || channelId !== currentChannelId()) return;
 			for (let index = 0; index < labels.length; index += 64) {
 				const chunk = labels.slice(index, index + 64);
 				const attributedTexts = await bridge.batch(
 					chunk.map((label) => ({ target: label, selector: 'attributedText', args: [] })),
 				);
-				if (bridge !== objc || !nativeCodeHook?.active) return;
+				if (bridge !== objc || !nativeCodeHook?.active || channelId !== currentChannelId()) return;
 				for (const [offset, label] of chunk.entries()) {
 					const attributed = attributedTexts[offset] as NativeObjectHandle | null;
 					if (attributed) renderNativeCodeBlock(label, attributed);
@@ -1415,14 +1416,22 @@ function installNativeRenderer(context?: PluginContext): void {
 				const timer = setTimeout(() => {
 					pendingMoveTimers.delete(timer);
 					const bridge = objc;
-					if (!nativeCodeHook?.active || !bridge) return;
+					const channelId = currentChannelId();
+					if (!nativeCodeHook?.active || !bridge || !channelId) return;
 					void bridge
 						.batch([
 							{ target: self, selector: 'window', args: [] },
 							{ target: self, selector: 'attributedText', args: [] },
 						])
 						.then(([window, attributed]) => {
-							if (bridge !== objc || !nativeCodeHook?.active || !window || !attributed) return;
+							if (
+								bridge !== objc ||
+								!nativeCodeHook?.active ||
+								channelId !== currentChannelId() ||
+								!window ||
+								!attributed
+							)
+								return;
 							renderNativeCodeBlock(self, attributed as NativeObjectHandle);
 						})
 						.catch(() => undefined);
