@@ -33,6 +33,7 @@ import {
 	type ReactionAvatarSurfaceState,
 	setReactionAvatarSurfaceState,
 } from '@reaction-avatars/reaction-surface';
+import { messageInfoForCellAsync, type MessageInfo } from '@reaction-avatars/message-info';
 import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import { metro } from '@unbound-app/api';
 import type {
@@ -119,10 +120,6 @@ type RuntimeModule = {
 type RuntimeWindow = Window & {
 	RN$AppRegistry?: { registerComponent?: (name: string, provider: () => unknown) => void };
 	modules?: Map<number | string, RuntimeModule>;
-};
-type MessageInfo = {
-	channelId: string;
-	messageId: string;
 };
 type ReactionContext = {
 	channelId: string;
@@ -238,6 +235,7 @@ const reactionCellSizes = new Map<string, ReactionCellSizeEntry>();
 const reactionTableLayouts = new Map<string, ReactionTableLayout>();
 const activeCells = new Map<string, NativeObjectHandle>();
 const scheduledCells = new Set<string>();
+const pendingForcedCells = new Set<string>();
 const lastCellScans = new Map<string, number>();
 const hooks: NativeHookToken[] = [];
 const nativeIds = new WeakMap<object, number>();
@@ -375,29 +373,6 @@ function ancestorNativeViewByClass(
 	return null;
 }
 
-function messageInfoForCell(cell: NativeObjectHandle): MessageInfo | undefined {
-	if (!objc) return;
-	try {
-		const viewModel = objc.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
-		if (!viewModel || !objc.respondsTo(viewModel, 'message')) return;
-		const message = nativeCall(viewModel, 'message') as NativeObjectHandle | null;
-		if (!message) return;
-		const messageId = stringValue(nativeCall(message, 'id'));
-		if (!messageId) return;
-		const channel = nativeCall(message, 'channel') as NativeObjectHandle | null;
-		const channelId = stringValue(
-			nativeCall(message, 'channelId'),
-			nativeCall(message, 'channel_id'),
-			channel ? nativeCall(channel, 'id') : null,
-			selectedChannelId(),
-		);
-		if (!channelId) return;
-		return { channelId, messageId };
-	} catch {
-		return;
-	}
-}
-
 function messageForCell(info: MessageInfo): Message | null {
 	return messages?.getMessage?.(info.channelId, info.messageId) ?? null;
 }
@@ -436,13 +411,11 @@ function reactionContextForMessage(
 	};
 }
 
-function messageContextForCell(cell: NativeObjectHandle): {
+function messageContextForCell(info: MessageInfo): {
 	channelId: string;
 	message: Message;
 	messageId: string;
 } | null {
-	const info = messageInfoForCell(cell);
-	if (!info) return null;
 	const message = messageForCell(info);
 	if (!message) return null;
 	return { channelId: info.channelId, message, messageId: info.messageId };
@@ -1543,10 +1516,10 @@ function restoreReactionTableLayout(entry: ReactionTableLayout): void {
 	nativeCall(entry.table, 'endUpdates');
 }
 
-function updateCell(cell: NativeObjectHandle): void {
+function updateCell(cell: NativeObjectHandle, info: MessageInfo | undefined): void {
 	if (!objc || !fabric || !messages) return;
 	const cellKey = nativeKey(cell);
-	const messageContext = messageContextForCell(cell);
+	const messageContext = info ? messageContextForCell(info) : null;
 	if (!messageContext) {
 		cleanupCellReactions(cellKey);
 		return;
@@ -1638,18 +1611,32 @@ function scheduleCell(cell: NativeObjectHandle, force: boolean = false): void {
 	activeCells.set(key, cell);
 	const now = Date.now();
 	if (!force && now - (lastCellScans.get(key) ?? 0) < CELL_SCAN_INTERVAL) return;
-	if (scheduledCells.has(key)) return;
+	if (scheduledCells.has(key)) {
+		if (force) pendingForcedCells.add(key);
+		return;
+	}
 	scheduledCells.add(key);
 	const token = lifecycle;
 	setTimeout(() => {
-		scheduledCells.delete(key);
-		if (token !== lifecycle || !objc) return;
-		lastCellScans.set(key, Date.now());
-		try {
-			updateCell(cell);
-		} catch {
+		const bridge = objc;
+		if (token !== lifecycle || !bridge) {
+			scheduledCells.delete(key);
 			return;
 		}
+		void messageInfoForCellAsync(cell, bridge, selectedChannelId)
+			.then((info) => {
+				if (token !== lifecycle || objc !== bridge || !activeCells.has(key)) return;
+				lastCellScans.set(key, Date.now());
+				updateCell(cell, info);
+			})
+			.catch(() => undefined)
+			.finally(() => {
+				if (token !== lifecycle) return;
+				scheduledCells.delete(key);
+				if (!pendingForcedCells.delete(key)) return;
+				const currentCell = activeCells.get(key);
+				if (currentCell) scheduleCell(currentCell, true);
+			});
 	}, 0);
 }
 
@@ -1934,6 +1921,7 @@ function stop(): void {
 	reactionTableLayouts.clear();
 	activeCells.clear();
 	scheduledCells.clear();
+	pendingForcedCells.clear();
 	lastCellScans.clear();
 	userCache.clear();
 	clearReactionAvatarSurfaceStates();

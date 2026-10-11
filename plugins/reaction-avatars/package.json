@@ -6,7 +6,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "rollup -c",
-		"test": "bun test src/reaction-state.test.ts"
+		"test": "bun test --isolate src"
 	},
 	"devDependencies": {
 		"@types/bun": "latest",
