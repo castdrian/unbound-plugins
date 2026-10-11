@@ -11,6 +11,7 @@ import {
 } from '@message-link-embeds/link-targets';
 import { reactionSnapshot, stripMessageReactions } from '@message-link-embeds/reaction-state';
 import { isMessageStoreCandidate } from '@shared/message-store-candidate';
+import { readNativeMessageInfo, type NativeMessageInfo } from '@shared/native-message-info';
 import {
 	BottomAnchorTracker,
 	layoutMetricsFromNative,
@@ -100,10 +101,6 @@ type EmbeddedContent = {
 	generator: RowGenerator;
 	record: Message;
 };
-type NativeMessageInfo = {
-	channelId?: string;
-	messageId: string;
-};
 type EmbeddedSurfaceState = {
 	cell: NativeObjectHandle;
 	cellKey: string;
@@ -169,6 +166,7 @@ const pendingMessages = new Set<string>();
 const activeCells = new Map<string, NativeObjectHandle>();
 const visibleCellIds = new Map<string, string>();
 const pendingCells = new Set<string>();
+const cellLookupVersions = new Map<string, number>();
 const completedCells = new Set<string>();
 const retryCounts = new Map<string, number>();
 const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -177,6 +175,7 @@ const cellStates = new Map<string, EmbeddedSurfaceState>();
 const surfaces = new Map<string, EmbeddedSurfaceState>();
 const surfaceHeights = new SurfaceHeightCache();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
+let nextCellLookupVersion = 0;
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
 	if (!objc) return null;
@@ -305,84 +304,6 @@ function stringFromNative(value: unknown): string | undefined {
 	return typeof description === 'string' ? description : undefined;
 }
 
-function messageInfoForCell(cell: NativeObjectHandle): NativeMessageInfo | undefined {
-	if (!objc) return;
-	try {
-		const viewModel = objc.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
-		if (!viewModel || !objc.respondsTo(viewModel, 'message')) return;
-		const message = nativeCall(viewModel, 'message') as NativeObjectHandle | null;
-		if (!message) return;
-		const messageId = stringFromNative(nativeCall(message, 'id'));
-		if (!messageId) return;
-		const channel = nativeCall(message, 'channel');
-		const channelId =
-			stringFromNative(nativeCall(message, 'channelId')) ??
-			stringFromNative(nativeCall(message, 'channel_id')) ??
-			(channel && typeof channel === 'object'
-				? stringFromNative(nativeCall(channel as NativeObjectHandle, 'id'))
-				: undefined);
-		return { channelId, messageId };
-	} catch {
-		return;
-	}
-}
-
-async function stringFromNativeAsync(
-	value: unknown,
-	bridge: NativeObjCBridge,
-): Promise<string | undefined> {
-	if (typeof value === 'string') return value;
-	if (!value || typeof value !== 'object') return;
-	const handle = value as NativeObjectHandle;
-	if (!bridge.respondsTo(handle, 'description')) return;
-	const description = await bridge.invokeAsync(handle, 'description', []);
-	return typeof description === 'string' ? description : undefined;
-}
-
-async function messageInfoForCellAsync(
-	cell: NativeObjectHandle,
-	bridge: NativeObjCBridge,
-): Promise<NativeMessageInfo | undefined> {
-	try {
-		const viewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
-		if (!viewModel || !bridge.respondsTo(viewModel, 'message')) return;
-		const values = await bridge.batch([
-			{ target: viewModel, selector: 'message', args: [] },
-			{ target: { $nativeBatchResult: 0 }, selector: 'id', args: [] },
-		]);
-		const message = values[0] as NativeObjectHandle | null;
-		const messageId = await stringFromNativeAsync(values[1], bridge);
-		if (!message || !messageId) return;
-		let channelId: string | undefined;
-		const channelIdSelector = ['channelId', 'channel_id'].find((selector) =>
-			bridge.respondsTo(message, selector),
-		);
-		if (channelIdSelector) {
-			channelId = await stringFromNativeAsync(
-				await bridge.invokeAsync(message, channelIdSelector, []),
-				bridge,
-			);
-		} else if (bridge.respondsTo(message, 'channel')) {
-			const channel = (await bridge.invokeAsync(
-				message,
-				'channel',
-				[],
-			)) as NativeObjectHandle | null;
-			if (channel && bridge.respondsTo(channel, 'id')) {
-				channelId = await stringFromNativeAsync(
-					await bridge.invokeAsync(channel, 'id', []),
-					bridge,
-				);
-			}
-		}
-		const currentViewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
-		if (!currentViewModel || !bridge.call(viewModel, 'isEqual:', currentViewModel)) return;
-		return { channelId, messageId };
-	} catch {
-		return;
-	}
-}
-
 function cellKey(cell: NativeObjectHandle): string | undefined {
 	let hash: unknown;
 	try {
@@ -438,7 +359,7 @@ async function scanVisibleMessageCells(): Promise<void> {
 			if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
 			for (const cell of cells) {
 				const key = cellKey(cell);
-				const info = await messageInfoForCellAsync(cell, bridge);
+				const info = await readNativeMessageInfo(cell, bridge);
 				if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
 				if (!key || !info) continue;
 				const previousId = visibleCellIds.get(key) ?? cellStates.get(key)?.messageId;
@@ -1238,10 +1159,12 @@ function updateExistingSurface(
 	applyAttachment(state, forceRefresh);
 }
 
-function updateCell(cell: NativeObjectHandle): CellUpdateStatus {
+function updateCell(
+	cell: NativeObjectHandle,
+	info: NativeMessageInfo | undefined,
+): CellUpdateStatus {
 	if (!objc || !fabric) return 'done';
 	const key = cellKey(cell);
-	const info = messageInfoForCell(cell);
 	if (!key || !info) return 'retry';
 	const channelId = info.channelId ?? currentChannelId();
 	if (!channelId) return 'retry';
@@ -1318,32 +1241,45 @@ function scheduleCell(cell: NativeObjectHandle): void {
 		return;
 	pendingCells.add(key);
 	const token = lifecycle;
+	const lookupVersion = ++nextCellLookupVersion;
+	cellLookupVersions.set(key, lookupVersion);
 	setTimeout(() => {
-		pendingCells.delete(key);
-		if (token !== lifecycle || !objc) return;
-		try {
-			const status = updateCell(cell);
-			if (status === 'done') {
+		const bridge = objc;
+		if (token !== lifecycle || !bridge || cellLookupVersions.get(key) !== lookupVersion) return;
+		void readNativeMessageInfo(cell, bridge)
+			.then((info) => {
+				if (token !== lifecycle || objc !== bridge || cellLookupVersions.get(key) !== lookupVersion)
+					return;
+				pendingCells.delete(key);
+				try {
+					const status = updateCell(cell, info);
+					if (status === 'done') {
+						completedCells.add(key);
+						retryCounts.delete(key);
+						return;
+					}
+					if (status === 'waiting') return;
+					observeCellLabels(cell);
+					const attempts = (retryCounts.get(key) ?? 0) + 1;
+					retryCounts.set(key, attempts);
+					if (attempts > 8) {
+						completedCells.add(key);
+						return;
+					}
+					const timer = setTimeout(() => {
+						retryTimers.delete(key);
+						if (token === lifecycle) scheduleCell(cell);
+					}, 120);
+					retryTimers.set(key, timer);
+				} catch {
+					completedCells.add(key);
+				}
+			})
+			.catch(() => {
+				if (token !== lifecycle || cellLookupVersions.get(key) !== lookupVersion) return;
+				pendingCells.delete(key);
 				completedCells.add(key);
-				retryCounts.delete(key);
-				return;
-			}
-			if (status === 'waiting') return;
-			observeCellLabels(cell);
-			const attempts = (retryCounts.get(key) ?? 0) + 1;
-			retryCounts.set(key, attempts);
-			if (attempts > 8) {
-				completedCells.add(key);
-				return;
-			}
-			const timer = setTimeout(() => {
-				retryTimers.delete(key);
-				if (token === lifecycle) scheduleCell(cell);
-			}, 120);
-			retryTimers.set(key, timer);
-		} catch {
-			completedCells.add(key);
-		}
+			});
 	}, 0);
 }
 
@@ -1351,6 +1287,7 @@ function clearCell(key: string): void {
 	activeCells.delete(key);
 	visibleCellIds.delete(key);
 	pendingCells.delete(key);
+	cellLookupVersions.delete(key);
 	completedCells.delete(key);
 	retryCounts.delete(key);
 	waitingCells.delete(key);
@@ -1547,6 +1484,7 @@ function stop(): void {
 	activeCells.clear();
 	visibleCellIds.clear();
 	pendingCells.clear();
+	cellLookupVersions.clear();
 	completedCells.clear();
 	retryCounts.clear();
 	for (const timer of retryTimers.values()) clearTimeout(timer);

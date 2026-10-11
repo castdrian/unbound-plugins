@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { NativeObjectHandle } from '@unbound-app/api/native';
 
-import { messageInfoForCellAsync, type MessageCellBridge } from './message-info';
+import { readNativeMessageInfo, type NativeMessageCellBridge } from './native-message-info';
 
-describe('reaction message cell lookup', () => {
+describe('native message cell lookup', () => {
 	test('reads the message and channel asynchronously in one dependent batch', async () => {
 		const cell = {} as NativeObjectHandle;
 		const viewModel = {} as NativeObjectHandle;
 		const message = {} as NativeObjectHandle;
 		let batchSteps = 0;
-		const bridge: MessageCellBridge = {
+		const bridge: NativeMessageCellBridge = {
 			batch: async (steps) => {
 				batchSteps = steps.length;
 				expect(steps[1].target).toEqual({ $nativeBatchResult: 0 });
@@ -26,7 +26,7 @@ describe('reaction message cell lookup', () => {
 				(handle === message && selector === 'channelId'),
 		};
 
-		expect(await messageInfoForCellAsync(cell, bridge, () => 'other-channel')).toEqual({
+		expect(await readNativeMessageInfo(cell, bridge, () => 'other-channel')).toEqual({
 			channelId: 'channel-1',
 			messageId: 'message-1',
 		});
@@ -39,7 +39,7 @@ describe('reaction message cell lookup', () => {
 		const replacement = {} as NativeObjectHandle;
 		const message = {} as NativeObjectHandle;
 		let currentViewModel = viewModel;
-		const bridge: MessageCellBridge = {
+		const bridge: NativeMessageCellBridge = {
 			batch: async () => {
 				currentViewModel = replacement;
 				return [message, 'old-message'];
@@ -50,7 +50,7 @@ describe('reaction message cell lookup', () => {
 			respondsTo: (handle, selector) => handle === viewModel && selector === 'message',
 		};
 
-		expect(await messageInfoForCellAsync(cell, bridge, () => 'channel-1')).toBeUndefined();
+		expect(await readNativeMessageInfo(cell, bridge, () => 'channel-1')).toBeUndefined();
 	});
 
 	test('uses the channel selected before the asynchronous lookup began', async () => {
@@ -58,7 +58,7 @@ describe('reaction message cell lookup', () => {
 		const viewModel = {} as NativeObjectHandle;
 		const message = {} as NativeObjectHandle;
 		let selected = 'original-channel';
-		const bridge: MessageCellBridge = {
+		const bridge: NativeMessageCellBridge = {
 			batch: async () => {
 				selected = 'next-channel';
 				return [message, 'message-1'];
@@ -68,8 +68,25 @@ describe('reaction message cell lookup', () => {
 			respondsTo: (handle, selector) => handle === viewModel && selector === 'message',
 		};
 
-		expect(await messageInfoForCellAsync(cell, bridge, () => selected)).toEqual({
+		expect(await readNativeMessageInfo(cell, bridge, () => selected)).toEqual({
 			channelId: 'original-channel',
+			messageId: 'message-1',
+		});
+	});
+
+	test('returns the message without a channel when no fallback is provided', async () => {
+		const cell = {} as NativeObjectHandle;
+		const viewModel = {} as NativeObjectHandle;
+		const message = {} as NativeObjectHandle;
+		const bridge: NativeMessageCellBridge = {
+			batch: async () => [message, 'message-1'],
+			getIvar: () => viewModel,
+			invokeAsync: async (_handle, selector) => selector === 'isEqual:',
+			respondsTo: (handle, selector) => handle === viewModel && selector === 'message',
+		};
+
+		expect(await readNativeMessageInfo(cell, bridge)).toEqual({
+			channelId: undefined,
 			messageId: 'message-1',
 		});
 	});

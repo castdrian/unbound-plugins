@@ -33,8 +33,8 @@ import {
 	type ReactionAvatarSurfaceState,
 	setReactionAvatarSurfaceState,
 } from '@reaction-avatars/reaction-surface';
-import { messageInfoForCellAsync, type MessageInfo } from '@reaction-avatars/message-info';
 import { isMessageStoreCandidate } from '@shared/message-store-candidate';
+import { readNativeMessageInfo } from '@shared/native-message-info';
 import { metro } from '@unbound-app/api';
 import type {
 	NativeFabricBridge,
@@ -120,6 +120,10 @@ type RuntimeModule = {
 type RuntimeWindow = Window & {
 	RN$AppRegistry?: { registerComponent?: (name: string, provider: () => unknown) => void };
 	modules?: Map<number | string, RuntimeModule>;
+};
+type MessageInfo = {
+	channelId: string;
+	messageId: string;
 };
 type ReactionContext = {
 	channelId: string;
@@ -1623,11 +1627,14 @@ function scheduleCell(cell: NativeObjectHandle, force: boolean = false): void {
 			scheduledCells.delete(key);
 			return;
 		}
-		void messageInfoForCellAsync(cell, bridge, selectedChannelId)
+		void readNativeMessageInfo(cell, bridge, selectedChannelId)
 			.then((info) => {
 				if (token !== lifecycle || objc !== bridge || !activeCells.has(key)) return;
 				lastCellScans.set(key, Date.now());
-				updateCell(cell, info);
+				updateCell(
+					cell,
+					info?.channelId ? { channelId: info.channelId, messageId: info.messageId } : undefined,
+				);
 			})
 			.catch(() => undefined)
 			.finally(() => {
