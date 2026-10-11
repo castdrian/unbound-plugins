@@ -93,6 +93,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function isActionSheetRowGroup(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	const element = value as Element;
+	if (typeName(element) === 'ActionSheetRowGroup') return true;
+	const props = element?.props;
+	if (typeof props?.hasIcons !== 'boolean' || !Array.isArray(props.children)) return false;
+	return (
+		props.children.length > 0 &&
+		props.children.every(
+			(row) =>
+				isRecord(row) &&
+				isRecord(row.props) &&
+				typeof row.props.label === 'string' &&
+				typeof row.props.onPress === 'function',
+		)
+	);
+}
+
 function supportsRawSheet(key: string): boolean {
 	return (
 		/MessageLongPressActionSheet$/i.test(key) ||
@@ -310,7 +328,7 @@ function addMessageRow(result: unknown, sheets: SheetHost, ActionSheetRow: any):
 	const item = currentItem;
 	const key = currentSheetKey;
 	if (!item || !key) return result;
-	const group = findElement(result, (element) => typeName(element) === 'ActionSheetRowGroup');
+	const group = findElement(result, isActionSheetRowGroup);
 	const rows = group?.props?.children;
 	if (
 		!group?.props ||
