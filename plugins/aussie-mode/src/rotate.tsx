@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 const Patcher = patcher.createPatcher('adrian.aussie-mode');
+const pendingFileRotationIntervals = new Set<ReturnType<typeof setInterval>>();
 
 const ROTATED_ROOT_COMPONENT_NAMES = ['ErrorBoundary'];
 const ROTATED_COMPONENT_FILE_PATHS = [
@@ -59,12 +60,17 @@ function rotateFileComponent(filePath: string): void {
 		const module = metro.findByFilePath(filePath, { interop: false });
 		if (module) {
 			clearInterval(interval);
+			pendingFileRotationIntervals.delete(interval);
 			attachFileRotation(module);
 			return;
 		}
 
-		if (attempts >= FILE_COMPONENT_POLL_MAX_ATTEMPTS) clearInterval(interval);
+		if (attempts >= FILE_COMPONENT_POLL_MAX_ATTEMPTS) {
+			clearInterval(interval);
+			pendingFileRotationIntervals.delete(interval);
+		}
 	}, FILE_COMPONENT_POLL_INTERVAL_MS);
+	pendingFileRotationIntervals.add(interval);
 }
 
 function rotateNavigatorScreen(siblingRouteNames: string[], targetRouteName: string): void {
@@ -132,6 +138,8 @@ export function startRotation(): void {
 }
 
 export function stopRotation(): void {
+	for (const interval of pendingFileRotationIntervals) clearInterval(interval);
+	pendingFileRotationIntervals.clear();
 	try {
 		Patcher.unpatchAll();
 	} catch {}
