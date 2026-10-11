@@ -13,6 +13,7 @@ import { reactionSnapshot, stripMessageReactions } from '@message-link-embeds/re
 import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import {
 	BottomAnchorTracker,
+	layoutMetricsFromNative,
 	readSurfaceAnchor,
 	SurfaceHeightCache,
 	type SurfaceLayoutMetrics,
@@ -131,6 +132,7 @@ type EmbeddedSurfaceState = {
 	layoutTimer: ReturnType<typeof setTimeout> | null;
 	reactionLayoutTimer: ReturnType<typeof setTimeout> | null;
 	bottomScrollTimer: ReturnType<typeof setTimeout> | null;
+	bottomScrollPending: boolean;
 	pendingHeight: number | null;
 	renderRevision: number;
 	bottomAnchor: BottomAnchorTracker;
@@ -174,7 +176,6 @@ const cellStates = new Map<string, EmbeddedSurfaceState>();
 const surfaces = new Map<string, EmbeddedSurfaceState>();
 const surfaceHeights = new SurfaceHeightCache();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
-const surfaceRebindTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function nativeCall(handle: NativeObjectHandle, selector: string, ...args: unknown[]): unknown {
 	if (!objc) return null;
@@ -718,27 +719,13 @@ function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
 }
 
 function tableLayoutMetrics(table: NativeObjectHandle): SurfaceLayoutMetrics {
-	const contentSize = structFields(nativeCall(table, 'contentSize'));
-	const contentOffset = structFields(nativeCall(table, 'contentOffset'));
-	const bounds = structFields(nativeCall(table, 'bounds'));
-	const boundsSize = bounds.size as AnyRecord | undefined;
-	const transform = structFields(nativeCall(table, 'transform'));
-	const contentInset = structFields(nativeCall(table, 'adjustedContentInset'));
-	const contentHeight = Number(contentSize.height);
-	const viewportHeight = Number(boundsSize?.height);
-	const offsetY = Number(contentOffset.y);
-	const topInset = Number(contentInset.top ?? 0);
-	const bottomInset = Number(contentInset.bottom ?? 0);
-	const x = Number(contentOffset.x);
-	return {
-		bottomInset,
-		contentHeight,
-		inverted: Number(transform.d) < 0,
-		offsetX: x,
-		offsetY,
-		topInset,
-		viewportHeight,
-	};
+	return layoutMetricsFromNative([
+		nativeCall(table, 'contentSize'),
+		nativeCall(table, 'contentOffset'),
+		nativeCall(table, 'bounds'),
+		nativeCall(table, 'transform'),
+		nativeCall(table, 'adjustedContentInset'),
+	]);
 }
 
 function captureSurfaceBottomAnchor(state: EmbeddedSurfaceState, table: NativeObjectHandle): void {
@@ -763,37 +750,62 @@ function scheduleBottomScrollCorrection(
 	table: NativeObjectHandle,
 ): void {
 	if (!state.bottomAnchor.pending) return;
-	if (state.bottomScrollTimer) return;
+	if (state.bottomScrollTimer || state.bottomScrollPending) return;
 	let attempts = 0;
-	const correct = () => {
+	const correct = async () => {
 		state.bottomScrollTimer = null;
-		if (cellStates.get(state.cellKey) !== state || !objc) {
+		const bridge = objc;
+		const token = lifecycle;
+		if (cellStates.get(state.cellKey) !== state || !bridge) {
 			state.bottomAnchor.clear();
 			return;
 		}
-		nativeCall(state.label, 'layoutIfNeeded');
-		nativeCall(state.cell, 'layoutIfNeeded');
-		nativeCall(table, 'layoutIfNeeded');
-		const metrics = tableLayoutMetrics(table);
-		const userIsScrolling = tableIsScrolling(table);
-		const correction = state.bottomAnchor.correction(metrics, userIsScrolling);
-		if (correction) {
-			nativeCall(
-				table,
-				'setContentOffset:animated:',
-				objc.struct('CGPoint', { x: correction.x, y: correction.y }),
-				false,
-			);
-			return;
+		state.bottomScrollPending = true;
+		try {
+			const values = await bridge.batch([
+				{ target: state.label, selector: 'layoutIfNeeded', args: [] },
+				{ target: state.cell, selector: 'layoutIfNeeded', args: [] },
+				{ target: table, selector: 'layoutIfNeeded', args: [] },
+				{ target: table, selector: 'contentSize', args: [] },
+				{ target: table, selector: 'contentOffset', args: [] },
+				{ target: table, selector: 'bounds', args: [] },
+				{ target: table, selector: 'transform', args: [] },
+				{ target: table, selector: 'adjustedContentInset', args: [] },
+				{ target: table, selector: 'isTracking', args: [] },
+				{ target: table, selector: 'isDragging', args: [] },
+				{ target: table, selector: 'isDecelerating', args: [] },
+			]);
+			if (token !== lifecycle || objc !== bridge || cellStates.get(state.cellKey) !== state) {
+				state.bottomAnchor.clear();
+				return;
+			}
+			const metrics = layoutMetricsFromNative(values.slice(3, 8));
+			const userIsScrolling = values.slice(8).some(Boolean);
+			const correction = state.bottomAnchor.correction(metrics, userIsScrolling);
+			if (correction) {
+				if (!tableIsScrolling(table)) {
+					nativeCall(
+						table,
+						'setContentOffset:animated:',
+						bridge.struct('CGPoint', { x: correction.x, y: correction.y }),
+						false,
+					);
+				}
+				return;
+			}
+			if (state.bottomAnchor.pending && attempts < 12) {
+				attempts++;
+				state.bottomScrollTimer = setTimeout(() => void correct(), 16);
+				return;
+			}
+			state.bottomAnchor.clear();
+		} catch {
+			state.bottomAnchor.clear();
+		} finally {
+			state.bottomScrollPending = false;
 		}
-		if (state.bottomAnchor.pending && attempts < 12) {
-			attempts++;
-			state.bottomScrollTimer = setTimeout(correct, 16);
-			return;
-		}
-		state.bottomAnchor.clear();
 	};
-	state.bottomScrollTimer = setTimeout(correct, 16);
+	state.bottomScrollTimer = setTimeout(() => void correct(), 16);
 }
 
 function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: number): void {
@@ -1011,6 +1023,7 @@ function createSurfaceState(
 		layoutTimer: null,
 		reactionLayoutTimer: null,
 		bottomScrollTimer: null,
+		bottomScrollPending: false,
 		pendingHeight: null,
 		renderRevision: 0,
 		bottomAnchor,
@@ -1081,9 +1094,6 @@ function teardownSurface(key: string, restore: boolean): void {
 	nativeCall(state.host, 'removeFromSuperview');
 	surfaces.delete(state.surfaceId);
 	cellStates.delete(key);
-	const rebindTimer = surfaceRebindTimers.get(key);
-	if (rebindTimer) clearTimeout(rebindTimer);
-	surfaceRebindTimers.delete(key);
 }
 
 function cachedContentFor(target: LinkTarget, message: Message): EmbeddedContent | undefined {
@@ -1222,9 +1232,6 @@ function clearCell(key: string): void {
 	completedCells.delete(key);
 	retryCounts.delete(key);
 	waitingCells.delete(key);
-	const rebindTimer = surfaceRebindTimers.get(key);
-	if (rebindTimer) clearTimeout(rebindTimer);
-	surfaceRebindTimers.delete(key);
 	const retryTimer = retryTimers.get(key);
 	if (retryTimer) clearTimeout(retryTimer);
 	retryTimers.delete(key);
@@ -1235,20 +1242,6 @@ function clearCell(key: string): void {
 function removeCellLabelHooks(key: string): void {
 	for (const token of cellLabelHooks.get(key) ?? []) token.remove();
 	cellLabelHooks.delete(key);
-}
-
-function queueSurfaceRebind(cell: NativeObjectHandle, state: EmbeddedSurfaceState): void {
-	const key = state.cellKey;
-	if (surfaceRebindTimers.has(key)) return;
-	const timer = setTimeout(() => {
-		surfaceRebindTimers.delete(key);
-		if (cellStates.get(key) !== state || !objc) return;
-		if (nativeCall(state.label, 'isDescendantOfView:', cell)) return;
-		teardownSurface(key, false);
-		completedCells.delete(key);
-		scheduleCell(cell);
-	}, 0);
-	surfaceRebindTimers.set(key, timer);
 }
 
 function refreshCell(cell: NativeObjectHandle): void {
@@ -1436,8 +1429,6 @@ function stop(): void {
 	retryCounts.clear();
 	for (const timer of retryTimers.values()) clearTimeout(timer);
 	retryTimers.clear();
-	for (const timer of surfaceRebindTimers.values()) clearTimeout(timer);
-	surfaceRebindTimers.clear();
 	waitingCells.clear();
 	cachedMessages.clear();
 	pendingMessages.clear();

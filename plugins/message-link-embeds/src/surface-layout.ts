@@ -20,6 +20,32 @@ export interface ScrollOffset {
 	y: number;
 }
 
+function nativeStructFields(raw: unknown): Record<string, unknown> {
+	if (!raw || typeof raw !== 'object') return {};
+	const value = raw as Record<string, unknown>;
+	return value.value && typeof value.value === 'object'
+		? (value.value as Record<string, unknown>)
+		: value;
+}
+
+export function layoutMetricsFromNative(values: readonly unknown[]): SurfaceLayoutMetrics {
+	const contentSize = nativeStructFields(values[0]);
+	const contentOffset = nativeStructFields(values[1]);
+	const bounds = nativeStructFields(values[2]);
+	const boundsSize = nativeStructFields(bounds.size);
+	const transform = nativeStructFields(values[3]);
+	const contentInset = nativeStructFields(values[4]);
+	return {
+		bottomInset: Number(contentInset.bottom ?? 0),
+		contentHeight: Number(contentSize.height),
+		inverted: Number(transform.d) < 0,
+		offsetX: Number(contentOffset.x),
+		offsetY: Number(contentOffset.y),
+		topInset: Number(contentInset.top ?? 0),
+		viewportHeight: Number(boundsSize.height),
+	};
+}
+
 export class BottomAnchorTracker {
 	private anchor: BottomAnchor | undefined;
 

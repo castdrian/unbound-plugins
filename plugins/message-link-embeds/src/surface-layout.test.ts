@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	BottomAnchorTracker,
 	bottomOffsetCorrection,
+	layoutMetricsFromNative,
 	readBottomAnchor,
 	readSurfaceAnchor,
 	SurfaceHeightCache,
@@ -25,6 +26,26 @@ function metrics(overrides: Partial<SurfaceLayoutMetrics> = {}): SurfaceLayoutMe
 }
 
 describe('chat bottom anchoring', () => {
+	test('reads the native table geometry used for bottom anchoring', () => {
+		const nativeValues = [
+			{ value: { width: 320, height: 1600 } },
+			{ value: { x: 4, y: 1000 } },
+			{ value: { origin: { x: 0, y: 0 }, size: { width: 320, height: 600 } } },
+			{ value: { a: 1, b: 0, c: 0, d: -1, tx: 0, ty: 0 } },
+			{ value: { top: 12, bottom: 24 } },
+		];
+
+		expect(layoutMetricsFromNative(nativeValues)).toEqual({
+			bottomInset: 24,
+			contentHeight: 1600,
+			inverted: true,
+			offsetX: 4,
+			offsetY: 1000,
+			topInset: 12,
+			viewportHeight: 600,
+		});
+	});
+
 	test('recognizes the visible bottom of an inverted message list', () => {
 		const anchor = readBottomAnchor(metrics({ inverted: true, offsetY: 0 }));
 
