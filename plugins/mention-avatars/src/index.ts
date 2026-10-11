@@ -1044,8 +1044,17 @@ function installNativeHooks(): void {
 	if (!objc) return;
 	const lifecycle = objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
 		after: ({ self }) => {
-			const action = mentionCellLifecycleAction(Boolean(nativeCall(self, 'window')), false);
-			if (action === 'render') scheduleCellRender(self);
+			const bridge = objc;
+			const token = lifecycleToken;
+			if (!bridge) return;
+			void bridge
+				.invokeAsync(self, 'window', [])
+				.then((window) => {
+					if (token !== lifecycleToken || objc !== bridge) return;
+					const action = mentionCellLifecycleAction(Boolean(window), false);
+					if (action === 'render') scheduleCellRender(self);
+				})
+				.catch(() => undefined);
 		},
 	});
 	const layout = objc.hook('DCDMessageTableViewCell', 'layoutSubviews', {

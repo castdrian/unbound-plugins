@@ -23,6 +23,7 @@
 	"capabilities": [
 		"native.objc.classes",
 		"native.objc.invoke",
+		"native.objc.invokeAsync",
 		"native.objc.batch",
 		"native.objc.snapshot",
 		"native.objc.ivars",

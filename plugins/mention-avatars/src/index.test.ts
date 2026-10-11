@@ -89,6 +89,10 @@ const native = {
 			if (target.name === 'mutable' && selector === 'isEqual:') return true;
 			return null;
 		},
+		invokeAsync: async (target: { name?: string }, selector: string) => {
+			nativeCalls.push(`${target.name}:async:${selector}`);
+			return target.name === 'cell' && selector === 'window' ? { name: 'window' } : null;
+		},
 		hook: (
 			_className: string,
 			selector: string,
@@ -436,6 +440,41 @@ describe('mention avatars native lifecycle', () => {
 		plugin.start?.({ native } as never);
 
 		expect(hooks).toEqual(['didMoveToWindow', 'layoutSubviews', 'prepareForReuse']);
+	});
+
+	test('checks cell attachment asynchronously after the visibility hook', async () => {
+		fixtureMessage = { channel_id: 'channel', content: '<@123>', id: 'message' };
+		scanCells = [];
+		plugin.start?.({ native } as never);
+		nativeCalls.length = 0;
+
+		hookHandlers.get('didMoveToWindow')?.({ self: { name: 'cell' } });
+
+		expect(nativeCalls).toContain('cell:async:window');
+		expect(nativeCalls).not.toContain('cell:window');
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(nativeCalls).toContain('cell:hash');
+	});
+
+	test('discards a visibility result after the plugin stops', async () => {
+		const originalInvokeAsync = native.objc.invokeAsync;
+		let resolveWindow: ((window: { name: string }) => void) | undefined;
+		native.objc.invokeAsync = () =>
+			new Promise((resolve) => {
+				resolveWindow = resolve;
+			});
+		try {
+			scanCells = [];
+			plugin.start?.({ native } as never);
+			nativeCalls.length = 0;
+			hookHandlers.get('didMoveToWindow')?.({ self: { name: 'cell' } });
+			plugin.stop?.();
+			resolveWindow?.({ name: 'window' });
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(nativeCalls).not.toContain('cell:hash');
+		} finally {
+			native.objc.invokeAsync = originalInvokeAsync;
+		}
 	});
 
 	test('removes every native hook when the plugin stops', () => {

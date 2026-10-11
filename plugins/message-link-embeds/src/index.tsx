@@ -1283,13 +1283,22 @@ function installNativeHooks(): void {
 	if (!objc || hooks.length > 0) return;
 	const visibility = objc.hook('DCDMessageTableViewCell', 'didMoveToWindow', {
 		after: ({ self }) => {
-			const key = cellKey(self);
-			if (!key) return;
-			if (!nativeCall(self, 'window')) {
-				clearCell(key);
-				return;
-			}
-			scheduleCell(self);
+			const bridge = objc;
+			const token = lifecycle;
+			if (!bridge) return;
+			void bridge
+				.invokeAsync(self, 'window', [])
+				.then((window) => {
+					if (token !== lifecycle || objc !== bridge) return;
+					const key = cellKey(self);
+					if (!key) return;
+					if (!window) {
+						clearCell(key);
+						return;
+					}
+					scheduleCell(self);
+				})
+				.catch(() => undefined);
 		},
 	});
 	const reuse = objc.hook('DCDMessageTableViewCell', 'prepareForReuse', {
