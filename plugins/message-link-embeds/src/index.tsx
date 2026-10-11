@@ -325,7 +325,12 @@ function messageInfoForCell(cell: NativeObjectHandle): NativeMessageInfo | undef
 }
 
 function cellKey(cell: NativeObjectHandle): string | undefined {
-	const hash = nativeCall(cell, 'hash');
+	let hash: unknown;
+	try {
+		hash = objc?.call(cell, 'hash');
+	} catch {
+		hash = null;
+	}
 	if (hash !== null && hash !== undefined) return String(hash);
 	const description = nativeCall(cell, 'description');
 	return typeof description === 'string' ? description : undefined;

@@ -532,7 +532,15 @@ function messageIDForCell(cell: NativeValue): string | undefined {
 function cellKey(cell: NativeValue): string | undefined {
 	if (!objc) return;
 	const className = objc.className(cell) ?? '';
-	if (objc.respondsTo(cell, 'hash')) return `${className}:${String(nativeCall(cell, 'hash'))}`;
+	if (objc.respondsTo(cell, 'hash')) {
+		let hash: NativeValue;
+		try {
+			hash = objc.call(cell, 'hash');
+		} catch {
+			hash = null;
+		}
+		if (hash !== null && hash !== undefined) return `${className}:${String(hash)}`;
+	}
 	if (!objc.respondsTo(cell, 'description')) return;
 	const description = nativeCall(cell, 'description');
 	return typeof description === 'string' ? `${className}:${description}` : undefined;

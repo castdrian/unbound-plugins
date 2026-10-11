@@ -28,6 +28,12 @@ const native = {
 	objc: {
 		array: (value: unknown) => value,
 		alloc: (value: unknown) => value,
+		call: (target: { name?: string }, selector: string) => {
+			nativeCalls.push(`${target.name}:current:${selector}`);
+			if (target.name === 'cell' && selector === 'hash') return 1;
+			if (target.name === 'text' && selector === 'hash') return 2;
+			return null;
+		},
 		batch: async () => {
 			nativeCalls.push('UIApplication:sharedApplication', 'application:windows');
 			return [{ name: 'application' }, [{ name: 'window' }]];
@@ -453,7 +459,18 @@ describe('mention avatars native lifecycle', () => {
 		expect(nativeCalls).toContain('cell:async:window');
 		expect(nativeCalls).not.toContain('cell:window');
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(nativeCalls).toContain('cell:hash');
+		expect(nativeCalls).toContain('cell:current:hash');
+	});
+
+	test('identifies a layout cell without crossing to the main thread', () => {
+		scanCells = [];
+		plugin.start?.({ native } as never);
+		nativeCalls.length = 0;
+
+		hookHandlers.get('layoutSubviews')?.({ self: { name: 'cell' } });
+
+		expect(nativeCalls).toContain('cell:current:hash');
+		expect(nativeCalls).not.toContain('cell:hash');
 	});
 
 	test('discards a visibility result after the plugin stops', async () => {
@@ -471,7 +488,7 @@ describe('mention avatars native lifecycle', () => {
 			plugin.stop?.();
 			resolveWindow?.({ name: 'window' });
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			expect(nativeCalls).not.toContain('cell:hash');
+			expect(nativeCalls).not.toContain('cell:current:hash');
 		} finally {
 			native.objc.invokeAsync = originalInvokeAsync;
 		}
