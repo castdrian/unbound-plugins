@@ -20,6 +20,7 @@ const settingsValues = new Map<string, unknown>();
 const unresolvedUsers = new Set<string>();
 const target = { type: () => null };
 const threadModule = { default: () => null };
+const userSummaryItem = () => null;
 const typingListeners = new Set<() => void>();
 const effectCleanups = new Set<() => void>();
 const typingStore = {
@@ -144,7 +145,7 @@ mock.module('@unbound-app/api', () => ({
 			const profile = { default: { type: { name: 'UserProfileActionSheet' } } };
 			return predicate(profile) ? profile : { theme: 'darker' };
 		},
-		findByName: () => () => null,
+		findByName: () => null,
 		findByProps: (...props: string[]) => {
 			if (props.includes('openLazy'))
 				return {
@@ -169,9 +170,11 @@ mock.module('@unbound-app/api', () => ({
 		},
 		findByFilePath: (path: string) =>
 			moduleAvailable
-				? path.includes('ThreadChannel')
-					? threadModule
-					: { default: target }
+				? path.includes('UserSummaryItem')
+					? { default: userSummaryItem }
+					: path.includes('ThreadChannel')
+						? threadModule
+						: { default: target }
 				: null,
 		addListener: (listener: () => void) => {
 			moduleListenerCount++;
@@ -606,6 +609,7 @@ describe('channel row integration', () => {
 		expect(first.props.children.props.children.type).toBeFunction();
 		expect(second.type).toBe('Pressable');
 		const summary = second.props.children;
+		expect(summary.type).toBe(userSummaryItem);
 		expect(summary.props.users).toEqual([{ id: 'known' }]);
 		expect(summary.props.showDefaultAvatarsForNullUsers).toBe(true);
 		expect(summary.props.showUserPopout).toBe(true);

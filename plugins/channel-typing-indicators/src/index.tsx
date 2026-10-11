@@ -7,6 +7,7 @@ import {
 import { metro, patcher, storage } from '@unbound-app/api';
 
 const ADDON_ID = 'unbound.channel-typing-indicators';
+const USER_SUMMARY_ITEM_PATH = 'components_native/common/UserSummaryItem.tsx';
 const TEXT_CHANNEL_PATH = 'modules/channel_list_v2/native/items/TextChannel.tsx';
 const THREAD_CHANNEL_PATH = 'modules/channel_list_v2/native/items/ThreadChannel.tsx';
 const STORE = storage.getStore(ADDON_ID);
@@ -776,7 +777,11 @@ export default {
 		selectedChannelStore = metro.findByProps('getChannelId') as SelectedChannelStore | null;
 		guildSettingsStore = metro.findByProps('isChannelMuted') as GuildSettingsStore | null;
 		memberStore = metro.findByProps('getNick') as MemberStore | null;
-		userSummaryItem = metro.findByName('UserSummaryItem');
+		const summaryModule = metro.findByFilePath(USER_SUMMARY_ITEM_PATH, { interop: false });
+		userSummaryItem =
+			typeof summaryModule?.default === 'function'
+				? summaryModule.default
+				: metro.findByName('UserSummaryItem');
 		userIcon = (metro.findByProps('UserIcon') as { UserIcon?: unknown } | null)?.UserIcon;
 		tooltipComponents = metro.findByProps(
 			'TooltipArrowDirections',
