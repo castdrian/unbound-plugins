@@ -4,6 +4,7 @@ import { View } from 'react-native';
 
 const Patcher = patcher.createPatcher('adrian.aussie-mode');
 const pendingFileRotationIntervals = new Set<ReturnType<typeof setInterval>>();
+let rotationGeneration = 0;
 
 const ROTATED_ROOT_COMPONENT_NAMES = ['ErrorBoundary'];
 const ROTATED_COMPONENT_FILE_PATHS = [
@@ -99,7 +100,7 @@ function rotateNavigatorScreen(siblingRouteNames: string[], targetRouteName: str
 	});
 }
 
-function rotateActionSheets(): void {
+function rotateActionSheets(generation: number): void {
 	const sheets = metro.findByProps('openLazy', 'hideActionSheet');
 
 	if (typeof sheets?.openLazy !== 'function') return;
@@ -109,6 +110,7 @@ function rotateActionSheets(): void {
 		if (typeof componentPromise?.then !== 'function') return;
 
 		args[0] = componentPromise.then((module: any) => {
+			if (generation !== rotationGeneration) return module;
 			const Component = module?.default;
 			if (!Component) return module;
 
@@ -121,6 +123,7 @@ function rotateActionSheets(): void {
 }
 
 export function startRotation(): void {
+	const generation = ++rotationGeneration;
 	for (const componentName of ROTATED_ROOT_COMPONENT_NAMES) {
 		rotateClassComponentRender(componentName);
 	}
@@ -134,10 +137,11 @@ export function startRotation(): void {
 		'root',
 	);
 
-	rotateActionSheets();
+	rotateActionSheets(generation);
 }
 
 export function stopRotation(): void {
+	rotationGeneration++;
 	for (const interval of pendingFileRotationIntervals) clearInterval(interval);
 	pendingFileRotationIntervals.clear();
 	try {

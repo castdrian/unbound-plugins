@@ -1,12 +1,22 @@
 import { expect, mock, test } from 'bun:test';
 
+let actionSheetHandler: ((context: { args: unknown[] }) => void) | null = null;
+
 mock.module('@unbound-app/api', () => ({
 	metro: {
 		findByName: () => null,
 		findByFilePath: () => null,
-		findByProps: () => null,
+		findByProps: (...names: string[]) => (names.includes('openLazy') ? { openLazy() {} } : null),
 	},
-	patcher: { createPatcher: () => ({ after() {}, before() {}, unpatchAll() {} }) },
+	patcher: {
+		createPatcher: () => ({
+			after() {},
+			before(_target: unknown, method: string, handler: typeof actionSheetHandler) {
+				if (method === 'openLazy') actionSheetHandler = handler;
+			},
+			unpatchAll() {},
+		}),
+	},
 }));
 mock.module('react-native', () => ({ View: 'View' }));
 
@@ -35,4 +45,18 @@ test('stops polling for late screen modules when rotation stops', () => {
 		globalThis.setInterval = originalSetInterval;
 		globalThis.clearInterval = originalClearInterval;
 	}
+});
+
+test('does not rotate an action sheet resolved after the plugin stops', async () => {
+	startRotation();
+	let resolve!: (module: { default: () => null }) => void;
+	const pending = new Promise<{ default: () => null }>((done) => {
+		resolve = done;
+	});
+	const args: unknown[] = [pending];
+	actionSheetHandler?.({ args });
+	stopRotation();
+	const module = { default: () => null };
+	resolve(module);
+	expect(await args[0]).toBe(module);
 });
