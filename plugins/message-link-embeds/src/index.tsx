@@ -106,6 +106,7 @@ type EmbeddedContent = {
 type EmbeddedSurfaceState = {
 	cell: NativeObjectHandle;
 	cellKey: string;
+	table: NativeObjectHandle | null;
 	channelName: string;
 	baseGenerator: RowGenerator;
 	font: NativeObjectHandle | null;
@@ -204,7 +205,7 @@ function syncMessageReactions(): void {
 			void reconcileSurfaceText(state);
 			continue;
 		}
-		const table = tableForCell(state.cell);
+		const table = state.table;
 		if (table) captureSurfaceBottomAnchor(state, table);
 		void reconcileSurfaceText(state);
 		if (cellStates.get(state.cellKey) !== state) continue;
@@ -253,7 +254,7 @@ function handleMessageStoreChange(): void {
 			const sourceChanged =
 				source && reactionSnapshot(source.reactions) !== state.sourceReactionSnapshot;
 			if (!sourceChanged) continue;
-			const table = tableForCell(state.cell);
+			const table = state.table;
 			if (table) captureSurfaceBottomAnchor(state, table);
 		}
 	}
@@ -670,18 +671,6 @@ function structFields(value: unknown): AnyRecord {
 	return fields && typeof fields === 'object' ? (fields as AnyRecord) : {};
 }
 
-function tableForCell(cell: NativeObjectHandle): NativeObjectHandle | null {
-	if (!objc) return null;
-	let current: NativeObjectHandle | null = cell;
-	for (let depth = 0; depth < 14 && current; depth++) {
-		if (objc.respondsTo(current, 'beginUpdates') && objc.respondsTo(current, 'endUpdates')) {
-			return current;
-		}
-		current = nativeCall(current, 'superview') as NativeObjectHandle | null;
-	}
-	return null;
-}
-
 async function findTableForCellAsync(
 	cell: NativeObjectHandle,
 	bridge: NativeObjCBridge,
@@ -799,6 +788,7 @@ function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: nu
 			.then((table) => {
 				if (token !== lifecycle || objc !== bridge || cellStates.get(state.cellKey) !== state)
 					return;
+				state.table = table;
 				if (table) scheduleBottomScrollCorrection(state, table);
 			})
 			.catch(() => undefined);
@@ -822,10 +812,12 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 			)
 				return;
 			if (!table) {
+				state.table = null;
 				state.lastInvalidatedHeight = -1;
 				state.bottomAnchor.clear();
 				return;
 			}
+			state.table = table;
 			const values = await bridge.batch([
 				{ target: table, selector: 'contentSize', args: [] },
 				{ target: table, selector: 'contentOffset', args: [] },
@@ -920,7 +912,7 @@ function reportSurfaceLayout(surfaceId: string, height: number): void {
 			Math.abs(state.height - settledHeight) < 2
 		)
 			return;
-		const table = tableForCell(state.cell);
+		const table = state.table;
 		if (table) captureSurfaceBottomAnchor(state, table);
 		state.height = settledHeight;
 		surfaceHeights.set(state.heightCacheKey, settledHeight);
@@ -1034,7 +1026,10 @@ async function createSurfaceState(
 	const font = linkFont(attributedText, range);
 	const heightCacheKey = surfaceHeightCacheKey(target.channelId, target.messageId, width);
 	const initialHeight = surfaceHeights.get(heightCacheKey, INITIAL_SURFACE_HEIGHT);
-	const host = await createHost(width, initialHeight, bridge);
+	const [host, table] = await Promise.all([
+		createHost(width, initialHeight, bridge),
+		findTableForCellAsync(cell, bridge).catch(() => null),
+	]);
 	if (
 		bridge !== objc ||
 		fabricBridge !== fabric ||
@@ -1048,6 +1043,7 @@ async function createSurfaceState(
 	const state: EmbeddedSurfaceState = {
 		cell,
 		cellKey: key,
+		table,
 		channelName,
 		baseGenerator: content.generator,
 		font,
@@ -1079,7 +1075,6 @@ async function createSurfaceState(
 		renderRevision: 0,
 		bottomAnchor,
 	};
-	const table = tableForCell(cell);
 	if (table) captureSurfaceBottomAnchor(state, table);
 	surfaces.set(surfaceId, state);
 	try {
