@@ -46,6 +46,7 @@ const MAX_NATIVE_VIEW_DEPTH = 10;
 
 type AnyRecord = Record<string, unknown>;
 type NativeInvoker = (handle: NativeObjectHandle, selector: string, ...args: unknown[]) => unknown;
+type NativeLabelText = { attributedText: NativeObjectHandle; text: string };
 type MetroModule = {
 	isInitialized?: boolean;
 	publicModule?: { exports?: unknown };
@@ -1144,6 +1145,22 @@ function currentAttributedText(view: NativeObjectHandle): NativeObjectHandle | n
 	return nativeCall(view, 'attributedText') as NativeObjectHandle | null;
 }
 
+async function readLabelTextAsync(
+	view: NativeObjectHandle,
+	bridge: NativeObjCBridge,
+): Promise<NativeLabelText | undefined> {
+	try {
+		const values = await bridge.batch([
+			{ target: view, selector: 'attributedText', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'string', args: [] },
+		]);
+		if (!values[0] || typeof values[1] !== 'string') return;
+		return { attributedText: values[0] as NativeObjectHandle, text: values[1] };
+	} catch {
+		return;
+	}
+}
+
 function updateExistingSurface(
 	state: EmbeddedSurfaceState,
 	attributedText: NativeObjectHandle,
@@ -1162,8 +1179,11 @@ async function updateCell(
 	labels: NativeObjectHandle[],
 ): Promise<CellUpdateStatus> {
 	if (!objc || !fabric) return 'done';
+	const bridge = objc;
 	const key = cellKey(cell);
 	if (!key || !info) return 'retry';
+	const token = lifecycle;
+	const lookupVersion = cellLookupVersions.get(key);
 	const channelId = info.channelId ?? currentChannelId();
 	if (!channelId) return 'retry';
 	const source = messages?.getMessage?.(channelId, info.messageId);
@@ -1188,9 +1208,11 @@ async function updateCell(
 		existing.messageId === info.messageId &&
 		existing.selectedTarget.messageId === target.messageId
 	) {
-		const attributedText = currentAttributedText(existing.label);
-		const text = attributedText ? textForView(existing.label) : undefined;
-		if (!attributedText || text === undefined) return 'retry';
+		const labelText = await readLabelTextAsync(existing.label, bridge);
+		if (token !== lifecycle || bridge !== objc || lookupVersion !== cellLookupVersions.get(key))
+			return 'done';
+		if (!labelText) return 'retry';
+		const { attributedText, text } = labelText;
 		if (text === existing.renderedText) return 'done';
 		const range = findRenderedLinkRange(text, channelName);
 		if (!range) return 'retry';
@@ -1199,9 +1221,11 @@ async function updateCell(
 	}
 	if (existing) teardownSurface(key, false);
 	for (const label of labels) {
-		const attributedText = currentAttributedText(label);
-		const text = attributedText ? textForView(label) : undefined;
-		if (!attributedText || text === undefined) continue;
+		const labelText = await readLabelTextAsync(label, bridge);
+		if (token !== lifecycle || bridge !== objc || lookupVersion !== cellLookupVersions.get(key))
+			return 'done';
+		if (!labelText) continue;
+		const { attributedText, text } = labelText;
 		const range = findRenderedLinkRange(text, channelName);
 		if (!range) continue;
 		const built = cachedContentFor(target, targetMessage);
