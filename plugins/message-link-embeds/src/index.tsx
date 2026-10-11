@@ -175,6 +175,8 @@ const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const waitingCells = new Map<string, string>();
 const cellStates = new Map<string, EmbeddedSurfaceState>();
 const surfaces = new Map<string, EmbeddedSurfaceState>();
+const reconcilingSurfaces = new WeakSet<EmbeddedSurfaceState>();
+const queuedSurfaceReconciliations = new WeakSet<EmbeddedSurfaceState>();
 const surfaceHeights = new SurfaceHeightCache();
 const cellLabelHooks = new Map<string, NativeHookToken[]>();
 let nextCellLookupVersion = 0;
@@ -199,12 +201,12 @@ function syncMessageReactions(): void {
 			: state.sourceReactionSnapshot;
 		const sourceChanged = sourceReactionSnapshot !== state.sourceReactionSnapshot;
 		if (!sourceChanged) {
-			reconcileSurfaceText(state);
+			void reconcileSurfaceText(state);
 			continue;
 		}
 		const table = tableForCell(state.cell);
 		if (table) captureSurfaceBottomAnchor(state, table);
-		reconcileSurfaceText(state);
+		void reconcileSurfaceText(state);
 		if (cellStates.get(state.cellKey) !== state) continue;
 
 		state.sourceReactionSnapshot = sourceReactionSnapshot;
@@ -212,13 +214,27 @@ function syncMessageReactions(): void {
 	}
 }
 
-function reconcileSurfaceText(state: EmbeddedSurfaceState): void {
+async function reconcileSurfaceText(state: EmbeddedSurfaceState): Promise<void> {
 	if (!messages || !objc) return;
-	const attributedText = currentAttributedText(state.label);
-	const text = attributedText ? textForView(state.label) : undefined;
-	if (!attributedText || text === undefined || text === state.renderedText) return;
-	const range = findRenderedLinkRange(text, state.channelName);
-	if (range) updateExistingSurface(state, attributedText, range);
+	if (reconcilingSurfaces.has(state)) {
+		queuedSurfaceReconciliations.add(state);
+		return;
+	}
+	const bridge = objc;
+	const token = lifecycle;
+	reconcilingSurfaces.add(state);
+	try {
+		const labelText = await readLabelTextAsync(state.label, bridge);
+		if (token !== lifecycle || bridge !== objc || cellStates.get(state.cellKey) !== state) return;
+		if (!labelText || labelText.text === state.renderedText) return;
+		const range = findRenderedLinkRange(labelText.text, state.channelName);
+		if (range) updateExistingSurface(state, labelText.attributedText, range);
+	} catch {
+		return;
+	} finally {
+		reconcilingSurfaces.delete(state);
+		if (queuedSurfaceReconciliations.delete(state)) void reconcileSurfaceText(state);
+	}
 }
 
 function scheduleMessageSync(): void {
@@ -349,12 +365,6 @@ async function scanVisibleMessageCells(): Promise<void> {
 	} catch {
 		return;
 	}
-}
-
-function textForView(view: NativeObjectHandle): string | undefined {
-	const attributedText = nativeCall(view, 'attributedText') as NativeObjectHandle | null;
-	const text = attributedText ? nativeCall(attributedText, 'string') : null;
-	return typeof text === 'string' ? text : undefined;
 }
 
 function channelNameFor(target: LinkTarget, targetMessage: Message): string | undefined {
@@ -1079,7 +1089,7 @@ async function createSurfaceState(
 			{
 				after: () => {
 					if (state.applying) return;
-					setTimeout(() => reconcileSurfaceText(state), 0);
+					setTimeout(() => void reconcileSurfaceText(state), 0);
 				},
 			},
 			{ instance: label },
@@ -1139,10 +1149,6 @@ function teardownSurface(key: string, restore: boolean): void {
 
 function cachedContentFor(target: LinkTarget, message: Message): EmbeddedContent | undefined {
 	return buildEmbeddedContent(message, target.channelId);
-}
-
-function currentAttributedText(view: NativeObjectHandle): NativeObjectHandle | null {
-	return nativeCall(view, 'attributedText') as NativeObjectHandle | null;
 }
 
 async function readLabelTextAsync(
