@@ -10,6 +10,7 @@ import {
 	nativeUsernameColor,
 } from '@message-link-embeds/link-targets';
 import { reactionSnapshot, stripMessageReactions } from '@message-link-embeds/reaction-state';
+import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import {
 	BottomAnchorTracker,
 	readSurfaceAnchor,
@@ -1333,13 +1334,7 @@ function dependenciesReady(): boolean {
 function captureDependency(candidate: unknown): void {
 	if (!candidate || (typeof candidate !== 'object' && typeof candidate !== 'function')) return;
 	const value = candidate as AnyRecord;
-	if (
-		!messages &&
-		value._dispatcher &&
-		typeof value.getName === 'function' &&
-		value.getName() === 'MessageStore' &&
-		typeof value.getMessage === 'function'
-	) {
+	if (!messages && isMessageStoreCandidate(candidate)) {
 		messages = value as MessageStore;
 	}
 	if (!messageRecord && typeof candidate === 'function' && value.name === 'MessageRecord') {

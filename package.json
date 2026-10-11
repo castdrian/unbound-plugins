@@ -13,8 +13,8 @@
 		"dev": "ubd dev",
 		"build": "ubd build",
 		"test": "bun test --isolate",
-		"format": "biome format --write plugins scripts",
-		"format:check": "biome format plugins scripts"
+		"format": "biome format --write plugins shared scripts",
+		"format:check": "biome format plugins shared scripts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",

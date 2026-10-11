@@ -4,6 +4,7 @@
 		"includes": [
 			"plugins/**/*.ts",
 			"plugins/**/*.tsx",
+			"shared/**/*.ts",
 			"scripts/device-matrix.ts",
 			"scripts/device-matrix.test.ts",
 			"scripts/generate-plugins-readme.ts",

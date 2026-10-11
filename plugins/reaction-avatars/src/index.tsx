@@ -1,3 +1,5 @@
+import { isMessageStoreCandidate } from '@shared/message-store-candidate';
+
 import {
 	isCurrentReactionRequest,
 	REACTION_AVATAR_LIMIT,
@@ -1845,18 +1847,7 @@ function activate(): void {
 function captureCandidate(candidate: unknown): void {
 	if (!record(candidate) && typeof candidate !== 'function') return;
 	const value = candidate as AnyRecord;
-	if (
-		!messages &&
-		value._dispatcher &&
-		typeof value.getName === 'function' &&
-		typeof value.getMessage === 'function'
-	) {
-		try {
-			if (value.getName() === 'MessageStore') messages = value as MessageStore;
-		} catch {
-			return;
-		}
-	}
+	if (!messages && isMessageStoreCandidate(candidate)) messages = value as MessageStore;
 }
 
 function modulePath(id: number | string): string | undefined {
