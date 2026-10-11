@@ -138,8 +138,10 @@ type NativeCodeBlockState = {
 	rendered: NativeObjectHandle | null;
 	renderedText: string | null;
 	rowRetries: number;
+	rowCorrectionPending: boolean;
 	rowTimer: ReturnType<typeof setTimeout> | null;
 	settleTimers: ReturnType<typeof setTimeout>[];
+	table: NativeObjectHandle | null;
 	theme: ThemeName;
 	width: number;
 };
@@ -502,9 +504,9 @@ function nativePositionedFrame(x: number, y: number, width: number, height: numb
 	return objc?.struct('CGRect', { origin: { x, y }, size: { width, height } }) ?? null;
 }
 
-function nativeFrameMeasurement(view: NativeObjectHandle) {
-	const raw = nativeCall(view, 'frame') as NativeFrameValue | null;
-	const frame = raw?.value ?? raw;
+function nativeFrameFields(raw: unknown) {
+	const value = raw as NativeFrameValue | null;
+	const frame = value?.value ?? value;
 	return {
 		height: Number(frame?.size?.height ?? frame?.height ?? 0),
 		width: Number(frame?.size?.width ?? frame?.width ?? 0),
@@ -513,18 +515,38 @@ function nativeFrameMeasurement(view: NativeObjectHandle) {
 	};
 }
 
-function nativeLabelBottomInCell(label: NativeObjectHandle): number {
-	if (!objc) return 0;
-	let current: NativeObjectHandle | null = label;
-	let bottom = nativeFrameMeasurement(label).height;
-	for (let depth = 0; depth < 14 && current; depth++) {
-		bottom += nativeFrameMeasurement(current).y;
-		const parent = nativeCall(current, 'superview') as NativeObjectHandle | null;
-		if (!parent) return 0;
-		if ((objc.className(parent) ?? '').includes('DCDMessageTableViewCell')) return bottom;
-		current = parent;
-	}
-	return 0;
+function nativeFrameMeasurement(view: NativeObjectHandle) {
+	return nativeFrameFields(nativeCall(view, 'frame'));
+}
+
+export async function measureCodeRow(
+	bridge: NativeObjCBridge,
+	cell: NativeObjectHandle,
+	label: NativeObjectHandle,
+): Promise<{ cellHeight: number; contentHeight: number; labelBottom: number } | null> {
+	const values = await bridge.batch([
+		{ target: label, selector: 'isDescendantOfView:', args: [cell] },
+		{ target: label, selector: 'layoutIfNeeded', args: [] },
+		{ target: cell, selector: 'layoutIfNeeded', args: [] },
+		{ target: cell, selector: 'contentView', args: [] },
+		{ target: cell, selector: 'frame', args: [] },
+		{ target: { $nativeBatchResult: 3 }, selector: 'frame', args: [] },
+		{ target: label, selector: 'bounds', args: [] },
+		{
+			target: label,
+			selector: 'convertRect:toView:',
+			args: [{ $nativeBatchResult: 6 }, cell],
+		},
+	]);
+	if (!values[0]) return null;
+	const cellFrame = nativeFrameFields(values[4]);
+	const contentFrame = nativeFrameFields(values[5]);
+	const labelFrame = nativeFrameFields(values[7]);
+	return {
+		cellHeight: cellFrame.height,
+		contentHeight: contentFrame.height,
+		labelBottom: labelFrame.y + labelFrame.height,
+	};
 }
 
 export function shouldCorrectRow(
@@ -887,39 +909,61 @@ function codeSurfaceIsCurrent(state: NativeCodeBlockState): boolean {
 	);
 }
 
-function scheduleRowCorrection(state: NativeCodeBlockState, delay: number = 16): void {
-	if (state.rowTimer || state.rowRetries >= MAX_ROW_RETRIES) return;
-	state.rowTimer = setTimeout(() => {
-		state.rowTimer = null;
-		if (!objc || surfacesByLabel.get(state.labelKey) !== state) return;
-		if (!codeSurfaceIsCurrent(state)) {
+function codeRowIsCurrent(state: NativeCodeBlockState, bridge: NativeObjCBridge): boolean {
+	return (
+		objc === bridge &&
+		surfacesByLabel.get(state.labelKey) === state &&
+		currentChannelId() === state.channelId
+	);
+}
+
+async function correctCodeRow(
+	state: NativeCodeBlockState,
+	bridge: NativeObjCBridge,
+): Promise<void> {
+	let retry = false;
+	try {
+		if (!codeRowIsCurrent(state, bridge)) return;
+		const geometry = await measureCodeRow(bridge, state.cell, state.label);
+		if (!codeRowIsCurrent(state, bridge)) return;
+		if (!geometry) {
 			removeNativeSurface(state, false);
 			return;
 		}
-		nativeCall(state.label, 'layoutIfNeeded');
-		nativeCall(state.cell, 'layoutIfNeeded');
-		const contentView = nativeCall(state.cell, 'contentView') as NativeObjectHandle | null;
-		if (!contentView) return;
-		const contentHeight = nativeFrameMeasurement(contentView).height;
-		const cellHeight = nativeFrameMeasurement(state.cell).height;
-		const labelBottom = nativeLabelBottomInCell(state.label);
-		if (!shouldCorrectRow(cellHeight, contentHeight, labelBottom)) {
+		if (!shouldCorrectRow(geometry.cellHeight, geometry.contentHeight, geometry.labelBottom)) {
 			state.rowRetries = 0;
 			return;
 		}
-		const table = tableForCell(state.cell);
+		const table = state.table;
 		if (!table) return;
-		if (
-			nativeCall(table, 'isTracking') ||
-			nativeCall(table, 'isDragging') ||
-			nativeCall(table, 'isDecelerating')
-		) {
-			return;
-		}
+		const scrolling = await bridge.batch([
+			{ target: table, selector: 'isTracking', args: [] },
+			{ target: table, selector: 'isDragging', args: [] },
+			{ target: table, selector: 'isDecelerating', args: [] },
+		]);
+		if (!codeRowIsCurrent(state, bridge) || scrolling.some(Boolean)) return;
 		state.rowRetries++;
-		nativeCall(table, 'beginUpdates');
-		nativeCall(table, 'endUpdates');
-		scheduleRowCorrection(state, 80);
+		await bridge.batch([
+			{ target: table, selector: 'beginUpdates', args: [] },
+			{ target: table, selector: 'endUpdates', args: [] },
+		]);
+		retry = codeRowIsCurrent(state, bridge);
+	} catch {
+		retry = false;
+	} finally {
+		state.rowCorrectionPending = false;
+		if (retry) scheduleRowCorrection(state, 80);
+	}
+}
+
+function scheduleRowCorrection(state: NativeCodeBlockState, delay: number = 16): void {
+	if (state.rowTimer || state.rowCorrectionPending || state.rowRetries >= MAX_ROW_RETRIES) return;
+	state.rowTimer = setTimeout(() => {
+		state.rowTimer = null;
+		const bridge = objc;
+		if (!bridge || !codeRowIsCurrent(state, bridge)) return;
+		state.rowCorrectionPending = true;
+		void correctCodeRow(state, bridge);
 	}, delay);
 }
 
@@ -931,6 +975,7 @@ function updateNativeRow(state: NativeCodeBlockState): void {
 	nativeCall(state.cell, 'setNeedsLayout');
 	const table = tableForCell(state.cell);
 	if (!table) return;
+	state.table = table;
 	nativeCall(table, 'beginUpdates');
 	nativeCall(table, 'endUpdates');
 	scheduleRowCorrection(state, 32);
@@ -1239,8 +1284,10 @@ function mountNativeCodeBlock(
 		rendered: null,
 		renderedText: null,
 		rowRetries: 0,
+		rowCorrectionPending: false,
 		rowTimer: null,
 		settleTimers: [],
+		table: null,
 		theme,
 		width,
 	};

@@ -57,6 +57,7 @@ const {
 	getCodeBlockTokens,
 	getTokens,
 	locateCodeBlocks,
+	measureCodeRow,
 	matchCodeBlock,
 	parseFencedCodeBlocks,
 	resolveMessageContent,
@@ -311,6 +312,39 @@ describe('native fenced code matching', () => {
 });
 
 describe('native syntax rendering', () => {
+	test('measures a code row and its attachment in one asynchronous native pass', async () => {
+		const selectors: string[] = [];
+		const bridge = {
+			batch(steps: Array<{ selector: string }>) {
+				selectors.push(...steps.map((step) => step.selector));
+				return Promise.resolve([
+					true,
+					null,
+					null,
+					{},
+					{ value: { size: { height: 217.5 } } },
+					{ value: { size: { height: 217.5 } } },
+					{ value: { origin: { y: 0 }, size: { height: 217.5 } } },
+					{ value: { origin: { y: 40 }, size: { height: 217.5 } } },
+				]);
+			},
+		};
+
+		const geometry = await measureCodeRow(bridge as never, {} as never, {} as never);
+
+		expect(geometry).toEqual({ cellHeight: 217.5, contentHeight: 217.5, labelBottom: 257.5 });
+		expect(selectors).toEqual([
+			'isDescendantOfView:',
+			'layoutIfNeeded',
+			'layoutIfNeeded',
+			'contentView',
+			'frame',
+			'frame',
+			'bounds',
+			'convertRect:toView:',
+		]);
+	});
+
 	test('copies the exact code and confirms it with an Unbound toast', async () => {
 		const code = 'const answer = 42;\nconsole.log(answer);';
 
@@ -592,6 +626,7 @@ describe('plugin lifecycle', () => {
 	});
 
 	test('checks moved labels through one asynchronous native batch', async () => {
+		selectedChannelId = 'original';
 		const steps: string[][] = [];
 		let moved: ((context: { self: object }) => void) | undefined;
 		const native = {
