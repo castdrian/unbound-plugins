@@ -5,6 +5,7 @@ import {
 	isCurrentReactionRequest,
 	ReactionUserCache,
 	type Reactor,
+	reactionAncestorHeightDelta,
 	reactionAvatarExtraWidth,
 	reactionAvatarFrame,
 	reactionAvatarKey,
@@ -16,10 +17,10 @@ import {
 	reactionAvatarStackPositions,
 	reactionAvatarStackWidth,
 	reactionAvatarSummaryProps,
-	reactionCellLifecycleAction,
+	reactionBaseViewWidth,
 	reactionCellHeightFloor,
+	reactionCellLifecycleAction,
 	reactionCellWidth,
-	reactionAncestorHeightDelta,
 	reactionLayoutFrameMatches,
 	reactionLayoutIdentityChanged,
 	reactionLayoutNeedsInvalidation,
@@ -408,6 +409,12 @@ describe('reaction avatar state', () => {
 
 		expect(reactionCellWidth(baseWidth, extraWidth)).toBe(138);
 		expect(reactionCellWidth(baseWidth, 0)).toBe(baseWidth);
+	});
+
+	test('recovers the original reaction view width after native cell reuse', () => {
+		expect(reactionBaseViewWidth(47.5, 47.5, 43.5)).toBe(43.5);
+		expect(reactionBaseViewWidth(47.5, 65.5, 61.5)).toBe(43.5);
+		expect(reactionBaseViewWidth(47.5, 83.5, 79.5)).toBe(43.5);
 	});
 
 	test('places the avatar surface after the reaction pill instead of over it', () => {

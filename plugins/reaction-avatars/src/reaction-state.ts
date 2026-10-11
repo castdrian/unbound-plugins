@@ -127,6 +127,15 @@ export function reactionAvatarReservedExtraWidth(
 	return reactionAvatarExtraWidth(width, leadingInset, trailingPadding, totalCount > 0);
 }
 
+export function reactionBaseViewWidth(
+	layoutWidth: number,
+	cellWidth: number,
+	viewWidth: number,
+): number {
+	const inset = Math.max(0, cellWidth - viewWidth);
+	return Math.max(0, Math.min(viewWidth, layoutWidth - inset));
+}
+
 export function reactionAvatarStackWidth(slotCount: number): number {
 	return REACTION_AVATAR_SIZE + Math.max(0, slotCount - 1) * REACTION_AVATAR_STEP;
 }

@@ -1,5 +1,3 @@
-import { isMessageStoreCandidate } from '@shared/message-store-candidate';
-
 import {
 	isCurrentReactionRequest,
 	REACTION_AVATAR_LIMIT,
@@ -8,6 +6,7 @@ import {
 	type ReactionRecord,
 	ReactionUserCache,
 	type Reactor,
+	reactionAncestorHeightDelta,
 	reactionAvatarExtraWidth,
 	reactionAvatarFrame,
 	reactionAvatarKey,
@@ -15,7 +14,7 @@ import {
 	reactionAvatarReservedSlotCount,
 	reactionAvatarSelection,
 	reactionAvatarStackWidth,
-	reactionAncestorHeightDelta,
+	reactionBaseViewWidth,
 	reactionCellHeightFloor,
 	reactionCellLifecycleAction,
 	reactionLayoutFrameMatches,
@@ -34,6 +33,7 @@ import {
 	type ReactionAvatarSurfaceState,
 	setReactionAvatarSurfaceState,
 } from '@reaction-avatars/reaction-surface';
+import { isMessageStoreCandidate } from '@shared/message-store-candidate';
 import { metro } from '@unbound-app/api';
 import type {
 	NativeFabricBridge,
@@ -911,7 +911,16 @@ function createReactionState(
 	context: ReactionContext,
 	message: Message,
 ): ReactionSurfaceState {
-	const baseFrame = fabric?.measure(view) ?? { height: 0, width: 0, x: 0, y: 0 };
+	const measuredFrame = fabric?.measure(view) ?? { height: 0, width: 0, x: 0, y: 0 };
+	const layoutWidth = reactionLayouts.get(layoutKey)?.baseItems.get(itemIndex)?.width;
+	const cellWidth = layoutWidth === undefined ? undefined : fabric?.measure(collectionCell).width;
+	const baseFrame = {
+		...measuredFrame,
+		width:
+			layoutWidth === undefined || cellWidth === undefined
+				? measuredFrame.width
+				: reactionBaseViewWidth(layoutWidth, cellWidth, measuredFrame.width),
+	};
 	const totalCount = reactionAvatarSelection(context.reaction, context.reactionType).count;
 	const avatarWidth = reactionAvatarStackWidth(reactionAvatarReservedSlotCount(totalCount));
 	const extraWidth = reactionAvatarReservedExtraWidth(
