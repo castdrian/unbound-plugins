@@ -822,28 +822,44 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 	const bridge = objc;
 	if (!bridge || !shouldRefreshSurfaceRow(force, state.lastInvalidatedHeight, state.height)) return;
 	state.lastInvalidatedHeight = state.height;
-	const table = tableForCell(state.cell);
-	if (!table) {
-		state.bottomAnchor.clear();
-		return;
-	}
 	const generation = ++state.rowRefreshGeneration;
 	const token = lifecycle;
-	void bridge
-		.batch([
-			{ target: table, selector: 'contentSize', args: [] },
-			{ target: table, selector: 'contentOffset', args: [] },
-			{ target: table, selector: 'bounds', args: [] },
-			{ target: table, selector: 'transform', args: [] },
-			{ target: table, selector: 'adjustedContentInset', args: [] },
-			{ target: state.label, selector: 'invalidateIntrinsicContentSize', args: [] },
-			{ target: state.label, selector: 'setNeedsLayout', args: [] },
-			{ target: state.cell, selector: 'setNeedsUpdateConstraints', args: [] },
-			{ target: state.cell, selector: 'setNeedsLayout', args: [] },
-			{ target: table, selector: 'beginUpdates', args: [] },
-			{ target: table, selector: 'endUpdates', args: [] },
-		])
-		.then((values) => {
+	async function applyRowRefresh() {
+		try {
+			const tables = await bridge.findViews(state.cell, 'UITableView', {
+				direction: 'ancestors',
+				maxDepth: 14,
+				maxResults: 1,
+				stopAtMatch: true,
+			});
+			if (
+				token !== lifecycle ||
+				objc !== bridge ||
+				cellStates.get(state.cellKey) !== state ||
+				state.rowRefreshGeneration !== generation
+			)
+				return;
+			const table = tables.find(
+				(view) => bridge.respondsTo(view, 'beginUpdates') && bridge.respondsTo(view, 'endUpdates'),
+			);
+			if (!table) {
+				state.lastInvalidatedHeight = -1;
+				state.bottomAnchor.clear();
+				return;
+			}
+			const values = await bridge.batch([
+				{ target: table, selector: 'contentSize', args: [] },
+				{ target: table, selector: 'contentOffset', args: [] },
+				{ target: table, selector: 'bounds', args: [] },
+				{ target: table, selector: 'transform', args: [] },
+				{ target: table, selector: 'adjustedContentInset', args: [] },
+				{ target: state.label, selector: 'invalidateIntrinsicContentSize', args: [] },
+				{ target: state.label, selector: 'setNeedsLayout', args: [] },
+				{ target: state.cell, selector: 'setNeedsUpdateConstraints', args: [] },
+				{ target: state.cell, selector: 'setNeedsLayout', args: [] },
+				{ target: table, selector: 'beginUpdates', args: [] },
+				{ target: table, selector: 'endUpdates', args: [] },
+			]);
 			if (
 				token !== lifecycle ||
 				objc !== bridge ||
@@ -859,12 +875,13 @@ function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): vo
 				),
 			);
 			scheduleBottomScrollCorrection(state, table);
-		})
-		.catch(() => {
+		} catch {
 			if (state.rowRefreshGeneration !== generation) return;
 			state.lastInvalidatedHeight = -1;
 			state.bottomAnchor.clear();
-		});
+		}
+	}
+	void applyRowRefresh();
 }
 
 function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = false): boolean {
