@@ -26,6 +26,28 @@ function typeName(node: TreeNode): string | null {
 	return type?.name ?? type?.displayName ?? null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isActionSheetRowGroup(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	const node = value as TreeNode;
+	if (typeName(node) === 'ActionSheetRowGroup') return true;
+	const props = node?.props;
+	if (typeof props?.hasIcons !== 'boolean' || !Array.isArray(props.children)) return false;
+	return (
+		props.children.length > 0 &&
+		props.children.every(
+			(row) =>
+				isRecord(row) &&
+				isRecord(row.props) &&
+				typeof row.props.label === 'string' &&
+				typeof row.props.onPress === 'function',
+		)
+	);
+}
+
 function findInTree(node: unknown, predicate: (node: TreeNode) => boolean, depth = 0): TreeNode {
 	if (depth > 15 || !node || typeof node !== 'object') return null;
 
@@ -112,7 +134,7 @@ export function startTranslateMenuPatch(): void {
 					if (!message || typeof message.content !== 'string' || !message.content.trim())
 						return result;
 
-					const rowGroup = findInTree(result, (node) => typeName(node) === 'ActionSheetRowGroup');
+					const rowGroup = findInTree(result, isActionSheetRowGroup);
 					const rows = rowGroup?.props?.children;
 
 					if (!rowGroup?.props || !Array.isArray(rows)) return result;
