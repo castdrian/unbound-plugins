@@ -133,6 +133,7 @@ type EmbeddedSurfaceState = {
 	reactionLayoutTimer: ReturnType<typeof setTimeout> | null;
 	bottomScrollTimer: ReturnType<typeof setTimeout> | null;
 	bottomScrollPending: boolean;
+	rowRefreshGeneration: number;
 	pendingHeight: number | null;
 	renderRevision: number;
 	bottomAnchor: BottomAnchorTracker;
@@ -818,21 +819,52 @@ function scheduleReactionScrollCorrection(state: EmbeddedSurfaceState, delay: nu
 }
 
 function refreshRowSize(state: EmbeddedSurfaceState, force: boolean = false): void {
-	if (!objc || !shouldRefreshSurfaceRow(force, state.lastInvalidatedHeight, state.height)) return;
+	const bridge = objc;
+	if (!bridge || !shouldRefreshSurfaceRow(force, state.lastInvalidatedHeight, state.height)) return;
 	state.lastInvalidatedHeight = state.height;
-	nativeCall(state.label, 'invalidateIntrinsicContentSize');
-	nativeCall(state.label, 'setNeedsLayout');
-	nativeCall(state.cell, 'setNeedsUpdateConstraints');
-	nativeCall(state.cell, 'setNeedsLayout');
 	const table = tableForCell(state.cell);
 	if (!table) {
 		state.bottomAnchor.clear();
 		return;
 	}
-	captureSurfaceBottomAnchor(state, table);
-	nativeCall(table, 'beginUpdates');
-	nativeCall(table, 'endUpdates');
-	scheduleBottomScrollCorrection(state, table);
+	const generation = ++state.rowRefreshGeneration;
+	const token = lifecycle;
+	void bridge
+		.batch([
+			{ target: table, selector: 'contentSize', args: [] },
+			{ target: table, selector: 'contentOffset', args: [] },
+			{ target: table, selector: 'bounds', args: [] },
+			{ target: table, selector: 'transform', args: [] },
+			{ target: table, selector: 'adjustedContentInset', args: [] },
+			{ target: state.label, selector: 'invalidateIntrinsicContentSize', args: [] },
+			{ target: state.label, selector: 'setNeedsLayout', args: [] },
+			{ target: state.cell, selector: 'setNeedsUpdateConstraints', args: [] },
+			{ target: state.cell, selector: 'setNeedsLayout', args: [] },
+			{ target: table, selector: 'beginUpdates', args: [] },
+			{ target: table, selector: 'endUpdates', args: [] },
+		])
+		.then((values) => {
+			if (
+				token !== lifecycle ||
+				objc !== bridge ||
+				cellStates.get(state.cellKey) !== state ||
+				state.rowRefreshGeneration !== generation
+			)
+				return;
+			const latestMessage = messages?.getLastMessage?.(state.selectedTarget.channelId);
+			state.bottomAnchor.capture(
+				readSurfaceAnchor(
+					layoutMetricsFromNative(values.slice(0, 5)),
+					latestMessage?.id === state.messageId,
+				),
+			);
+			scheduleBottomScrollCorrection(state, table);
+		})
+		.catch(() => {
+			if (state.rowRefreshGeneration !== generation) return;
+			state.lastInvalidatedHeight = -1;
+			state.bottomAnchor.clear();
+		});
 }
 
 function applyAttachment(state: EmbeddedSurfaceState, forceRefresh: boolean = false): boolean {
@@ -1023,6 +1055,7 @@ function createSurfaceState(
 		reactionLayoutTimer: null,
 		bottomScrollTimer: null,
 		bottomScrollPending: false,
+		rowRefreshGeneration: 0,
 		pendingHeight: null,
 		renderRevision: 0,
 		bottomAnchor,
