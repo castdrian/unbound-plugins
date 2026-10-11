@@ -327,6 +327,62 @@ function messageInfoForCell(cell: NativeObjectHandle): NativeMessageInfo | undef
 	}
 }
 
+async function stringFromNativeAsync(
+	value: unknown,
+	bridge: NativeObjCBridge,
+): Promise<string | undefined> {
+	if (typeof value === 'string') return value;
+	if (!value || typeof value !== 'object') return;
+	const handle = value as NativeObjectHandle;
+	if (!bridge.respondsTo(handle, 'description')) return;
+	const description = await bridge.invokeAsync(handle, 'description', []);
+	return typeof description === 'string' ? description : undefined;
+}
+
+async function messageInfoForCellAsync(
+	cell: NativeObjectHandle,
+	bridge: NativeObjCBridge,
+): Promise<NativeMessageInfo | undefined> {
+	try {
+		const viewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
+		if (!viewModel || !bridge.respondsTo(viewModel, 'message')) return;
+		const values = await bridge.batch([
+			{ target: viewModel, selector: 'message', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'id', args: [] },
+		]);
+		const message = values[0] as NativeObjectHandle | null;
+		const messageId = await stringFromNativeAsync(values[1], bridge);
+		if (!message || !messageId) return;
+		let channelId: string | undefined;
+		const channelIdSelector = ['channelId', 'channel_id'].find((selector) =>
+			bridge.respondsTo(message, selector),
+		);
+		if (channelIdSelector) {
+			channelId = await stringFromNativeAsync(
+				await bridge.invokeAsync(message, channelIdSelector, []),
+				bridge,
+			);
+		} else if (bridge.respondsTo(message, 'channel')) {
+			const channel = (await bridge.invokeAsync(
+				message,
+				'channel',
+				[],
+			)) as NativeObjectHandle | null;
+			if (channel && bridge.respondsTo(channel, 'id')) {
+				channelId = await stringFromNativeAsync(
+					await bridge.invokeAsync(channel, 'id', []),
+					bridge,
+				);
+			}
+		}
+		const currentViewModel = bridge.getIvar(cell, 'viewModel') as NativeObjectHandle | null;
+		if (!currentViewModel || !bridge.call(viewModel, 'isEqual:', currentViewModel)) return;
+		return { channelId, messageId };
+	} catch {
+		return;
+	}
+}
+
 function cellKey(cell: NativeObjectHandle): string | undefined {
 	let hash: unknown;
 	try {
@@ -382,7 +438,8 @@ async function scanVisibleMessageCells(): Promise<void> {
 			if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
 			for (const cell of cells) {
 				const key = cellKey(cell);
-				const info = messageInfoForCell(cell);
+				const info = await messageInfoForCellAsync(cell, bridge);
+				if (token !== lifecycle || bridge !== objc || hooks.length === 0) return;
 				if (!key || !info) continue;
 				const previousId = visibleCellIds.get(key) ?? cellStates.get(key)?.messageId;
 				if (previousId && previousId !== info.messageId) clearCell(key);
