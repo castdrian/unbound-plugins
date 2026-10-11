@@ -1315,60 +1315,47 @@ function renderNativeCodeBlock(label: NativeObjectHandle, original: NativeObject
 	mountNativeCodeBlock(label, cell, original, placements, channelId, messageId);
 }
 
-function nativeSubviews(view: NativeObjectHandle): NativeObjectHandle[] {
-	if (!objc) return [];
-	const subviews = nativeCall(view, 'subviews');
-	if (Array.isArray(subviews)) return subviews as NativeObjectHandle[];
-	if (!subviews || typeof subviews !== 'object') return [];
-	try {
-		return objc.array(subviews as NativeObjectHandle);
-	} catch {
-		return [];
-	}
-}
-
-export function scanVisibleLabels<T extends object>(
-	root: T,
-	children: (view: T) => T[],
-	isLabel: (view: T) => boolean,
-	render: (view: T) => void,
-	limit: number = 3000,
-): number {
-	const pending = [root];
-	let inspected = 0;
-	while (pending.length && inspected < limit) {
-		const view = pending.pop();
-		if (!view) continue;
-		inspected++;
-		if (isLabel(view)) {
-			render(view);
-		}
-		pending.push(...children(view));
-	}
-	return inspected;
-}
-
-function renderVisibleCodeBlocks(): void {
-	if (!objc || !currentChannelId()) return;
-	const applicationClass = objc.getClass('UIApplication');
+async function renderVisibleCodeBlocks(): Promise<void> {
+	const bridge = objc;
+	if (!bridge || !nativeCodeHook?.active || !currentChannelId()) return;
+	const applicationClass = bridge.getClass('UIApplication');
 	if (!applicationClass) return;
-	const application = nativeCall(
-		applicationClass,
-		'sharedApplication',
-	) as NativeObjectHandle | null;
-	const window = application
-		? (nativeCall(application, 'keyWindow') as NativeObjectHandle | null)
-		: null;
-	if (!window) return;
-	scanVisibleLabels(
-		window,
-		nativeSubviews,
-		(view) => (objc?.className(view) ?? '').includes('DCDReusableYYLabel'),
-		(view) => {
-			const attributed = nativeCall(view, 'attributedText') as NativeObjectHandle | null;
-			if (attributed) renderNativeCodeBlock(view, attributed);
-		},
-	);
+	try {
+		const values = await bridge.batch([
+			{ target: applicationClass, selector: 'sharedApplication', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'windows', args: [] },
+			{ target: { $nativeBatchResult: 0 }, selector: 'keyWindow', args: [] },
+		]);
+		if (bridge !== objc || !nativeCodeHook?.active) return;
+		const keyWindow = values[2] as NativeObjectHandle | null;
+		const windows = keyWindow
+			? [keyWindow]
+			: Array.isArray(values[1])
+				? values[1]
+				: bridge.array(values[1]);
+		for (const window of windows) {
+			const labels = await bridge.findViews(window, 'DCDReusableYYLabel', {
+				maxDepth: 40,
+				maxVisited: 2048,
+				maxResults: 256,
+				attachedOnly: true,
+			});
+			if (bridge !== objc || !nativeCodeHook?.active) return;
+			for (let index = 0; index < labels.length; index += 64) {
+				const chunk = labels.slice(index, index + 64);
+				const attributedTexts = await bridge.batch(
+					chunk.map((label) => ({ target: label, selector: 'attributedText', args: [] })),
+				);
+				if (bridge !== objc || !nativeCodeHook?.active) return;
+				for (const [offset, label] of chunk.entries()) {
+					const attributed = attributedTexts[offset] as NativeObjectHandle | null;
+					if (attributed) renderNativeCodeBlock(label, attributed);
+				}
+			}
+		}
+	} catch {
+		return;
+	}
 }
 
 function installNativeRenderer(context?: PluginContext): void {
@@ -1427,9 +1414,18 @@ function installNativeRenderer(context?: PluginContext): void {
 			after: ({ self }) => {
 				const timer = setTimeout(() => {
 					pendingMoveTimers.delete(timer);
-					if (!nativeCodeHook?.active || !nativeCall(self, 'window')) return;
-					const attributed = nativeCall(self, 'attributedText') as NativeObjectHandle | null;
-					if (attributed) renderNativeCodeBlock(self, attributed);
+					const bridge = objc;
+					if (!nativeCodeHook?.active || !bridge) return;
+					void bridge
+						.batch([
+							{ target: self, selector: 'window', args: [] },
+							{ target: self, selector: 'attributedText', args: [] },
+						])
+						.then(([window, attributed]) => {
+							if (bridge !== objc || !nativeCodeHook?.active || !window || !attributed) return;
+							renderNativeCodeBlock(self, attributed as NativeObjectHandle);
+						})
+						.catch(() => undefined);
 				}, 16);
 				pendingMoveTimers.add(timer);
 			},
@@ -1451,7 +1447,7 @@ function installNativeRenderer(context?: PluginContext): void {
 	}
 	initialScanTimer = setTimeout(() => {
 		initialScanTimer = null;
-		if (nativeCodeHook?.active) renderVisibleCodeBlocks();
+		if (nativeCodeHook?.active) void renderVisibleCodeBlocks();
 	}, 300);
 }
 

@@ -8,6 +8,7 @@ let findByFilePathCount = 0;
 let clipboardText: string | null = null;
 let clipboardFailure = false;
 let shownToasts: Array<{ title: string; content: string }> = [];
+let selectedChannelId: string | null = null;
 
 mock.module('@unbound-app/api', () => ({
 	metro: {
@@ -20,7 +21,10 @@ mock.module('@unbound-app/api', () => ({
 				},
 			},
 		},
-		findByProps: () => null,
+		findByProps: (...properties: string[]) =>
+			properties.includes('getLastSelectedChannelId')
+				? { getLastSelectedChannelId: () => selectedChannelId }
+				: null,
 		findByFilePath: () => {
 			findByFilePathCount++;
 			return null;
@@ -57,7 +61,6 @@ const {
 	parseFencedCodeBlocks,
 	resolveMessageContent,
 	resolveLanguage,
-	scanVisibleLabels,
 	shouldCorrectRow,
 	shouldRebuildNativeSurface,
 } = await import('@shiki-codeblocks/index');
@@ -65,6 +68,7 @@ const { highlightCodeToTokens, highlightLanguageLabel, shouldUseHighlightJs } = 
 	'@shiki-codeblocks/highlight-js'
 );
 const { loadThemeDefinition } = await import('@shiki-codeblocks/catalog');
+const { default: manifest } = await import('../manifest.json');
 
 afterEach(() => {
 	plugin.stop();
@@ -76,6 +80,7 @@ afterEach(() => {
 	clipboardText = null;
 	clipboardFailure = false;
 	shownToasts = [];
+	selectedChannelId = null;
 });
 
 describe('language aliases', () => {
@@ -136,45 +141,6 @@ describe('remote themes', () => {
 });
 
 describe('native fenced code matching', () => {
-	test('scans a Fabric message label nested inside an outer text label', () => {
-		type ViewNode = { children?: ViewNode[]; label?: string };
-		const tree: ViewNode = {
-			children: [{ label: 'outer', children: [{ children: [{ label: 'embedded' }] }] }],
-		};
-		const visited: string[] = [];
-
-		scanVisibleLabels(
-			tree,
-			(view) => view.children ?? [],
-			(view) => Boolean(view.label),
-			(view) => visited.push(view.label ?? ''),
-		);
-
-		expect(visited).toEqual(['outer', 'embedded']);
-	});
-
-	test('reaches nested preview labels beyond a large channel hierarchy', () => {
-		type ViewNode = { children?: ViewNode[]; label?: string };
-		const root: ViewNode = { children: [] };
-		let current = root;
-		for (let index = 0; index < 1100; index++) {
-			const child: ViewNode = { children: [] };
-			current.children = [child];
-			current = child;
-		}
-		current.label = 'embedded';
-		const visited: string[] = [];
-
-		scanVisibleLabels(
-			root,
-			(view) => view.children ?? [],
-			(view) => Boolean(view.label),
-			(view) => visited.push(view.label ?? ''),
-		);
-
-		expect(visited).toEqual(['embedded']);
-	});
-
 	test('parses supported blocks and preserves indentation', () => {
 		const blocks = parseFencedCodeBlocks(
 			'Before\n```ts title=example.ts\nconst answer = 42;\n    return answer;\n```\nAfter',
@@ -522,6 +488,79 @@ describe('native syntax rendering', () => {
 });
 
 describe('plugin lifecycle', () => {
+	test('declares the capabilities used by its asynchronous scan', () => {
+		expect(manifest.capabilities).toContain('native.objc.batch');
+		expect(manifest.capabilities).toContain('native.objc.snapshot');
+	});
+
+	test('scans visible labels through bounded asynchronous native calls', async () => {
+		selectedChannelId = 'channel';
+		const selectors: string[][] = [];
+		const window = {};
+		const label = {};
+		const searches: unknown[] = [];
+		const native = {
+			objc: {
+				getClass: () => ({}),
+				hook: () => ({ active: true, remove: () => undefined }),
+				batch(requests: Array<{ selector: string }>) {
+					selectors.push(requests.map((request) => request.selector));
+					return Promise.resolve(selectors.length === 1 ? [{}, [], window] : [null]);
+				},
+				findViews(_root: object, _className: string, options: unknown) {
+					searches.push(options);
+					return Promise.resolve([label]);
+				},
+				invoke() {
+					throw new Error('The startup scan must not synchronously cross to the main thread');
+				},
+			},
+		};
+
+		plugin.start({ native } as never);
+		await Bun.sleep(340);
+
+		expect(selectors).toEqual([['sharedApplication', 'windows', 'keyWindow'], ['attributedText']]);
+		expect(searches).toEqual([
+			{
+				maxDepth: 40,
+				maxVisited: 2048,
+				maxResults: 256,
+				attachedOnly: true,
+			},
+		]);
+	});
+
+	test('checks moved labels through one asynchronous native batch', async () => {
+		const steps: string[][] = [];
+		let moved: ((context: { self: object }) => void) | undefined;
+		const native = {
+			objc: {
+				hook(
+					_className: string,
+					selector: string,
+					handlers: { after?: (context: { self: object }) => void },
+				) {
+					if (selector === 'didMoveToWindow') moved = handlers.after;
+					return { active: true, remove: () => undefined };
+				},
+				batch(requests: Array<{ selector: string }>) {
+					steps.push(requests.map((request) => request.selector));
+					return Promise.resolve([true, null]);
+				},
+				invoke() {
+					throw new Error('Moved labels must not synchronously cross to the main thread');
+				},
+			},
+		};
+
+		plugin.start({ native } as never);
+		moved?.({ self: {} });
+		await Bun.sleep(30);
+
+		expect(steps).toEqual([['window', 'attributedText']]);
+	});
+
 	test('uses the native label hook without replacing the Markdown renderer', () => {
 		const native = {
 			objc: {
