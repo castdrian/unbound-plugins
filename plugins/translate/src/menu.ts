@@ -90,10 +90,12 @@ async function translateMessage(message: MessageLike): Promise<void> {
 	toasts.showToast({ title: 'Translated', content: translated });
 }
 
-const patchedInstances = new WeakSet<object>();
+let patchedInstances = new WeakSet<object>();
+let patchGeneration = 0;
 
 export function startTranslateMenuPatch(): void {
 	if (typeof metro?.findByProps !== 'function') return;
+	const generation = ++patchGeneration;
 
 	const sheetsHost = metro.findByProps('openLazy', 'hideActionSheet') as {
 		openLazy?: (...args: unknown[]) => unknown;
@@ -126,7 +128,7 @@ export function startTranslateMenuPatch(): void {
 
 		componentPromise
 			.then((instance) => {
-				if (!instance || patchedInstances.has(instance)) return;
+				if (generation !== patchGeneration || !instance || patchedInstances.has(instance)) return;
 				patchedInstances.add(instance);
 
 				Patcher.after(instance, 'default', ({ result }) => {
@@ -166,5 +168,7 @@ export function startTranslateMenuPatch(): void {
 }
 
 export function stopTranslateMenuPatch(): void {
+	patchGeneration++;
+	patchedInstances = new WeakSet<object>();
 	Patcher.unpatchAll();
 }
