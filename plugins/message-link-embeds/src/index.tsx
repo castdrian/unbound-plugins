@@ -737,14 +737,6 @@ function captureSurfaceBottomAnchor(state: EmbeddedSurfaceState, table: NativeOb
 	state.bottomAnchor.capture(anchor);
 }
 
-function tableIsScrolling(table: NativeObjectHandle): boolean {
-	return Boolean(
-		nativeCall(table, 'isTracking') ||
-			nativeCall(table, 'isDragging') ||
-			nativeCall(table, 'isDecelerating'),
-	);
-}
-
 function scheduleBottomScrollCorrection(
 	state: EmbeddedSurfaceState,
 	table: NativeObjectHandle,
@@ -783,13 +775,20 @@ function scheduleBottomScrollCorrection(
 			const userIsScrolling = values.slice(8).some(Boolean);
 			const correction = state.bottomAnchor.correction(metrics, userIsScrolling);
 			if (correction) {
-				if (!tableIsScrolling(table)) {
-					nativeCall(
-						table,
-						'setContentOffset:animated:',
+				const scrolling = await bridge.batch([
+					{ target: table, selector: 'isTracking', args: [] },
+					{ target: table, selector: 'isDragging', args: [] },
+					{ target: table, selector: 'isDecelerating', args: [] },
+				]);
+				if (token !== lifecycle || objc !== bridge || cellStates.get(state.cellKey) !== state) {
+					state.bottomAnchor.clear();
+					return;
+				}
+				if (!scrolling.some(Boolean)) {
+					await bridge.invokeAsync(table, 'setContentOffset:animated:', [
 						bridge.struct('CGPoint', { x: correction.x, y: correction.y }),
 						false,
-					);
+					]);
 				}
 				return;
 			}
