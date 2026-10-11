@@ -116,6 +116,7 @@ let profileSheetPatched = false;
 let patchedSheetInstances = new WeakSet<object>();
 let patchedSheetComponents = new WeakSet<object>();
 let patchedSheetElements = new WeakSet<object>();
+let lifecycle = 0;
 
 function getUrlBuilder(): UrlBuilder | null {
 	return metro.findByProps('getUserAvatarURL', 'getGuildIconURL') as UrlBuilder | null;
@@ -483,6 +484,7 @@ function patchActionSheetComponent(
 
 function patchActionSheets(): boolean {
 	if (profileSheetPatched) return true;
+	const activeLifecycle = lifecycle;
 	const sheets = metro.findByProps('openLazy', 'hideActionSheet') as SheetHost | null;
 	const ActionSheetRow = (
 		metro.findByProps('ActionSheetRow') as { ActionSheetRow?: unknown } | null
@@ -506,6 +508,7 @@ function patchActionSheets(): boolean {
 		currentSheetKey = key;
 		componentPromise
 			.then((instance) => {
+				if (activeLifecycle !== lifecycle) return;
 				if (!instance || patchedSheetInstances.has(instance)) return;
 				patchedSheetInstances.add(instance);
 				const defaultExport = instance.default;
@@ -545,6 +548,7 @@ function patchActionSheets(): boolean {
 
 export default {
 	start() {
+		lifecycle++;
 		if (!patchContextMenus() || !patchActionSheets()) {
 			contextMenuTimer = setInterval(() => {
 				if (!patchContextMenus() || !patchActionSheets() || !contextMenuTimer) return;
@@ -554,6 +558,7 @@ export default {
 		}
 	},
 	stop() {
+		lifecycle++;
 		PATCHER.unpatchAll();
 		if (contextMenuTimer) clearInterval(contextMenuTimer);
 		contextMenuTimer = null;
