@@ -48,9 +48,12 @@ function ReviewsButton({ userId }: { userId: string }) {
 }
 
 export function startReviewMenuPatch(): void {
-	if (typeof metro?.findByName !== 'function') return;
+	if (typeof metro?.findByFilePath !== 'function' && typeof metro?.findByName !== 'function')
+		return;
 
-	const mod = metro.findByName('UserProfileCard', { interop: false }) as {
+	const mod = (metro.findByFilePath?.('modules/user_profile/native/UserProfileCard.tsx', {
+		interop: false,
+	}) ?? metro.findByName?.('UserProfileCard', { interop: false })) as {
 		default?: unknown;
 	} | null;
 	if (typeof mod?.default !== 'function') return;
