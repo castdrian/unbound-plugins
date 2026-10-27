@@ -406,51 +406,20 @@ function roleImage(metadata: Mention): NativeValue | null {
 
 function roundedImage(image: NativeValue): NativeValue | null {
 	if (!objc || !image) return image;
-	const imageClass = objc.getClass('UIImage');
-	const ciImageClass = objc.getClass('CIImage');
-	const contextClass = objc.getClass('CIContext');
-	const filterClass = objc.getClass('CIFilter');
-	const colorClass = objc.getClass('CIColor');
-	const vectorClass = objc.getClass('CIVector');
-	if (!imageClass || !ciImageClass || !contextClass || !filterClass || !colorClass || !vectorClass)
-		return image;
-	const sourceCGImage = nativeCall(image, 'CGImage');
-	if (!sourceCGImage) return image;
-	const source = nativeCall(ciImageClass, 'imageWithCGImage:', sourceCGImage);
-	const mask = nativeCall(filterClass, 'filterWithName:', 'CIRadialGradient');
-	if (!source || !mask) return image;
-	const white = nativeCall(colorClass, 'colorWithRed:green:blue:alpha:', 1, 1, 1, 1);
-	const clear = nativeCall(colorClass, 'colorWithRed:green:blue:alpha:', 0, 0, 0, 0);
-	const center = nativeCall(vectorClass, 'vectorWithX:Y:', 16, 16);
-	if (!white || !clear || !center) return image;
-	nativeCall(mask, 'setValue:forKey:', center, 'inputCenter');
-	nativeCall(mask, 'setValue:forKey:', 15.5, 'inputRadius0');
-	nativeCall(mask, 'setValue:forKey:', 16, 'inputRadius1');
-	nativeCall(mask, 'setValue:forKey:', white, 'inputColor0');
-	nativeCall(mask, 'setValue:forKey:', clear, 'inputColor1');
-	const maskImage = nativeCall(mask, 'outputImage');
-	const blend = nativeCall(filterClass, 'filterWithName:', 'CIBlendWithMask');
-	if (!maskImage || !blend) return image;
-	nativeCall(blend, 'setValue:forKey:', source, 'inputImage');
-	nativeCall(blend, 'setValue:forKey:', maskImage, 'inputMaskImage');
-	const output = nativeCall(blend, 'outputImage');
-	if (!output) return image;
-	const rect = objc.struct('CGRect', {
+	const view = objc.alloc('UIImageView');
+	if (!view) return image;
+	const frame = objc.struct('CGRect', {
 		origin: { x: 0, y: 0 },
-		size: { width: 32, height: 32 },
+		size: { width: 16, height: 16 },
 	});
-	const context = nativeCall(contextClass, 'contextWithOptions:', null);
-	const cgImage = context && nativeCall(context, 'createCGImage:fromRect:', output, rect);
-	if (!cgImage) return image;
-	return (
-		nativeCall(
-			imageClass,
-			'imageWithCGImage:scale:orientation:',
-			cgImage,
-			2,
-			nativeCall(image, 'imageOrientation') ?? 0,
-		) ?? image
-	);
+	nativeCall(view, 'setFrame:', frame);
+	nativeCall(view, 'setImage:', image);
+	nativeCall(view, 'setContentMode:', 2);
+	const layer = nativeCall(view, 'layer');
+	if (!layer) return image;
+	nativeCall(layer, 'setCornerRadius:', 8);
+	nativeCall(layer, 'setMasksToBounds:', true);
+	return view;
 }
 
 function messageIDForCell(cell: NativeValue): string | undefined {
@@ -544,7 +513,7 @@ function imageForMention(metadata: Mention): NativeValue | null {
 				const data = objc.data(bytes);
 				const imageClass = objc.getClass('UIImage');
 				const image = imageClass ? nativeCall(imageClass, 'imageWithData:', data) : null;
-				return image ? (metadata.type === 'user' ? roundedImage(image) : image) : null;
+				return image;
 			})
 			.catch(() => null);
 		imageCache.set(metadata.avatarURL, { image: null, pending });
@@ -576,7 +545,12 @@ function imageAttachment(
 		bottom: 0,
 		right: trailing,
 	});
-	nativeCall(attachment, 'setValue:forKey:', image, 'content');
+	nativeCall(
+		attachment,
+		'setValue:forKey:',
+		metadata.type === 'user' ? roundedImage(image) : image,
+		'content',
+	);
 	nativeCall(attachment, 'setValue:forKey:', 1, 'contentMode');
 	nativeCall(attachment, 'setValue:forKey:', insets, 'contentInsets');
 
